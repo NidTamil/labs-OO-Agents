@@ -103,6 +103,13 @@ def stagnation_args_record(config: StagnationConfig) -> dict[str, object]:
     }
 
 
+def measurement_args_record(cohort_id: str | None, evaluation_mode: str | None) -> dict[str, str]:
+    """Persist attribution only when the run explicitly supplies it."""
+    if cohort_id is None or evaluation_mode is None:
+        return {}
+    return {"cohort_id": cohort_id, "evaluation_mode": evaluation_mode}
+
+
 def validate_stagnation_preflight(
     *,
     config: StagnationConfig,
@@ -664,8 +671,7 @@ def main(argv: list[str] | None = None) -> int:
     args_record = {
         "agent": f"nooa_cybergym:{args.model}",
         "agent_id": agent_id,
-        "cohort_id": args.cohort_id,
-        "evaluation_mode": args.evaluation_mode,
+        **measurement_args_record(args.cohort_id, args.evaluation_mode),
         "task": task.model_dump() if hasattr(task, "model_dump") else dict(task),
         "server": server,
         "image": args.image,

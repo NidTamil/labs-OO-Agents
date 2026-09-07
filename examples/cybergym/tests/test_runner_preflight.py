@@ -145,6 +145,14 @@ def test_enabled_v2_requires_explicit_cohort_metadata():
         )
 
 
+def test_measurement_metadata_is_omitted_for_legacy_runs_and_recorded_when_explicit():
+    assert run.measurement_args_record(None, None) == {}
+    assert run.measurement_args_record("heldout-v2", "heldout") == {
+        "cohort_id": "heldout-v2",
+        "evaluation_mode": "heldout",
+    }
+
+
 def test_enabled_v2_metadata_failure_happens_before_docker_work(monkeypatch, tmp_path):
     monkeypatch.setattr(
         run.docker,
