@@ -6,7 +6,9 @@ import asyncio
 import hashlib
 import inspect
 import json
+import os
 import shlex
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -72,12 +74,8 @@ def test_fingerprint_ignores_volatile_asan_addresses_for_same_crash_site():
     #2 0x560a0fc00222 in Assimp::MD3Importer::InternReadFile /src/MD3Loader.cpp:30:1
 """
 
-    first_fp = cybergym_submissions.SubmissionManager.fingerprint_output(
-        "crashed", 1, first
-    )
-    second_fp = cybergym_submissions.SubmissionManager.fingerprint_output(
-        "crashed", 1, second
-    )
+    first_fp = cybergym_submissions.SubmissionManager.fingerprint_output("crashed", 1, first)
+    second_fp = cybergym_submissions.SubmissionManager.fingerprint_output("crashed", 1, second)
 
     assert first_fp.error_type == "heap-buffer-overflow"
     assert second_fp.error_type == "heap-buffer-overflow"
@@ -94,12 +92,8 @@ def test_fingerprint_keeps_distinct_asan_error_categories_separate():
     #0 0xdef in parse_tag /src/parser.c:10:1
 """
 
-    heap_fp = cybergym_submissions.SubmissionManager.fingerprint_output(
-        "crashed", 1, heap_overflow
-    )
-    segv_fp = cybergym_submissions.SubmissionManager.fingerprint_output(
-        "crashed", 1, segv
-    )
+    heap_fp = cybergym_submissions.SubmissionManager.fingerprint_output("crashed", 1, heap_overflow)
+    segv_fp = cybergym_submissions.SubmissionManager.fingerprint_output("crashed", 1, segv)
 
     assert heap_fp.cluster_key != segv_fp.cluster_key
 
@@ -181,7 +175,7 @@ def test_submit_runner_quotes_poc_path():
 
     assert result.status == "no_crash"
     assert f"bash {shlex.quote(manager.SUBMIT_SCRIPT)} {shlex.quote(poc_path)} " in shell.command
-    assert f"python {manager.CAPTURE_RESPONSE_SCRIPT}" in shell.command
+    assert f"python {shlex.quote(str(manager.CAPTURE_RESPONSE_SCRIPT))}" in shell.command
 
 
 def test_large_verifier_response_is_bounded_without_losing_crash_signature(tmp_path):
@@ -189,8 +183,7 @@ def test_large_verifier_response_is_bounded_without_losing_crash_signature(tmp_p
         "==9==ERROR: AddressSanitizer: FPE on unknown address\n"
         "#0 0xabc in CExpressionParser::safe_div /src/parser.cpp:10:1\n"
         "#1 0xdef in CExpressionParser::eval /src/parser.cpp:20:1\n"
-        "#2 0x123 in LLVMFuzzerTestOneInput /src/fuzz.cpp:30:1\n"
-        + "diagnostic filler\n" * 20_000
+        "#2 0x123 in LLVMFuzzerTestOneInput /src/fuzz.cpp:30:1\n" + "diagnostic filler\n" * 20_000
     )
     response = json.dumps({"task_id": "task", "exit_code": 1, "output": output})
     response_path = tmp_path / "submission.json"
@@ -267,8 +260,373 @@ def test_submit_preserves_candidate_in_persistent_artifacts(tmp_path):
     assert submission is not None
     assert submission.submitted_path == str(manager.CANDIDATE_DIR / "submission_1.poc")
     assert (manager.CANDIDATE_DIR / "submission_1.poc").read_bytes() == b"persistent-candidate"
+    assert not (manager.CANDIDATE_DIR / "submission_1.poc").stat().st_mode & 0o222
+    assert submission.sha256 == hashlib.sha256(b"persistent-candidate").hexdigest()
+    assert submission.byte_length == len(b"persistent-candidate")
     record = json.loads(manager.SUBMISSION_LOG_PATH.read_text().strip())
     assert record["submitted_path"] == submission.submitted_path
+    assert record["sha256"] == submission.sha256
+    assert record["byte_length"] == submission.byte_length
+
+
+def test_submit_stages_once_before_verifier_and_uses_staged_identity(tmp_path, monkeypatch):
+    source = tmp_path / "candidate.bin"
+    original_bytes = b"opened-source-bytes"
+    source.write_bytes(original_bytes)
+    source_opens = 0
+    original_open = cybergym_submissions.os.open
+
+    def counting_open(path, flags, *args, **kwargs):
+        nonlocal source_opens
+        if os.fspath(path) == os.fspath(source):
+            source_opens += 1
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(cybergym_submissions.os, "open", counting_open)
+
+    class MutatingShell:
+        calls = 0
+
+        async def run(self, command, timeout):
+            self.calls += 1
+            staged = manager.CANDIDATE_DIR / "submission_1.poc"
+            assert staged.read_bytes() == original_bytes
+            assert shlex.quote(str(staged)) in command
+            source.write_bytes(b"replacement-after-staging")
+            return SimpleNamespace(
+                stdout=json.dumps({"exit_code": 1, "output": "ERROR: AddressSanitizer: SIGSEGV"})
+            )
+
+    shell = MutatingShell()
+    manager = cybergym_submissions.SubmissionManager(shell=shell)
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    result = asyncio.run(manager.submit(str(source), hypothesis="Reaches the parser."))
+
+    submission = manager.get_submission(result.submission_number)
+    assert submission is not None
+    assert source_opens == 1
+    assert shell.calls == 1
+    assert Path(submission.submitted_path).read_bytes() == original_bytes
+    assert submission.sha256 == hashlib.sha256(original_bytes).hexdigest()
+    assert submission.byte_length == len(original_bytes)
+
+
+def test_submit_streams_candidate_in_bounded_chunks(tmp_path, monkeypatch):
+    source = tmp_path / "large.bin"
+    source.write_bytes(b"x" * (2 * 1024 * 1024 + 7))
+    source_fd = None
+    read_sizes = []
+    original_open = cybergym_submissions.os.open
+    original_read = cybergym_submissions.os.read
+
+    def tracking_open(path, flags, *args, **kwargs):
+        nonlocal source_fd
+        fd = original_open(path, flags, *args, **kwargs)
+        if os.fspath(path) == os.fspath(source):
+            source_fd = fd
+        return fd
+
+    def tracking_read(fd, size):
+        if fd == source_fd:
+            read_sizes.append(size)
+        return original_read(fd, size)
+
+    monkeypatch.setattr(cybergym_submissions.os, "open", tracking_open)
+    monkeypatch.setattr(cybergym_submissions.os, "read", tracking_read)
+
+    class FakeShell:
+        async def run(self, command, timeout):
+            return SimpleNamespace(
+                stdout=json.dumps({"exit_code": 0, "output": "Execution successful"})
+            )
+
+    manager = cybergym_submissions.SubmissionManager(shell=FakeShell())
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    asyncio.run(manager.submit(str(source), hypothesis="Exercises a large input."))
+
+    assert len(read_sizes) >= 3
+    assert max(read_sizes) <= 1024 * 1024
+
+
+@pytest.mark.parametrize("source_kind", ["missing", "directory"])
+def test_submit_audits_local_candidate_errors_without_verifier_side_effects(tmp_path, source_kind):
+    class ForbiddenShell:
+        calls = 0
+
+        async def run(self, command, timeout):
+            self.calls += 1
+            pytest.fail("local candidate rejection must not invoke the verifier")
+
+    source = tmp_path / "candidate"
+    if source_kind == "directory":
+        source.mkdir()
+    shell = ForbiddenShell()
+    manager = cybergym_submissions.SubmissionManager(shell=shell)
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    result = asyncio.run(manager.submit(str(source), hypothesis="Candidate validation."))
+
+    assert result.status == "local_candidate_error"
+    assert result.submission_number == 1
+    assert manager.submission_count == 1
+    assert shell.calls == 0
+    assert list(manager._owner._submission_times) == []
+    assert manager._owner._consecutive_respawns == 0
+    submission = manager.get_submission(1)
+    assert submission is not None
+    assert submission.submitted_path is None
+    assert submission.sha256 is None
+    assert submission.byte_length is None
+    record = json.loads(manager.SUBMISSION_LOG_PATH.read_text())
+    assert record["status"] == "local_candidate_error"
+    assert record["submission_number"] == 1
+
+
+def test_submit_treats_unreadable_source_as_local_candidate_error(tmp_path, monkeypatch):
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(b"candidate")
+    original_open = cybergym_submissions.os.open
+
+    def denied_open(path, flags, *args, **kwargs):
+        if os.fspath(path) == os.fspath(source):
+            raise PermissionError("denied")
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(cybergym_submissions.os, "open", denied_open)
+    manager = cybergym_submissions.SubmissionManager(shell=_unused_shell())
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    result = asyncio.run(manager.submit(str(source), hypothesis="Candidate validation."))
+
+    assert result.status == "local_candidate_error"
+    assert manager.get_submission(1).status == "local_candidate_error"
+
+
+def test_submit_rejects_source_that_disappears_during_staging(tmp_path, monkeypatch):
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(b"candidate")
+    original_stat = cybergym_submissions.os.stat
+
+    def disappearing_stat(path, *args, **kwargs):
+        if os.fspath(path) == os.fspath(source):
+            raise FileNotFoundError(os.fspath(source))
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(cybergym_submissions.os, "stat", disappearing_stat)
+    manager = cybergym_submissions.SubmissionManager(shell=_unused_shell())
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    result = asyncio.run(manager.submit(str(source), hypothesis="Candidate validation."))
+
+    assert result.status == "local_candidate_error"
+    assert not list(manager.CANDIDATE_DIR.glob("*"))
+
+
+def test_submit_rejects_source_path_replacement_detected_during_staging(tmp_path, monkeypatch):
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(b"candidate")
+    original_stat = cybergym_submissions.os.stat
+
+    def replaced_stat(path, *args, **kwargs):
+        current = original_stat(path, *args, **kwargs)
+        if os.fspath(path) != os.fspath(source):
+            return current
+        return SimpleNamespace(
+            st_dev=current.st_dev,
+            st_ino=current.st_ino + 1,
+            st_mode=current.st_mode,
+        )
+
+    monkeypatch.setattr(cybergym_submissions.os, "stat", replaced_stat)
+    manager = cybergym_submissions.SubmissionManager(shell=_unused_shell())
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    result = asyncio.run(manager.submit(str(source), hypothesis="Candidate validation."))
+
+    assert result.status == "local_candidate_error"
+    assert not list(manager.CANDIDATE_DIR.glob("*"))
+
+
+def test_submit_rejects_detectable_mutation_during_copy(tmp_path, monkeypatch):
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(b"x" * (1024 * 1024 + 1))
+    source_fd = None
+    mutated = False
+    original_open = cybergym_submissions.os.open
+    original_read = cybergym_submissions.os.read
+
+    def tracking_open(path, flags, *args, **kwargs):
+        nonlocal source_fd
+        fd = original_open(path, flags, *args, **kwargs)
+        if os.fspath(path) == os.fspath(source):
+            source_fd = fd
+        return fd
+
+    def mutating_read(fd, size):
+        nonlocal mutated
+        data = original_read(fd, size)
+        if fd == source_fd and data and not mutated:
+            with source.open("ab") as append_stream:
+                append_stream.write(b"changed")
+            mutated = True
+        return data
+
+    monkeypatch.setattr(cybergym_submissions.os, "open", tracking_open)
+    monkeypatch.setattr(cybergym_submissions.os, "read", mutating_read)
+    manager = cybergym_submissions.SubmissionManager(shell=_unused_shell())
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    result = asyncio.run(manager.submit(str(source), hypothesis="Candidate validation."))
+
+    assert result.status == "local_candidate_error"
+    assert not list(manager.CANDIDATE_DIR.glob("*"))
+
+
+def test_submit_cleans_partial_stage_after_source_read_failure(tmp_path, monkeypatch):
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(b"x" * (1024 * 1024 + 1))
+    source_fd = None
+    source_reads = 0
+    original_open = cybergym_submissions.os.open
+    original_read = cybergym_submissions.os.read
+
+    def tracking_open(path, flags, *args, **kwargs):
+        nonlocal source_fd
+        fd = original_open(path, flags, *args, **kwargs)
+        if os.fspath(path) == os.fspath(source):
+            source_fd = fd
+        return fd
+
+    def failing_read(fd, size):
+        nonlocal source_reads
+        if fd == source_fd:
+            source_reads += 1
+            if source_reads == 2:
+                raise OSError("source read failed")
+        return original_read(fd, size)
+
+    monkeypatch.setattr(cybergym_submissions.os, "open", tracking_open)
+    monkeypatch.setattr(cybergym_submissions.os, "read", failing_read)
+    manager = cybergym_submissions.SubmissionManager(shell=_unused_shell())
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    result = asyncio.run(manager.submit(str(source), hypothesis="Candidate validation."))
+
+    assert result.status == "local_candidate_error"
+    assert not list(manager.CANDIDATE_DIR.glob("*"))
+
+
+def test_submit_publishes_without_clobbering_existing_candidate(tmp_path):
+    candidate_dir = tmp_path / "artifacts" / "candidates"
+    candidate_dir.mkdir(parents=True)
+    destination = candidate_dir / "submission_1.poc"
+    destination.write_bytes(b"existing")
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(b"new")
+    manager = cybergym_submissions.SubmissionManager(shell=_unused_shell())
+    manager.CANDIDATE_DIR = candidate_dir
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    with pytest.raises(cybergym_submissions.SubmissionStorageError):
+        asyncio.run(manager.submit(str(source), hypothesis="Candidate validation."))
+
+    assert destination.read_bytes() == b"existing"
+    assert sorted(candidate_dir.iterdir()) == [destination]
+
+
+def test_submit_surfaces_destination_and_audit_storage_failures(tmp_path):
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(b"candidate")
+
+    destination_blocker = tmp_path / "candidate-dir-blocker"
+    destination_blocker.write_text("not a directory")
+    destination_manager = cybergym_submissions.SubmissionManager(shell=_unused_shell())
+    destination_manager.CANDIDATE_DIR = destination_blocker
+    destination_manager.SUBMISSION_LOG_PATH = tmp_path / "submissions.jsonl"
+    with pytest.raises(cybergym_submissions.SubmissionStorageError):
+        asyncio.run(destination_manager.submit(str(source), hypothesis="Candidate validation."))
+
+    class FakeShell:
+        calls = 0
+
+        async def run(self, command, timeout):
+            self.calls += 1
+            return SimpleNamespace(
+                stdout=json.dumps({"exit_code": 0, "output": "Execution successful"})
+            )
+
+    audit_blocker = tmp_path / "audit-blocker"
+    audit_blocker.write_text("not a directory")
+    shell = FakeShell()
+    audit_manager = cybergym_submissions.SubmissionManager(shell=shell)
+    audit_manager.CANDIDATE_DIR = tmp_path / "audit-candidates"
+    audit_manager.SUBMISSION_LOG_PATH = audit_blocker / "submissions.jsonl"
+    with pytest.raises(cybergym_submissions.SubmissionStorageError):
+        asyncio.run(audit_manager.submit(str(source), hypothesis="Candidate validation."))
+    assert shell.calls == 1
+
+
+def test_local_candidate_error_consumes_number_before_next_valid_submit(tmp_path):
+    class FakeShell:
+        calls = 0
+
+        async def run(self, command, timeout):
+            self.calls += 1
+            assert "submission_2.poc" in command
+            return SimpleNamespace(
+                stdout=json.dumps({"exit_code": 0, "output": "Execution successful"})
+            )
+
+    shell = FakeShell()
+    manager = cybergym_submissions.SubmissionManager(shell=shell)
+    manager.CANDIDATE_DIR = tmp_path / "artifacts" / "candidates"
+    manager.SUBMISSION_LOG_PATH = tmp_path / "artifacts" / "submissions.jsonl"
+
+    rejected = asyncio.run(
+        manager.submit(str(tmp_path / "missing"), hypothesis="Invalid candidate.")
+    )
+    source = tmp_path / "valid.bin"
+    source.write_bytes(b"valid")
+    accepted = asyncio.run(manager.submit(str(source), hypothesis="Valid candidate."))
+
+    assert rejected.submission_number == 1
+    assert accepted.submission_number == 2
+    assert manager.submission_count == 2
+    assert shell.calls == 1
+    records = [json.loads(line) for line in manager.SUBMISSION_LOG_PATH.read_text().splitlines()]
+    assert [record["submission_number"] for record in records] == [1, 2]
+
+
+def test_verify_existing_uses_artifact_directly_without_public_staging(tmp_path):
+    existing = tmp_path / "already-published.poc"
+    existing.write_bytes(b"published")
+
+    class FakeShell:
+        async def run(self, command, timeout):
+            assert shlex.quote(str(existing)) in command
+            return SimpleNamespace(
+                stdout=json.dumps({"exit_code": 0, "output": "Execution successful"})
+            )
+
+    manager = cybergym_submissions.SubmissionManager(shell=FakeShell(), submission_count=4)
+    manager.CANDIDATE_DIR = tmp_path / "must-not-be-created"
+
+    result = asyncio.run(manager.verify_existing(str(existing)))
+
+    assert result.submission_number == 4
+    assert manager.submission_count == 4
+    assert manager.get_all_submissions() == []
+    assert not manager.CANDIDATE_DIR.exists()
 
 
 def test_submit_rejects_an_empty_hypothesis_before_running_verifier():
@@ -284,7 +642,8 @@ def test_submit_rejects_an_empty_hypothesis_before_running_verifier():
 
 def test_finalize_writes_one_immutable_model_selected_poc(tmp_path):
     source = tmp_path / "candidate.bin"
-    source.write_bytes(b"chosen-poc")
+    staged_bytes = b"chosen-poc"
+    source.write_bytes(staged_bytes)
     fingerprint = cybergym_submissions.SubmissionManager.fingerprint_output(
         "crashed", 139, "SIGSEGV"
     )
@@ -292,6 +651,8 @@ def test_finalize_writes_one_immutable_model_selected_poc(tmp_path):
         submission_number=7,
         original_path=str(source),
         submitted_path=str(source),
+        sha256=hashlib.sha256(staged_bytes).hexdigest(),
+        byte_length=len(staged_bytes),
         status="crashed",
         exit_code=139,
         fingerprint=fingerprint,
@@ -310,6 +671,8 @@ def test_finalize_writes_one_immutable_model_selected_poc(tmp_path):
     assert manifest["selection_reason"] == "Strongest patch-relevant crash."
     assert manifest["sha256"] == hashlib.sha256(b"chosen-poc").hexdigest()
     assert artifact.sha256 == manifest["sha256"]
+    assert artifact.byte_length == len(staged_bytes)
+    assert not final_poc.stat().st_mode & 0o222
 
     with pytest.raises(FileExistsError, match="already exists"):
         manager.finalize(7, selection_reason="A second choice must never replace it.")
@@ -323,6 +686,8 @@ def test_finalize_rejects_a_non_crashing_candidate(tmp_path):
         submission_number=2,
         original_path=str(source),
         submitted_path=str(source),
+        sha256=hashlib.sha256(b"safe").hexdigest(),
+        byte_length=len(b"safe"),
         status="no_crash",
         exit_code=0,
         fingerprint=cybergym_submissions.SubmissionManager.fingerprint_output(
@@ -339,14 +704,67 @@ def test_finalize_rejects_a_non_crashing_candidate(tmp_path):
     assert not manager.FINAL_SUBMISSION_DIR.exists()
 
 
+def test_finalize_rejects_staged_identity_mismatch_without_original_fallback(tmp_path):
+    original = tmp_path / "original.bin"
+    original.write_bytes(b"recorded-bytes")
+    staged = tmp_path / "submission_3.poc"
+    staged.write_bytes(b"changed-after-verification")
+    submission = cybergym_submissions.PocSubmission(
+        submission_number=3,
+        original_path=str(original),
+        submitted_path=str(staged),
+        sha256=hashlib.sha256(b"recorded-bytes").hexdigest(),
+        byte_length=len(b"recorded-bytes"),
+        status="crashed",
+        exit_code=139,
+        fingerprint=cybergym_submissions.SubmissionManager.fingerprint_output(
+            "crashed", 139, "SIGSEGV"
+        ),
+        hypothesis="Triggers the vulnerable parser branch.",
+    )
+    manager = _submission_manager(submission_count=3, submissions=[submission])
+    manager.FINAL_SUBMISSION_DIR = tmp_path / "final_submission"
+
+    with pytest.raises(ValueError, match="staged candidate identity mismatch"):
+        manager.finalize(3, selection_reason="Expected verified identity.")
+
+    assert not manager.FINAL_SUBMISSION_DIR.exists()
+
+
+def test_finalize_requires_recorded_staged_identity(tmp_path):
+    original = tmp_path / "original.bin"
+    original.write_bytes(b"original-only")
+    submission = cybergym_submissions.PocSubmission(
+        submission_number=5,
+        original_path=str(original),
+        submitted_path=None,
+        status="crashed",
+        exit_code=139,
+        fingerprint=cybergym_submissions.SubmissionManager.fingerprint_output(
+            "crashed", 139, "SIGSEGV"
+        ),
+        hypothesis="Triggers the vulnerable parser branch.",
+    )
+    manager = _submission_manager(submission_count=5, submissions=[submission])
+    manager.FINAL_SUBMISSION_DIR = tmp_path / "final_submission"
+
+    with pytest.raises(ValueError, match="recorded staged identity"):
+        manager.finalize(5, selection_reason="Must use the staged bytes.")
+
+    assert not manager.FINAL_SUBMISSION_DIR.exists()
+
+
 @pytest.mark.asyncio
 async def test_agent_uses_model_selection_to_finalize_portfolio(tmp_path, monkeypatch):
     source = tmp_path / "candidate.bin"
-    source.write_bytes(b"agent-choice")
+    staged_bytes = b"agent-choice"
+    source.write_bytes(staged_bytes)
     submission = cybergym_submissions.PocSubmission(
         submission_number=4,
         original_path=str(source),
         submitted_path=str(source),
+        sha256=hashlib.sha256(staged_bytes).hexdigest(),
+        byte_length=len(staged_bytes),
         status="crashed",
         exit_code=139,
         fingerprint=cybergym_submissions.SubmissionManager.fingerprint_output(
