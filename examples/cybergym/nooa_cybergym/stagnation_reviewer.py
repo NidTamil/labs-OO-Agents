@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from nooa import Agent, strategy
 from nooa.config.strategy_config import PredictConfig
@@ -79,6 +79,15 @@ class StagnationAdvice(BaseModel):
     model_config = ConfigDict(extra="forbid")
     guidance: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
     reasoning: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
+
+    @field_validator("guidance", "reasoning")
+    @classmethod
+    def strip_and_require_content(cls, value: str) -> str:
+        """Normalize reviewer prose and reject responses without content."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("reviewer advice must contain non-whitespace content")
+        return stripped
 
 
 class StagnationReviewer(Agent, context={"state": None}):

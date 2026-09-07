@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from types import SimpleNamespace
 
 import pytest
@@ -214,6 +213,8 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch)
     agent = _agent_with_portfolio()
     original_guidance = agent._portfolio.guidance
     reviewer_llm = CloseableLLM()
+    cancellation_seen = asyncio.Event()
+    release_late_result = asyncio.Event()
     late_result = asyncio.Event()
 
     class FakeReviewer:
@@ -224,21 +225,25 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch)
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
-                await asyncio.sleep(0.02)
+                cancellation_seen.set()
+                await release_late_result.wait()
                 late_result.set()
                 return StagnationAdvice(guidance="late mutation", reasoning="too late")
 
     monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
 
-    started = time.monotonic()
-    audit = await agent._attempt_stagnation_review(
-        state=_eligible_state(), now=100, config=_config(reviewer_timeout_sec=0.001)
+    attempt = asyncio.create_task(
+        agent._attempt_stagnation_review(
+            state=_eligible_state(), now=100, config=_config(reviewer_timeout_sec=0.001)
+        )
     )
-    elapsed = time.monotonic() - started
+    await asyncio.wait_for(cancellation_seen.wait(), timeout=0.1)
+    audit = await asyncio.wait_for(attempt, timeout=0.1)
 
     assert audit is not None and audit.outcome == "timeout"
-    assert elapsed < 0.02
+    assert late_result.is_set() is False
+    release_late_result.set()
     await asyncio.wait_for(late_result.wait(), timeout=0.1)
     assert agent._portfolio.guidance == original_guidance
 
@@ -272,6 +277,37 @@ async def test_provider_failure_is_redacted_and_never_retried(monkeypatch, caplo
     assert attempts == 1
     assert reviewer_llm.closed == 1
     assert "secret provider response" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_whitespace_only_advice_fails_open_once_and_preserves_guidance(monkeypatch):
+    agent = _agent_with_portfolio()
+    original_guidance = agent._portfolio.guidance
+    state = _eligible_state()
+    reviewer_llm = CloseableLLM()
+    attempts = 0
+
+    class FakeReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def review(self, review_input):
+            nonlocal attempts
+            attempts += 1
+            return StagnationAdvice(guidance=" \n\t", reasoning=" \t")
+
+    monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
+    monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
+
+    first = await agent._attempt_stagnation_review(state=state, now=100, config=_config())
+    second = await agent._attempt_stagnation_review(state=state, now=200, config=_config())
+
+    assert first is not None and first.outcome == "failure"
+    assert first.failure_type == "ValidationError"
+    assert second is None
+    assert attempts == 1
+    assert reviewer_llm.closed == 1
+    assert agent._portfolio.guidance == original_guidance
 
 
 @pytest.mark.asyncio
@@ -313,7 +349,26 @@ async def test_cancellation_suppressing_late_result_never_applies(monkeypatch):
 @pytest.mark.asyncio
 async def test_hanging_close_is_bounded_and_records_cleanup_timeout(monkeypatch):
     agent = _agent_with_portfolio()
-    reviewer_llm = HangingCloseLLM()
+
+    class BlockingAfterCancellationCloseLLM(CloseableLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_started = asyncio.Event()
+            self.close_cancelled = asyncio.Event()
+            self.release_close = asyncio.Event()
+            self.close_finished = asyncio.Event()
+
+        async def aclose(self) -> None:
+            self.close_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                self.close_cancelled.set()
+                await self.release_close.wait()
+            finally:
+                self.close_finished.set()
+
+    reviewer_llm = BlockingAfterCancellationCloseLLM()
 
     class FakeReviewer:
         def __init__(self, *, llm):
@@ -326,16 +381,19 @@ async def test_hanging_close_is_bounded_and_records_cleanup_timeout(monkeypatch)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
     monkeypatch.setattr(nooa_cybergym_agent, "REVIEWER_CLEANUP_TIMEOUT_SEC", 0.001)
 
-    started = time.monotonic()
-    audit = await agent._attempt_stagnation_review(
-        state=_eligible_state(), now=100, config=_config()
+    attempt = asyncio.create_task(
+        agent._attempt_stagnation_review(state=_eligible_state(), now=100, config=_config())
     )
-    elapsed = time.monotonic() - started
+    await asyncio.wait_for(reviewer_llm.close_started.wait(), timeout=0.1)
+    await asyncio.wait_for(reviewer_llm.close_cancelled.wait(), timeout=0.1)
+    audit = await asyncio.wait_for(attempt, timeout=0.1)
 
     assert audit is not None and audit.outcome == "success"
     assert audit.cleanup_status == "timeout"
     assert audit.cleanup_failure_type == "TimeoutError"
-    assert elapsed < 0.02
+    assert reviewer_llm.release_close.is_set() is False
+    reviewer_llm.release_close.set()
+    await asyncio.wait_for(reviewer_llm.close_finished.wait(), timeout=0.1)
 
 
 @pytest.mark.asyncio
