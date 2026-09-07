@@ -75,12 +75,19 @@ with hidden:
     )
 
 try:
-    from .submissions import FinalPocArtifact, PocSubmission, SubmissionManager, SubmitResult
+    from .submissions import (
+        FinalPocArtifact,
+        PocSubmission,
+        SubmissionManager,
+        SubmissionStorageError,
+        SubmitResult,
+    )
 except ImportError:  # pragma: no cover
     from submissions import (  # type: ignore[no-redef]
         FinalPocArtifact,
         PocSubmission,
         SubmissionManager,
+        SubmissionStorageError,
         SubmitResult,
     )
 
@@ -606,6 +613,11 @@ class CyberGymAgent(Agent, context={"state": None}):
                 else:
                     done = await self._wait_until(active, deadline=wakeup_at)
             active -= done
+            try:
+                self._raise_terminal_storage_failure(done)
+            except SubmissionStorageError:
+                await self._stop_workers()
+                raise
 
             if stagnation_state is not None:
                 now = self._monotonic()
@@ -681,6 +693,8 @@ class CyberGymAgent(Agent, context={"state": None}):
         """Run a finder with error handling — log and return on failure."""
         try:
             await finder.find(self.description)
+        except SubmissionStorageError:
+            raise
         except (GenerationError, Exception) as exc:
             logger.error("finder crashed: %s: %s", type(exc).__name__, exc, exc_info=True)
 
@@ -701,8 +715,20 @@ class CyberGymAgent(Agent, context={"state": None}):
                 crash_output=seed.output_excerpt,
                 existing_cluster_keys=existing_keys,
             )
+        except SubmissionStorageError:
+            raise
         except (GenerationError, Exception) as exc:
             logger.error("expander crashed: %s: %s", type(exc).__name__, exc, exc_info=True)
+
+    @staticmethod
+    def _raise_terminal_storage_failure(done: set[asyncio.Task]) -> None:
+        """Propagate storage failure from a completed worker before any respawn."""
+        for task in done:
+            if task.cancelled():
+                continue
+            error = task.exception()
+            if isinstance(error, SubmissionStorageError):
+                raise error
 
     async def _wait(self, active: set[asyncio.Task]) -> set[asyncio.Task]:
         """Wait for any worker to finish or portfolio to change."""

@@ -367,6 +367,7 @@ class SubmissionManager:
         self._crashed_poc_paths: set[str] = set()
         self._last_crashing_poc = ""
         self._last_crashing_submission: SubmitResult | None = None
+        self._terminal_storage_error: SubmissionStorageError | None = None
         for submission in self._submissions:
             self._remember_crashing_submission(submission)
 
@@ -383,6 +384,7 @@ class SubmissionManager:
         source_model: str | None = None,
     ) -> SubmitResult:
         """Run public submit.sh, record the candidate, and update crash state."""
+        self._raise_if_storage_terminal()
         hypothesis = " ".join(hypothesis.split())
         if not hypothesis:
             raise ValueError("hypothesis must briefly explain the expected trigger")
@@ -407,6 +409,7 @@ class SubmissionManager:
                 source_model=source_model,
             )
             self._append_submission_log(submission)
+            self._accept_submission(submission)
             return result
 
         result = await self._run_submit_script(
@@ -423,8 +426,9 @@ class SubmissionManager:
             source_agent=source_agent,
             source_model=source_model,
         )
-        self._remember_crashing_submission(submission)
         self._append_submission_log(submission)
+        self._accept_submission(submission)
+        self._remember_crashing_submission(submission)
         return result
 
     def _stage_candidate(self, poc_path: str, submission_number: int) -> _StagedCandidate:
@@ -434,7 +438,7 @@ class SubmissionManager:
         temp_fd: int | None = None
         temp_path: Path | None = None
         incomplete_link: Path | None = None
-        open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
         try:
             try:
                 source_fd = os.open(source, open_flags)
@@ -454,7 +458,7 @@ class SubmissionManager:
                 temp_fd = raw_temp_fd
                 temp_path = Path(raw_temp_path)
             except OSError as exc:
-                raise SubmissionStorageError(
+                raise self._storage_failure(
                     f"cannot create candidate staging file in {self.CANDIDATE_DIR}"
                 ) from exc
 
@@ -474,7 +478,7 @@ class SubmissionManager:
                 try:
                     self._write_all(temp_fd, chunk)
                 except OSError as exc:
-                    raise SubmissionStorageError(
+                    raise self._storage_failure(
                         f"cannot write candidate staging file {temp_path}"
                     ) from exc
 
@@ -494,7 +498,7 @@ class SubmissionManager:
                 temp_fd = None
                 temp_path.chmod(0o444)
             except OSError as exc:
-                raise SubmissionStorageError(
+                raise self._storage_failure(
                     f"cannot durably stage candidate at {temp_path}"
                 ) from exc
 
@@ -509,7 +513,7 @@ class SubmissionManager:
                     incomplete_link = None
                 temp_path = None
             except OSError as exc:
-                raise SubmissionStorageError(
+                raise self._storage_failure(
                     f"cannot publish staged candidate without overwrite at {destination}"
                 ) from exc
             return _StagedCandidate(
@@ -526,7 +530,7 @@ class SubmissionManager:
                 try:
                     incomplete_link.unlink(missing_ok=True)
                 except OSError as exc:
-                    raise SubmissionStorageError(
+                    raise self._storage_failure(
                         f"cannot clean incomplete candidate publication {incomplete_link}"
                     ) from exc
             if temp_path is not None:
@@ -534,7 +538,7 @@ class SubmissionManager:
                     temp_path.chmod(0o600)
                     temp_path.unlink(missing_ok=True)
                 except OSError as exc:
-                    raise SubmissionStorageError(
+                    raise self._storage_failure(
                         f"cannot clean candidate staging file {temp_path}"
                     ) from exc
 
@@ -573,6 +577,7 @@ class SubmissionManager:
 
     async def verify_existing(self, poc_path: str) -> SubmitResult:
         """Re-submit an existing PoC without creating a new public candidate."""
+        self._raise_if_storage_terminal()
         result = await self._run_submit_script(
             poc_path,
             submission_number=self._submission_count,
@@ -865,9 +870,22 @@ class SubmissionManager:
                 f.flush()
                 os.fsync(f.fileno())
         except OSError as exc:
-            raise SubmissionStorageError(
+            raise self._storage_failure(
                 f"cannot durably append submission audit at {self.SUBMISSION_LOG_PATH}"
             ) from exc
+
+    def _storage_failure(self, message: str) -> SubmissionStorageError:
+        """Latch and return the first fatal local-storage failure."""
+        if self._terminal_storage_error is None:
+            self._terminal_storage_error = SubmissionStorageError(message)
+        return self._terminal_storage_error
+
+    def _raise_if_storage_terminal(self) -> None:
+        if self._terminal_storage_error is None:
+            return
+        raise SubmissionStorageError(
+            f"submission storage is terminal: {self._terminal_storage_error}"
+        ) from self._terminal_storage_error
 
     def _remember_crashing_submission(self, submission: PocSubmission) -> None:
         if submission.status != "crashed":
@@ -948,6 +966,7 @@ class SubmissionManager:
 
     def finalize(self, submission_number: int, *, selection_reason: str) -> FinalPocArtifact:
         """Freeze exactly one model-designated verified crash as an atomic artifact."""
+        self._raise_if_storage_terminal()
         selection_reason = " ".join(selection_reason.split())
         if not selection_reason:
             raise ValueError("selection_reason must explain why the model chose this PoC")
@@ -976,7 +995,7 @@ class SubmissionManager:
             final_dir.parent.mkdir(parents=True, exist_ok=True)
             stage = Path(tempfile.mkdtemp(prefix=".final_submission-", dir=final_dir.parent))
         except OSError as exc:
-            raise SubmissionStorageError(
+            raise self._storage_failure(
                 f"cannot create final submission staging directory for {final_dir}"
             ) from exc
         try:
@@ -1014,19 +1033,37 @@ class SubmissionManager:
                     raise FileExistsError(
                         f"final submission already exists at {final_dir}"
                     ) from exc
-                raise SubmissionStorageError(
+                raise self._storage_failure(
                     f"cannot publish final submission at {final_dir}"
                 ) from exc
             try:
                 final_dir.chmod(0o555)
             except OSError as exc:
-                raise SubmissionStorageError(
+                raise self._storage_failure(
                     f"cannot make final submission read-only at {final_dir}"
                 ) from exc
-            return artifact
-        finally:
-            if stage.exists():
-                shutil.rmtree(stage)
+        except BaseException:
+            self._cleanup_final_stage(stage, preserve_error=True)
+            raise
+        self._cleanup_final_stage(stage, preserve_error=False)
+        return artifact
+
+    def _cleanup_final_stage(self, stage: Path, *, preserve_error: bool) -> None:
+        """Remove a finalization temp tree without masking its primary failure."""
+        if not stage.exists():
+            return
+        try:
+            for child in stage.rglob("*"):
+                child.chmod(0o700 if child.is_dir() else 0o600)
+            stage.chmod(0o700)
+            shutil.rmtree(stage)
+        except OSError as exc:
+            failure = self._storage_failure(
+                f"cannot clean final submission staging directory {stage}"
+            )
+            if preserve_error:
+                return
+            raise failure from exc
 
     def _copy_recorded_stage(
         self,
@@ -1040,7 +1077,10 @@ class SubmissionManager:
         destination_fd: int | None = None
         try:
             try:
-                source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+                source_fd = os.open(
+                    source,
+                    os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0),
+                )
                 initial = os.fstat(source_fd)
             except OSError as exc:
                 raise ValueError(
@@ -1057,7 +1097,7 @@ class SubmissionManager:
                     0o600,
                 )
             except OSError as exc:
-                raise SubmissionStorageError(
+                raise self._storage_failure(
                     f"cannot create final staged PoC at {destination}"
                 ) from exc
 
@@ -1077,7 +1117,7 @@ class SubmissionManager:
                 try:
                     self._write_all(destination_fd, chunk)
                 except OSError as exc:
-                    raise SubmissionStorageError(
+                    raise self._storage_failure(
                         f"cannot write final staged PoC at {destination}"
                     ) from exc
 
@@ -1098,7 +1138,7 @@ class SubmissionManager:
                 destination_fd = None
                 destination.chmod(0o444)
             except OSError as exc:
-                raise SubmissionStorageError(
+                raise self._storage_failure(
                     f"cannot durably write final staged PoC at {destination}"
                 ) from exc
         finally:
@@ -1136,9 +1176,12 @@ class SubmissionManager:
             source_agent=source_agent,
             source_model=source_model,
         )
-        self._submissions.append(submission)
-        self._submission_count = max(self._submission_count, result.submission_number)
         return submission
+
+    def _accept_submission(self, submission: PocSubmission) -> None:
+        """Publish an already-audited submission into in-memory portfolio state."""
+        self._submissions.append(submission)
+        self._submission_count = max(self._submission_count, submission.submission_number)
 
     def _find_submission(self, submission_number: int | None) -> PocSubmission | None:
         if submission_number is None:
