@@ -388,7 +388,13 @@ def test_harness_policy_fingerprint_is_canonical_and_change_sensitive():
         "escalation_reviewer_timeout_sec",
         "escalation_reviewer_max_output_tokens",
         "escalation_recovery_window_sec",
+        "escalation_consecutive_no_growth_reviews",
     }
+    assert "trigger_reason" not in policy["v2"]
+    assert "review_id" not in policy["v2"]
+    changed_threshold = json.loads(json.dumps(policy))
+    changed_threshold["v2"]["escalation_consecutive_no_growth_reviews"] = 4
+    assert run.harness_policy_sha256(changed_threshold) != digest
     changed = json.loads(json.dumps(policy))
     changed["runtime"]["max_concurrent_expanders"] = 3
     assert run.harness_policy_sha256(changed) != digest
@@ -521,6 +527,7 @@ def test_timeout_budget_requires_finalization_and_shutdown_margin():
         "reviewer_timeout_sec",
         "reviewer_max_output_tokens",
         "recovery_window_sec",
+        "consecutive_no_growth_reviews",
     ],
 )
 @pytest.mark.parametrize("invalid", [0, -1])
@@ -537,7 +544,7 @@ def test_stagnation_preflight_requires_positive_values(field, invalid):
 def test_stagnation_preflight_rejects_inconsistent_reviewer_and_run_windows():
     with pytest.raises(ValueError, match="reviewer_timeout_sec.*recovery_window_sec"):
         run.validate_stagnation_preflight(
-            config=_stagnation_config(reviewer_timeout_sec=41),
+            config=_stagnation_config(reviewer_timeout_sec=40),
             soft_timeout=1_000,
             cohort_id="heldout-v2",
             evaluation_mode="heldout",
@@ -706,6 +713,8 @@ def test_runner_forwards_cli_overrides_and_records_all_effective_v2_settings():
             "1024",
             "--escalation-recovery-window",
             "40",
+            "--escalation-consecutive-no-growth-reviews",
+            "5",
         ]
     )
     env = {}
@@ -721,6 +730,7 @@ def test_runner_forwards_cli_overrides_and_records_all_effective_v2_settings():
         "NOOA_CYBERGYM_ESCALATION_REVIEWER_TIMEOUT_SEC": "10",
         "NOOA_CYBERGYM_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS": "1024",
         "NOOA_CYBERGYM_ESCALATION_RECOVERY_WINDOW_SEC": "40",
+        "NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS": "5",
     }
     assert record == {
         "escalation_enabled": True,
@@ -731,6 +741,7 @@ def test_runner_forwards_cli_overrides_and_records_all_effective_v2_settings():
         "escalation_reviewer_timeout_sec": 10,
         "escalation_reviewer_max_output_tokens": 1024,
         "escalation_recovery_window_sec": 40,
+        "escalation_consecutive_no_growth_reviews": 5,
     }
 
 
@@ -743,6 +754,7 @@ def test_escalation_cli_values_override_conflicting_environment_values():
         escalation_reviewer_timeout=10,
         escalation_reviewer_max_output_tokens=1024,
         escalation_recovery_window=40,
+        escalation_consecutive_no_growth_reviews=3,
     )
     env = {
         "NOOA_CYBERGYM_ESCALATION_MODEL": "environment-reviewer",
@@ -752,11 +764,47 @@ def test_escalation_cli_values_override_conflicting_environment_values():
         "NOOA_CYBERGYM_ESCALATION_REVIEWER_TIMEOUT_SEC": "996",
         "NOOA_CYBERGYM_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS": "995",
         "NOOA_CYBERGYM_ESCALATION_RECOVERY_WINDOW_SEC": "994",
+        "NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS": "993",
     }
 
     config = run.resolve_stagnation_config(args, env)
 
     assert config == _stagnation_config(model="cli-reviewer")
+
+
+def test_escalation_no_growth_cli_rejects_non_integer_and_zero_values():
+    required = [
+        "--task-id",
+        "arvo:15",
+        "--data-dir",
+        "data",
+        "--server",
+        "http://server:8666",
+        "--log-dir",
+        "logs",
+        "--tmp-dir",
+        "tmp",
+    ]
+    with pytest.raises(SystemExit):
+        run.parse_args([*required, "--escalation-consecutive-no-growth-reviews", "three"])
+
+    args = run.parse_args(
+        [
+            *required,
+            "--escalation-model",
+            "reviewer",
+            "--escalation-consecutive-no-growth-reviews",
+            "0",
+        ]
+    )
+    config = run.resolve_stagnation_config(args, {})
+    with pytest.raises(ValueError, match="consecutive_no_growth_reviews"):
+        run.validate_stagnation_preflight(
+            config=config,
+            soft_timeout=14_000,
+            cohort_id=None,
+            evaluation_mode=None,
+        )
 
 
 def test_omitted_v2_cli_uses_environment_defaults_without_enabling_escalation():

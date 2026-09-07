@@ -5,6 +5,8 @@
 from dataclasses import asdict
 from types import SimpleNamespace
 
+import pytest
+
 from examples.cybergym.nooa_cybergym.stagnation import (
     MAX_AGGREGATE_CATEGORIES,
     MAX_AGGREGATE_LABEL_CHARS,
@@ -59,6 +61,7 @@ def test_stagnation_config_reads_all_opt_in_environment_values():
             "NOOA_CYBERGYM_ESCALATION_REVIEWER_TIMEOUT_SEC": "901",
             "NOOA_CYBERGYM_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS": "32769",
             "NOOA_CYBERGYM_ESCALATION_RECOVERY_WINDOW_SEC": "3601",
+            "NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS": "5",
         }
     )
 
@@ -70,9 +73,18 @@ def test_stagnation_config_reads_all_opt_in_environment_values():
         reviewer_timeout_sec=901,
         reviewer_max_output_tokens=32769,
         recovery_window_sec=3601,
-        consecutive_no_growth_reviews=3,
+        consecutive_no_growth_reviews=5,
     )
     assert config.enabled is True
+
+
+def test_stagnation_config_rejects_non_integer_no_growth_environment_value():
+    with pytest.raises(ValueError, match="invalid literal for int"):
+        StagnationConfig.from_environment(
+            {
+                "NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS": "three",
+            }
+        )
 
 
 def test_stagnation_thresholds_are_inclusive_at_the_exact_boundaries():
@@ -255,7 +267,9 @@ def test_submission_progress_during_await_keeps_same_family_review_valid():
     assert baseline.outcome == "completed"
     assert baseline.consecutive_no_growth_reviews == 0
     assert state.submission_count == 3
-    assert state.complete_review(state.begin_review(), parsed=True).consecutive_no_growth_reviews == 1
+    assert (
+        state.complete_review(state.begin_review(), parsed=True).consecutive_no_growth_reviews == 1
+    )
 
 
 def test_forged_duplicate_failed_and_cancelled_reviews_never_count():

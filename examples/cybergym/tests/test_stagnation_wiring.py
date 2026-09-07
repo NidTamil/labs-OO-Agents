@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -846,7 +847,7 @@ async def test_ordinary_review_authority_paths_emit_terminal_events(monkeypatch,
 
 
 @pytest.mark.asyncio
-async def test_callback_audit_records_combined_trigger_and_latest_review_id(monkeypatch):
+async def test_callback_audit_records_opaque_trigger_claim_and_recovery_facts(monkeypatch, caplog):
     portfolio = agent_module.Portfolio(SimpleNamespace())
     portfolio.submissions = [_crash_submission(1, "family-one")]
     agent = agent_module.CyberGymAgent(llm=FakeLLMClient())
@@ -869,8 +870,79 @@ async def test_callback_audit_records_combined_trigger_and_latest_review_id(monk
     monkeypatch.setattr(agent_module, "make_llm", lambda *args, **kwargs: FakeLLMClient())
     monkeypatch.setattr(agent_module, "StagnationReviewer", ImmediateReviewer)
 
-    audit = await agent._attempt_stagnation_review(state=state, now=10, config=config)
+    with caplog.at_level("INFO", logger="nooa_cybergym"):
+        audit = await agent._attempt_stagnation_review(state=state, now=10, config=config)
 
     assert audit is not None
     assert audit.trigger_reason == "plateau_and_age"
     assert audit.review_id == latest.review_id == 2
+    assert audit.consecutive_no_growth_reviews == 1
+    assert audit.one_shot_claimed is True
+    assert audit.one_shot_outcome == "success"
+    assert audit.recovery_result == "entered"
+    payload = next(
+        json.loads(record.message.removeprefix("stagnation_review "))
+        for record in caplog.records
+        if record.message.startswith("stagnation_review ")
+    )
+    assert payload["submission_count"] == 1
+    assert payload["family_count"] == 1
+    assert payload["consecutive_no_growth_reviews"] == 1
+    assert not ({"prompt", "review_input", "guidance", "reasoning"} & payload.keys())
+
+
+def test_recovery_audit_is_append_only_and_contains_only_opaque_runtime_facts(caplog):
+    agent = agent_module.CyberGymAgent(llm=FakeLLMClient())
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=4, family_count=1)
+    state.complete_review(state.begin_review(), parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+    config = _config(consecutive_no_growth_reviews=1)
+    assert state.claim_escalation(now=10, config=config) is True
+
+    with caplog.at_level("INFO", logger="nooa_cybergym"):
+        assert agent._record_recovery_result_if_needed(state=state, now=11, config=config) is None
+        state.observe(now=12, submission_count=5, family_count=2)
+        assert (
+            agent._record_recovery_result_if_needed(state=state, now=12, config=config)
+            == "new_family"
+        )
+        assert agent._record_recovery_result_if_needed(state=state, now=13, config=config) is None
+
+    payloads = [
+        json.loads(record.message.removeprefix("stagnation_recovery "))
+        for record in caplog.records
+        if record.message.startswith("stagnation_recovery ")
+    ]
+    assert payloads == [
+        {
+            "claim_family_count": 1,
+            "claim_review_id": 2,
+            "family_count": 2,
+            "result": "new_family",
+            "submission_count": 5,
+        }
+    ]
+    assert not ({"prompt", "review_input", "guidance", "reasoning"} & payloads[0].keys())
+
+
+def test_recovery_audit_records_exact_expiry_once(caplog):
+    agent = agent_module.CyberGymAgent(llm=FakeLLMClient())
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=4, family_count=1)
+    config = _config(recovery_window_sec=20)
+    assert state.claim_escalation(now=10, config=config) is True
+
+    with caplog.at_level("WARNING", logger="nooa_cybergym"):
+        assert (
+            agent._record_recovery_result_if_needed(state=state, now=30, config=config)
+            == "expired_without_progress"
+        )
+        assert agent._record_recovery_result_if_needed(state=state, now=31, config=config) is None
+
+    messages = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("stagnation_recovery ")
+    ]
+    assert len(messages) == 1

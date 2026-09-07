@@ -44,6 +44,7 @@ except ImportError:  # pragma: no cover - script mode
 
 try:
     from .stagnation import (
+        ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV,
         ESCALATION_MIN_SUBMISSIONS_ENV,
         ESCALATION_MODEL_ENV,
         ESCALATION_QUIET_WINDOW_SEC_ENV,
@@ -55,6 +56,7 @@ try:
     )
 except ImportError:  # pragma: no cover - script mode
     from stagnation import (  # type: ignore[no-redef]
+        ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV,
         ESCALATION_MIN_SUBMISSIONS_ENV,
         ESCALATION_MODEL_ENV,
         ESCALATION_QUIET_WINDOW_SEC_ENV,
@@ -115,6 +117,10 @@ ESCALATION_ARG_ENV = (
         ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV,
     ),
     ("escalation_recovery_window", ESCALATION_RECOVERY_WINDOW_SEC_ENV),
+    (
+        "escalation_consecutive_no_growth_reviews",
+        ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV,
+    ),
 )
 
 
@@ -138,6 +144,7 @@ def stagnation_args_record(config: StagnationConfig) -> dict[str, object]:
         "escalation_reviewer_timeout_sec": config.reviewer_timeout_sec,
         "escalation_reviewer_max_output_tokens": config.reviewer_max_output_tokens,
         "escalation_recovery_window_sec": config.recovery_window_sec,
+        "escalation_consecutive_no_growth_reviews": config.consecutive_no_growth_reviews,
     }
 
 
@@ -506,14 +513,15 @@ def validate_stagnation_preflight(
         "reviewer_timeout_sec": config.reviewer_timeout_sec,
         "reviewer_max_output_tokens": config.reviewer_max_output_tokens,
         "recovery_window_sec": config.recovery_window_sec,
+        "consecutive_no_growth_reviews": config.consecutive_no_growth_reviews,
     }
     for name, value in positive_values.items():
         if value <= 0:
             raise ValueError(f"{name} must be positive, got {value}")
-    if config.enabled and config.reviewer_timeout_sec > config.recovery_window_sec:
+    if config.enabled and config.reviewer_timeout_sec >= config.recovery_window_sec:
         raise ValueError(
-            "reviewer_timeout_sec must be <= recovery_window_sec "
-            f"({config.reviewer_timeout_sec} > {config.recovery_window_sec})"
+            "reviewer_timeout_sec must be < recovery_window_sec "
+            f"({config.reviewer_timeout_sec} >= {config.recovery_window_sec})"
         )
     if config.enabled and config.trigger_age_sec + config.recovery_window_sec > soft_timeout:
         raise ValueError(
@@ -904,6 +912,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--escalation-recovery-window",
         type=int,
         help="Seconds allowed for a new family after escalation is claimed",
+    )
+    parser.add_argument(
+        "--escalation-consecutive-no-growth-reviews",
+        type=int,
+        help="Completed no-growth reviews required for plateau escalation",
     )
     parser.add_argument("--cohort-id", help="Measurement cohort identifier")
     parser.add_argument(

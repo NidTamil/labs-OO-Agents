@@ -199,11 +199,25 @@ class StagnationReviewAudit:
     family_count: int
     trigger_reason: Literal["age", "plateau", "plateau_and_age"]
     review_id: int | None
+    consecutive_no_growth_reviews: int
+    one_shot_claimed: bool
+    recovery_result: Literal["entered", "not_entered"]
     failure_type: str | None = None
     cleanup_status: Literal[
         "pending", "not_needed", "success", "timeout", "failure", "cancelled"
     ] = "pending"
     cleanup_failure_type: str | None = None
+
+    @property
+    def one_shot_outcome(self) -> Literal["success", "timeout", "failure", "cancelled"]:
+        """Expose the final callback outcome under its one-shot audit meaning."""
+        if self.cleanup_status == "timeout":
+            return "timeout"
+        if self.cleanup_status == "failure":
+            return "failure"
+        if self.cleanup_status == "cancelled":
+            return "cancelled"
+        return self.outcome
 
 
 # ---------------------------------------------------------------------------
@@ -560,6 +574,9 @@ class CyberGymAgent(Agent, context={"state": None}):
     _stop_event: Annotated[asyncio.Event, hidden]
     _shutdown_complete: Annotated[bool, hidden]
     _stagnation_review_audit: Annotated[StagnationReviewAudit | None, hidden]
+    _stagnation_recovery_result: Annotated[
+        Literal["new_family", "expired_without_progress"] | None, hidden
+    ]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -569,6 +586,7 @@ class CyberGymAgent(Agent, context={"state": None}):
         self._stop_event = asyncio.Event()
         self._shutdown_complete = False
         self._stagnation_review_audit = None
+        self._stagnation_recovery_result = None
 
     async def solve(self, instruction: str) -> str:
         """Main solve loop."""
@@ -665,6 +683,11 @@ class CyberGymAgent(Agent, context={"state": None}):
                     submission_count=len(self._portfolio.submissions),
                     family_count=self._portfolio.distinct_families,
                 )
+                self._record_recovery_result_if_needed(
+                    state=stagnation_state,
+                    now=now,
+                    config=STAGNATION_CONFIG,
+                )
                 if stagnation_state.should_escalate(now=now, config=STAGNATION_CONFIG):
                     await self._attempt_stagnation_review(
                         state=stagnation_state,
@@ -676,6 +699,11 @@ class CyberGymAgent(Agent, context={"state": None}):
                         now=now,
                         submission_count=len(self._portfolio.submissions),
                         family_count=self._portfolio.distinct_families,
+                    )
+                    self._record_recovery_result_if_needed(
+                        state=stagnation_state,
+                        now=now,
+                        config=STAGNATION_CONFIG,
                     )
                     if self._stop_event.is_set():
                         break
@@ -713,6 +741,11 @@ class CyberGymAgent(Agent, context={"state": None}):
                         now=self._monotonic(), config=STAGNATION_CONFIG
                     )
                 ):
+                    self._record_recovery_result_if_needed(
+                        state=stagnation_state,
+                        now=self._monotonic(),
+                        config=STAGNATION_CONFIG,
+                    )
                     logger.warning(
                         "stagnation recovery window ended without a new verified family; "
                         "stopping exploration"
@@ -938,6 +971,7 @@ class CyberGymAgent(Agent, context={"state": None}):
                 submission_count=len(self._portfolio.submissions),
                 family_count=self._portfolio.distinct_families,
             )
+            self._record_recovery_result_if_needed(state=state, now=now, config=config)
 
         if defer_stop or (review.stop and attempted_now):
             return False
@@ -1138,7 +1172,40 @@ class CyberGymAgent(Agent, context={"state": None}):
     def _record_stagnation_audit(self, audit: StagnationReviewAudit) -> None:
         self._stagnation_review_audit = audit
         log = logger.info if audit.outcome == "success" else logger.warning
-        log("stagnation_review %s", json.dumps(asdict(audit), sort_keys=True))
+        payload = asdict(audit)
+        payload["one_shot_outcome"] = audit.one_shot_outcome
+        log("stagnation_review %s", json.dumps(payload, sort_keys=True))
+
+    def _record_recovery_result_if_needed(
+        self,
+        *,
+        state: StagnationState,
+        now: float,
+        config: StagnationConfig,
+    ) -> Literal["new_family", "expired_without_progress"] | None:
+        """Append the first terminal recovery fact without generated content."""
+        if self._stagnation_recovery_result is not None:
+            return None
+        if state.escalation_claimed_at is None or state.family_count_at_escalation is None:
+            return None
+        if state.family_count > state.family_count_at_escalation:
+            result: Literal["new_family", "expired_without_progress"] = "new_family"
+        elif now >= state.escalation_claimed_at + config.recovery_window_sec:
+            result = "expired_without_progress"
+        else:
+            return None
+
+        self._stagnation_recovery_result = result
+        payload = {
+            "claim_family_count": state.family_count_at_escalation,
+            "claim_review_id": state.review_id_at_escalation,
+            "family_count": state.family_count,
+            "result": result,
+            "submission_count": state.submission_count,
+        }
+        log = logger.info if result == "new_family" else logger.warning
+        log("stagnation_recovery %s", json.dumps(payload, sort_keys=True))
+        return result
 
     async def _bounded_reviewer_cleanup(
         self, reviewer_llm
@@ -1207,6 +1274,7 @@ class CyberGymAgent(Agent, context={"state": None}):
         submission_count = state.submission_count
         family_count = state.family_count
         review_id = state.latest_review_id
+        consecutive_no_growth_reviews = state.consecutive_no_growth_reviews
 
         def state_time() -> float:
             return now + max(0.0, self._monotonic() - attempt_started_at)
@@ -1225,6 +1293,9 @@ class CyberGymAgent(Agent, context={"state": None}):
                 family_count=family_count,
                 trigger_reason=trigger_reason,
                 review_id=review_id,
+                consecutive_no_growth_reviews=consecutive_no_growth_reviews,
+                one_shot_claimed=True,
+                recovery_result="not_entered",
                 failure_type=(self._bounded_error_type(failure) if failure is not None else None),
             )
 
@@ -1355,6 +1426,7 @@ class CyberGymAgent(Agent, context={"state": None}):
                     reasoning=advice.reasoning,
                 )
             )
+            audit = replace(audit, recovery_result="entered")
         else:
             if audit.outcome == "success" and cleanup_succeeded:
                 audit = replace(audit, outcome="timeout", failure_type="TimeoutError")

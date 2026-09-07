@@ -17,6 +17,9 @@ ESCALATION_MIN_SUBMISSIONS_ENV = "NOOA_CYBERGYM_ESCALATION_MIN_SUBMISSIONS"
 ESCALATION_REVIEWER_TIMEOUT_SEC_ENV = "NOOA_CYBERGYM_ESCALATION_REVIEWER_TIMEOUT_SEC"
 ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV = "NOOA_CYBERGYM_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS"
 ESCALATION_RECOVERY_WINDOW_SEC_ENV = "NOOA_CYBERGYM_ESCALATION_RECOVERY_WINDOW_SEC"
+ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV = (
+    "NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS"
+)
 
 DEFAULT_ESCALATION_MODEL = ""
 DEFAULT_ESCALATION_TRIGGER_AGE_SEC = 7200
@@ -95,6 +98,12 @@ class StagnationConfig:
                     str(DEFAULT_ESCALATION_RECOVERY_WINDOW_SEC),
                 )
             ),
+            consecutive_no_growth_reviews=int(
+                source.get(
+                    ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV,
+                    str(DEFAULT_CONSECUTIVE_NO_GROWTH_REVIEWS),
+                )
+            ),
         )
 
 
@@ -127,6 +136,7 @@ ESCALATION_MIN_SUBMISSIONS = STAGNATION_CONFIG.minimum_submissions
 ESCALATION_REVIEWER_TIMEOUT_SEC = STAGNATION_CONFIG.reviewer_timeout_sec
 ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS = STAGNATION_CONFIG.reviewer_max_output_tokens
 ESCALATION_RECOVERY_WINDOW_SEC = STAGNATION_CONFIG.recovery_window_sec
+ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS = STAGNATION_CONFIG.consecutive_no_growth_reviews
 
 
 @dataclass(slots=True)
@@ -140,6 +150,7 @@ class StagnationState:
     escalation_attempted: bool = False
     escalation_claimed_at: float | None = None
     family_count_at_escalation: int | None = None
+    review_id_at_escalation: int | None = None
     consecutive_no_growth_reviews: int = 0
     latest_review_id: int | None = None
     _next_review_id: int = field(default=1, init=False, repr=False)
@@ -270,6 +281,7 @@ class StagnationState:
         self.escalation_attempted = True
         self.escalation_claimed_at = now
         self.family_count_at_escalation = self.family_count
+        self.review_id_at_escalation = self.latest_review_id
         return True
 
     def cancel_recovery(self) -> None:

@@ -419,6 +419,8 @@ async def test_hanging_close_is_bounded_and_records_cleanup_timeout(monkeypatch,
     assert audit is not None and audit.outcome == "success"
     assert audit.cleanup_status == "timeout"
     assert audit.cleanup_failure_type == "TimeoutError"
+    assert audit.one_shot_outcome == "timeout"
+    assert audit.recovery_result == "not_entered"
     payloads = _review_log_payloads(caplog)
     assert len(payloads) == 1
     assert payloads[0]["cleanup_status"] == "timeout"
@@ -493,6 +495,8 @@ async def test_cleanup_exception_emits_one_final_redacted_audit(monkeypatch, cap
 
     assert audit is not None and audit.cleanup_status == "failure"
     assert audit.cleanup_failure_type == "RuntimeError"
+    assert audit.one_shot_outcome == "failure"
+    assert audit.recovery_result == "not_entered"
     payloads = _review_log_payloads(caplog)
     assert len(payloads) == 1
     assert payloads[0]["cleanup_status"] == "failure"
