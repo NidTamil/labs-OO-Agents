@@ -117,6 +117,31 @@ def test_new_family_progress_resets_only_the_quiet_window():
     assert state.last_new_family_at == 7100
 
 
+def test_stale_lower_counts_cannot_create_false_progress_when_counts_reappear():
+    state = StagnationState(started_at=0)
+    state.observe(now=100, submission_count=20, family_count=2)
+
+    state.observe(now=200, submission_count=5, family_count=1)
+    state.observe(now=210, submission_count=20, family_count=2)
+
+    assert state.submission_count == 20
+    assert state.family_count == 2
+    assert state.last_new_family_at == 100
+
+
+def test_duplicate_and_out_of_order_observations_preserve_monotonic_state():
+    state = StagnationState(started_at=0)
+    state.observe(now=100, submission_count=20, family_count=2)
+
+    state.observe(now=100, submission_count=20, family_count=2)
+    state.observe(now=90, submission_count=25, family_count=3)
+    state.observe(now=80, submission_count=24, family_count=2)
+
+    assert state.submission_count == 25
+    assert state.family_count == 3
+    assert state.last_new_family_at == 100
+
+
 def test_claim_escalation_marks_one_shot_before_dispatch():
     state = StagnationState(started_at=0)
     state.observe(now=100, submission_count=3, family_count=0)

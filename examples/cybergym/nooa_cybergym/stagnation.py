@@ -122,10 +122,11 @@ class StagnationState:
 
     def observe(self, *, now: float, submission_count: int, family_count: int) -> None:
         """Record aggregate progress and reset quiet time only for a new family."""
+        assert self.last_new_family_at is not None
         if family_count > self.family_count:
-            self.last_new_family_at = now
-        self.submission_count = submission_count
-        self.family_count = family_count
+            self.last_new_family_at = max(self.last_new_family_at, now)
+        self.submission_count = max(self.submission_count, submission_count)
+        self.family_count = max(self.family_count, family_count)
 
     def elapsed_sec(self, *, now: float) -> float:
         """Return deterministic elapsed monotonic time."""
