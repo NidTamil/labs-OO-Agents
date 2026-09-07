@@ -770,6 +770,29 @@ class CyberGymAgent(Agent, context={"state": None}):
                     )
                     if (
                         stagnation_state is not None
+                        and stagnation_state.recovery_exhausted_without_progress(
+                            now=self._monotonic(),
+                            config=STAGNATION_CONFIG,
+                            decisive_stop=review.stop,
+                        )
+                    ):
+                        self._record_recovery_result_if_needed(
+                            state=stagnation_state,
+                            now=self._monotonic(),
+                            config=STAGNATION_CONFIG,
+                            exhausted_without_progress=True,
+                        )
+                        logger.warning(
+                            "stagnation recovery exploration was exhausted without "
+                            "a new verified family; stopping exploration"
+                        )
+                        stagnation_failure = (
+                            "No verified crashing PoC: stagnation recovery exploration "
+                            "was exhausted without a new verified family"
+                        )
+                        break
+                    if (
+                        stagnation_state is not None
                         and stagnation_state.recovery_expired_without_progress(
                             now=self._monotonic(), config=STAGNATION_CONFIG
                         )
@@ -1232,14 +1255,19 @@ class CyberGymAgent(Agent, context={"state": None}):
         state: StagnationState,
         now: float,
         config: StagnationConfig,
-    ) -> Literal["new_family", "expired_without_progress"] | None:
+        exhausted_without_progress: bool = False,
+    ) -> Literal["new_family", "expired_without_progress", "exhausted_without_progress"] | None:
         """Append the first terminal recovery fact without generated content."""
         if self._stagnation_recovery_result is not None:
             return None
         if state.escalation_claimed_at is None or state.family_count_at_escalation is None:
             return None
         if state.family_count > state.family_count_at_escalation:
-            result: Literal["new_family", "expired_without_progress"] = "new_family"
+            result: Literal[
+                "new_family", "expired_without_progress", "exhausted_without_progress"
+            ] = "new_family"
+        elif exhausted_without_progress and state.recovery_active(now=now, config=config):
+            result = "exhausted_without_progress"
         elif now >= state.escalation_claimed_at + config.recovery_window_sec:
             result = "expired_without_progress"
         else:
@@ -1501,6 +1529,7 @@ class CyberGymAgent(Agent, context={"state": None}):
                     reasoning=advice.reasoning,
                 )
             )
+            state.begin_recovery()
             audit = replace(audit, recovery_result="entered")
         else:
             if audit.outcome == "success" and cleanup_succeeded:

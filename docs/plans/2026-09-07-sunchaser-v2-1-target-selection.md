@@ -17,7 +17,8 @@ and keep all existing held-out evidence immutable.
 - Escalation is one-shot and fail closed. Provider or reviewer failure must be
   audited and must not silently approve a stop or candidate.
 - A plateau may accelerate the existing time-based escalation; it must not
-  weaken minimum-submission, recovery-window, or immutable-policy controls.
+  weaken minimum-submission or immutable-policy controls. The recovery window
+  remains a hard upper bound.
 - Final selection ranks description and source-path alignment before size.
 - Candidate bytes are copied to an immutable staged artifact before verifier
   execution. Missing or changed source paths are classified locally and do not
@@ -55,14 +56,22 @@ not promise a durable cross-process claim after restart.
 For an ordinary `stop=True` that is plateau-eligible and unclaimed, defer and
 discard that stop, claim escalation, and invoke the stronger reviewer. A valid
 review enters the existing recovery state and applies guidance with effective
-`stop=False`. While recovery is active, ordinary stop decisions are deferred
-until a new family appears or recovery expires. A new family ends recovery and
-normal stopping resumes. Recovery expiry without progress remains a terminal
-run failure. Provider construction failure, invalid response, reviewer timeout,
-cleanup failure, or callback cancellation records its exact failure and makes
-the pending stop ineffective; a later, distinct successful ordinary review may
-stop after the consumed attempt. External cancellation, cooperative stop,
-memory limit, soft deadline, and outer hard timeout retain authority.
+`stop=False`, then resets the no-growth counter so recovery evidence is fresh.
+While recovery is active, an individual ordinary stop is deferred. A new family
+ends recovery and normal stopping resumes. If the configured number of fresh
+no-growth reviews all return a decisive stop, recovery terminates early as an
+explicit failed search; expiry without progress is the same terminal failure at
+the hard upper bound. Provider construction failure, invalid response, reviewer
+timeout, cleanup failure, or callback cancellation records its exact failure
+and makes the pending stop ineffective; a later, distinct successful ordinary
+review may stop after the consumed attempt. External cancellation, cooperative
+stop, memory limit, soft deadline, and outer hard timeout retain authority.
+
+The stronger reviewer sees no hidden fixed-build evidence. Its prompt must call
+every vulnerable-build crash candidate evidence, forbid solved or sole-bug
+claims, and rank new directions by patch-specific alignment and family
+diversity. This preserves isolation while preventing generic sanitizer crashes
+from being reinforced as proven answers.
 
 The recovery deadline remains the existing upper bound measured from claim
 time, so reviewer execution consumes the window. Preflight must require the

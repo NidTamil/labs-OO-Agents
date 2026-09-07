@@ -455,7 +455,7 @@ async def test_plateau_callback_is_one_shot_and_local_stops_defer_until_progress
 
     class PlateauAgent(InertSolveAgent):
         async def _wait(self, active):
-            if review_calls == 4:
+            if review_calls == 3:
                 portfolio.submissions.append(second_family)
                 portfolio.mark_expanded(second_family.submission_number)
             task = next(iter(active))
@@ -481,6 +481,7 @@ async def test_plateau_callback_is_one_shot_and_local_stops_defer_until_progress
             assert state.escalation_reason(now=now, config=config) == "plateau"
             assert state.claim_escalation(now=now, config=config) is True
             callback_calls += 1
+            state.begin_recovery()
             portfolio.apply_review(
                 agent_module.Review(
                     on_target=True,
@@ -493,11 +494,72 @@ async def test_plateau_callback_is_one_shot_and_local_stops_defer_until_progress
 
     result = await PlateauAgent(llm=FakeLLMClient()).solve("inert")
 
-    assert review_calls == 5
+    assert review_calls == 4
     assert callback_calls == 1
     assert portfolio.distinct_families == 2
     assert portfolio.stop is True
     assert "Final PoC:" in result
+
+
+@pytest.mark.asyncio
+async def test_recovery_fails_after_bounded_decisive_no_growth_reviews(monkeypatch, tmp_path):
+    config = _config(
+        trigger_age_sec=1_000,
+        minimum_submissions=1,
+        consecutive_no_growth_reviews=3,
+        recovery_window_sec=200,
+    )
+    portfolio, InertSolveAgent = _patch_inert_solve(monkeypatch, tmp_path, config, fake_final=False)
+    first_family = _crash_submission(1, "family-one")
+    portfolio.submissions = [first_family]
+    portfolio.mark_expanded(first_family.submission_number)
+    review_calls = 0
+    callback_calls = 0
+    finder_runs = 0
+
+    class ExhaustedRecoveryAgent(InertSolveAgent):
+        async def _run_finder(self, finder):
+            nonlocal finder_runs
+            finder_runs += 1
+
+        async def _wait(self, active):
+            done, _ = await asyncio.wait(active)
+            return done
+
+        async def _wait_until(self, active, *, deadline):
+            return await self._wait(active)
+
+        async def _review(self, current_portfolio_state):
+            nonlocal review_calls
+            review_calls += 1
+            return agent_module.Review(
+                on_target=True,
+                guidance="no distinct path remains",
+                stop=callback_calls == 1,
+                reasoning="recovery exploration is exhausted",
+            )
+
+        async def _attempt_stagnation_review(self, *, state, now, config):
+            nonlocal callback_calls
+            assert state.claim_escalation(now=now, config=config) is True
+            callback_calls += 1
+            state.begin_recovery()
+            portfolio.apply_review(
+                agent_module.Review(
+                    on_target=True,
+                    guidance="try one focused recovery direction",
+                    stop=False,
+                    reasoning="stronger one-shot guidance",
+                )
+            )
+            return SimpleNamespace(outcome="success", cleanup_status="success")
+
+    with pytest.raises(RuntimeError, match="recovery exploration was exhausted"):
+        await ExhaustedRecoveryAgent(llm=FakeLLMClient()).solve("inert")
+
+    assert callback_calls == 1
+    assert review_calls == 7
+    assert finder_runs == 7
 
 
 @pytest.mark.asyncio

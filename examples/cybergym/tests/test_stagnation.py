@@ -203,6 +203,38 @@ def test_new_verified_family_cancels_recovery_termination():
     assert state.next_wakeup_at(config=config) is None
 
 
+def test_recovery_uses_fresh_reviews_and_can_end_early_when_exploration_is_exhausted():
+    config = _config(consecutive_no_growth_reviews=3, recovery_window_sec=40)
+    state = StagnationState(started_at=0)
+    state.observe(now=0, submission_count=4, family_count=1)
+    state.complete_review(state.begin_review(), parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+    assert state.consecutive_no_growth_reviews == 3
+    assert state.claim_escalation(now=10, config=config) is True
+
+    state.begin_recovery()
+
+    assert state.consecutive_no_growth_reviews == 0
+    for expected in (1, 2):
+        state.complete_review(state.begin_review(), parsed=True)
+        assert state.consecutive_no_growth_reviews == expected
+        assert (
+            state.recovery_exhausted_without_progress(now=11, config=config, decisive_stop=True)
+            is False
+        )
+
+    state.complete_review(state.begin_review(), parsed=True)
+    assert (
+        state.recovery_exhausted_without_progress(now=11, config=config, decisive_stop=False)
+        is False
+    )
+    assert (
+        state.recovery_exhausted_without_progress(now=11, config=config, decisive_stop=True) is True
+    )
+
+
 def test_disabled_configuration_never_claims_escalation():
     state = StagnationState(started_at=0)
     state.observe(now=10_000, submission_count=100, family_count=5)

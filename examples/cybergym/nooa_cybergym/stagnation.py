@@ -289,6 +289,13 @@ class StagnationState:
         self.escalation_claimed_at = None
         self.family_count_at_escalation = None
 
+    def begin_recovery(self) -> None:
+        """Start a fresh no-growth baseline after successful stronger guidance."""
+        if self.escalation_claimed_at is None or self.family_count_at_escalation is None:
+            raise RuntimeError("recovery requires a claimed escalation")
+        self.consecutive_no_growth_reviews = 0
+        self._last_valid_review_family_count = self.family_count
+
     def recovery_active(self, *, now: float, config: StagnationConfig) -> bool:
         """Return whether a claimed callback still owns an unexpired recovery window."""
         if self.escalation_claimed_at is None or self.family_count_at_escalation is None:
@@ -305,6 +312,20 @@ class StagnationState:
         return (
             self.family_count <= self.family_count_at_escalation
             and now >= self.escalation_claimed_at + config.recovery_window_sec
+        )
+
+    def recovery_exhausted_without_progress(
+        self,
+        *,
+        now: float,
+        config: StagnationConfig,
+        decisive_stop: bool,
+    ) -> bool:
+        """Return whether fresh recovery reviews decisively exhausted exploration."""
+        return (
+            decisive_stop
+            and self.recovery_active(now=now, config=config)
+            and self.consecutive_no_growth_reviews >= config.consecutive_no_growth_reviews
         )
 
     def next_wakeup_at(self, *, config: StagnationConfig) -> float | None:

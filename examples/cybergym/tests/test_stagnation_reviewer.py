@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from types import SimpleNamespace
 
@@ -116,6 +117,7 @@ def test_stagnation_reviewer_is_predict_only_and_has_no_worker_tools():
     strategy = StagnationReviewer.review._plan_strategy
     reviewer = StagnationReviewer(llm=FakeLLMClient())
     api = doc(reviewer).lower()
+    review_prompt = inspect.getdoc(StagnationReviewer.review).lower()
 
     assert isinstance(strategy, PredictStrategy)
     assert strategy.config.max_retries == 1
@@ -124,6 +126,9 @@ def test_stagnation_reviewer_is_predict_only_and_has_no_worker_tools():
     assert "submit(" not in api
     assert "portfolio" not in api
     assert "shell" not in api
+    assert "vulnerable-build crash is candidate evidence" in review_prompt
+    assert "never claim that the task is solved" in review_prompt
+    assert "patch-specific" in review_prompt
     with pytest.raises(ValueError):
         StagnationAdvice(guidance="x" * (MAX_ADVICE_CHARS + 1), reasoning="bounded")
     with pytest.raises(ValueError):
