@@ -211,7 +211,9 @@ async def test_stagnation_review_success_uses_bounded_transport_retries_and_appl
     model, kwargs = make_calls[0]
     assert model == "alternate-reviewer"
     assert kwargs["max_tokens"] == 1234
-    assert kwargs["retry_config"].max_retries == 3
+    assert kwargs["retry_config"].max_retries == 5
+    assert kwargs["retry_config"].base_delay == 3.0
+    assert kwargs["retry_config"].max_delay == 30.0
     assert kwargs["retry_config"].rate_limit_extra_retries == 3
     assert kwargs["provider_scoped"] is True
     assert kwargs["inherit_reasoning_effort"] is False

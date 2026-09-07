@@ -1372,7 +1372,12 @@ class CyberGymAgent(Agent, context={"state": None}):
             reviewer_llm = make_llm(
                 config.model,
                 max_tokens=config.reviewer_max_output_tokens,
-                retry_config=RetryConfig(max_retries=3, rate_limit_extra_retries=3),
+                retry_config=RetryConfig(
+                    max_retries=5,
+                    base_delay=3.0,
+                    max_delay=30.0,
+                    rate_limit_extra_retries=3,
+                ),
                 provider_scoped=True,
                 inherit_reasoning_effort=False,
             )
