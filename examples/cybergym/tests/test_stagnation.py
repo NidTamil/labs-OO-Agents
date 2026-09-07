@@ -244,20 +244,48 @@ def test_family_growth_resets_no_growth_reviews_even_when_observed_between_revie
     assert event.consecutive_no_growth_reviews == 0
 
 
-def test_duplicate_stale_failed_and_cancelled_reviews_never_count():
+def test_submission_progress_during_await_keeps_same_family_review_valid():
+    state = StagnationState(started_at=0)
+    state.observe(now=10, submission_count=2, family_count=1)
+    original_snapshot = state.begin_review()
+
+    state.observe(now=11, submission_count=3, family_count=1)
+    baseline = state.complete_review(original_snapshot, parsed=True)
+
+    assert baseline.outcome == "completed"
+    assert baseline.consecutive_no_growth_reviews == 0
+    assert state.submission_count == 3
+    assert state.complete_review(state.begin_review(), parsed=True).consecutive_no_growth_reviews == 1
+
+
+def test_forged_duplicate_failed_and_cancelled_reviews_never_count():
     state = StagnationState(started_at=0)
     state.observe(now=10, submission_count=3, family_count=1)
     baseline = state.begin_review()
     state.complete_review(baseline, parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+    expected_no_growth_count = state.consecutive_no_growth_reviews
+
+    issued_snapshot = state.begin_review()
+    forged = ReviewSnapshot(
+        review_id=issued_snapshot.review_id,
+        submission_count=issued_snapshot.submission_count + 1,
+        family_count=issued_snapshot.family_count,
+    )
+    assert state.complete_review(forged, parsed=True).outcome == "stale"
+    assert state.consecutive_no_growth_reviews == expected_no_growth_count
 
     duplicate = state.complete_review(baseline, parsed=True)
     assert duplicate.outcome == "duplicate"
+    assert state.consecutive_no_growth_reviews == expected_no_growth_count
 
     failed = state.begin_review()
     assert state.complete_review(failed, parsed=False).outcome == "failed"
+    assert state.consecutive_no_growth_reviews == expected_no_growth_count
 
     cancelled = state.begin_review()
     assert state.complete_review(cancelled, parsed=True, cancelled=True).outcome == "cancelled"
+    assert state.consecutive_no_growth_reviews == expected_no_growth_count
 
     stale = state.begin_review()
     state.observe(now=20, submission_count=4, family_count=2)
