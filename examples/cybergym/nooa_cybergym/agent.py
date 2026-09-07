@@ -543,7 +543,10 @@ class CyberGymAgent(Agent, context={"state": None}):
             )
 
         self._portfolio = Portfolio(SubmissionManager(self.shell))
-        started_at = time.monotonic()
+        started_at = self._monotonic()
+        stagnation_state = (
+            StagnationState(started_at=started_at) if STAGNATION_CONFIG.enabled else None
+        )
         # Cooperative timeout backup: the outer asyncio.wait() timeout in main.py
         # doesn't reliably propagate through the nooa method wrapper, so
         # break the orchestration loop ourselves once SOFT_TIMEOUT_SEC elapses.
@@ -566,7 +569,7 @@ class CyberGymAgent(Agent, context={"state": None}):
         while (
             active
             and not self._stop_event.is_set()
-            and (time.monotonic() - started_at) < SOFT_TIMEOUT_SEC
+            and (self._monotonic() - started_at) < SOFT_TIMEOUT_SEC
         ):
             # Memory pressure check
             rss = _get_rss_mb()
@@ -587,9 +590,54 @@ class CyberGymAgent(Agent, context={"state": None}):
                 active.add(asyncio.create_task(self._run_expander(expander, seed)))
                 active_expander_count += 1
 
-            # Wait for any worker to finish or portfolio to change
-            done = await self._wait(active)
+            # Wait for any worker to finish or portfolio to change. Enabled v2 runs
+            # also wake at the next trigger/recovery deadline even when workers are quiet.
+            if stagnation_state is None:
+                done = await self._wait(active)
+            else:
+                now = self._monotonic()
+                stagnation_state.observe(
+                    now=now,
+                    submission_count=len(self._portfolio.submissions),
+                    family_count=self._portfolio.distinct_families,
+                )
+                wakeup_at = stagnation_state.next_wakeup_at(config=STAGNATION_CONFIG)
+                if wakeup_at is not None and wakeup_at <= now:
+                    done = set()
+                elif wakeup_at is None:
+                    done = await self._wait(active)
+                else:
+                    done = await self._wait_until(active, deadline=wakeup_at)
             active -= done
+
+            if stagnation_state is not None:
+                now = self._monotonic()
+                stagnation_state.observe(
+                    now=now,
+                    submission_count=len(self._portfolio.submissions),
+                    family_count=self._portfolio.distinct_families,
+                )
+                if stagnation_state.should_escalate(now=now, config=STAGNATION_CONFIG):
+                    await self._attempt_stagnation_review(
+                        state=stagnation_state,
+                        now=now,
+                        config=STAGNATION_CONFIG,
+                    )
+                    now = self._monotonic()
+                    stagnation_state.observe(
+                        now=now,
+                        submission_count=len(self._portfolio.submissions),
+                        family_count=self._portfolio.distinct_families,
+                    )
+                if stagnation_state.recovery_expired_without_progress(
+                    now=now, config=STAGNATION_CONFIG
+                ):
+                    logger.warning(
+                        "stagnation recovery window ended without a new verified family; "
+                        "stopping exploration"
+                    )
+                    break
+
             for finder in finders:
                 finder.record_portfolio_context_if_changed("portfolio_changed")
 
@@ -613,7 +661,10 @@ class CyberGymAgent(Agent, context={"state": None}):
                     finder.record_portfolio_context_if_changed("review")
 
                 # Honor stop only after the minimum exploration window has elapsed.
-                if review.stop and (time.monotonic() - started_at) >= self._minimum_exploration_sec:
+                if (
+                    review.stop
+                    and (self._monotonic() - started_at) >= self._minimum_exploration_sec
+                ):
                     break
 
             # Respawn finished finders (persistent instance, new call)
@@ -678,6 +729,43 @@ class CyberGymAgent(Agent, context={"state": None}):
             stop_task.cancel()
         await asyncio.gather(changed_task, stop_task, return_exceptions=True)
         return done
+
+    async def _wait_until(self, active: set[asyncio.Task], *, deadline: float) -> set[asyncio.Task]:
+        """Wait for normal activity or one bounded monotonic deadline."""
+        changed_task = asyncio.create_task(self._portfolio.changed.wait())
+        stop_task = asyncio.create_task(self._stop_event.wait())
+        timer_task = asyncio.create_task(asyncio.sleep(max(0.0, deadline - self._monotonic())))
+        auxiliary_tasks = {changed_task, stop_task, timer_task}
+        try:
+            done, _ = await asyncio.wait(
+                active | auxiliary_tasks,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        except BaseException:
+            for task in auxiliary_tasks:
+                task.cancel()
+            await asyncio.gather(*auxiliary_tasks, return_exceptions=True)
+            raise
+        if changed_task in done:
+            self._portfolio.changed.clear()
+            done.discard(changed_task)
+        else:
+            changed_task.cancel()
+        if stop_task in done:
+            done.discard(stop_task)
+        else:
+            stop_task.cancel()
+        if timer_task in done:
+            done.discard(timer_task)
+        else:
+            timer_task.cancel()
+        await asyncio.gather(changed_task, stop_task, timer_task, return_exceptions=True)
+        return done
+
+    @staticmethod
+    def _monotonic() -> float:
+        """Read monotonic time through one injectable orchestration boundary."""
+        return time.monotonic()
 
     def request_stop(self) -> None:
         """Ask the orchestration loop to finish and freeze its final candidate."""

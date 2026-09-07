@@ -21,6 +21,29 @@ from cybergym.task.gen_task import generate_task
 from cybergym.task.types import TaskConfig, TaskDifficulty
 from docker.errors import ImageNotFound
 
+try:
+    from .stagnation import (
+        ESCALATION_MIN_SUBMISSIONS_ENV,
+        ESCALATION_MODEL_ENV,
+        ESCALATION_QUIET_WINDOW_SEC_ENV,
+        ESCALATION_RECOVERY_WINDOW_SEC_ENV,
+        ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV,
+        ESCALATION_REVIEWER_TIMEOUT_SEC_ENV,
+        ESCALATION_TRIGGER_AGE_SEC_ENV,
+        StagnationConfig,
+    )
+except ImportError:  # pragma: no cover - script mode
+    from stagnation import (  # type: ignore[no-redef]
+        ESCALATION_MIN_SUBMISSIONS_ENV,
+        ESCALATION_MODEL_ENV,
+        ESCALATION_QUIET_WINDOW_SEC_ENV,
+        ESCALATION_RECOVERY_WINDOW_SEC_ENV,
+        ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV,
+        ESCALATION_REVIEWER_TIMEOUT_SEC_ENV,
+        ESCALATION_TRIGGER_AGE_SEC_ENV,
+        StagnationConfig,
+    )
+
 ENV_PREFIXES = (
     "NOOA_CYBERGYM_",
     "OPENAI_",
@@ -43,6 +66,83 @@ DEFAULT_TRACING_SHUTDOWN_TIMEOUT_SEC = 30.0
 DEFAULT_OUTER_MARGIN_SEC = 60.0
 GIT_LFS_POINTER_HEADER = b"version https://git-lfs.github.com/spec/v1"
 
+ESCALATION_ARG_ENV = (
+    ("escalation_model", ESCALATION_MODEL_ENV),
+    ("escalation_trigger_age", ESCALATION_TRIGGER_AGE_SEC_ENV),
+    ("escalation_quiet_window", ESCALATION_QUIET_WINDOW_SEC_ENV),
+    ("escalation_min_submissions", ESCALATION_MIN_SUBMISSIONS_ENV),
+    ("escalation_reviewer_timeout", ESCALATION_REVIEWER_TIMEOUT_SEC_ENV),
+    (
+        "escalation_reviewer_max_output_tokens",
+        ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV,
+    ),
+    ("escalation_recovery_window", ESCALATION_RECOVERY_WINDOW_SEC_ENV),
+)
+
+
+def resolve_stagnation_config(args: argparse.Namespace, env: dict[str, str]) -> StagnationConfig:
+    """Apply explicit CLI overrides and return the effective container config."""
+    for argument, environment_name in ESCALATION_ARG_ENV:
+        value = getattr(args, argument)
+        if value is not None:
+            env[environment_name] = str(value)
+    return StagnationConfig.from_environment(env)
+
+
+def stagnation_args_record(config: StagnationConfig) -> dict[str, object]:
+    """Return flat, effective v2 settings for logs and args.json."""
+    return {
+        "escalation_enabled": config.enabled,
+        "escalation_model": config.model,
+        "escalation_trigger_age_sec": config.trigger_age_sec,
+        "escalation_quiet_window_sec": config.quiet_window_sec,
+        "escalation_min_submissions": config.minimum_submissions,
+        "escalation_reviewer_timeout_sec": config.reviewer_timeout_sec,
+        "escalation_reviewer_max_output_tokens": config.reviewer_max_output_tokens,
+        "escalation_recovery_window_sec": config.recovery_window_sec,
+    }
+
+
+def validate_stagnation_preflight(
+    *,
+    config: StagnationConfig,
+    soft_timeout: float,
+    cohort_id: str | None,
+    evaluation_mode: str | None,
+) -> None:
+    """Fail before Docker work when v2 settings are invalid or unattributable."""
+    positive_values = {
+        "trigger_age_sec": config.trigger_age_sec,
+        "quiet_window_sec": config.quiet_window_sec,
+        "minimum_submissions": config.minimum_submissions,
+        "reviewer_timeout_sec": config.reviewer_timeout_sec,
+        "reviewer_max_output_tokens": config.reviewer_max_output_tokens,
+        "recovery_window_sec": config.recovery_window_sec,
+    }
+    for name, value in positive_values.items():
+        if value <= 0:
+            raise ValueError(f"{name} must be positive, got {value}")
+    if config.enabled and config.reviewer_timeout_sec > config.recovery_window_sec:
+        raise ValueError(
+            "reviewer_timeout_sec must be <= recovery_window_sec "
+            f"({config.reviewer_timeout_sec} > {config.recovery_window_sec})"
+        )
+    if config.enabled and config.trigger_age_sec + config.recovery_window_sec > soft_timeout:
+        raise ValueError(
+            "trigger_age_sec + recovery_window_sec must be <= soft_timeout "
+            f"({config.trigger_age_sec} + {config.recovery_window_sec} > {soft_timeout:g})"
+        )
+
+    normalized_cohort = cohort_id.strip() if cohort_id is not None else None
+    cohort_supplied = bool(normalized_cohort)
+    mode_supplied = evaluation_mode is not None
+    if cohort_supplied != mode_supplied or (cohort_id is not None and not normalized_cohort):
+        raise ValueError("cohort_id and evaluation_mode must be supplied together")
+    if evaluation_mode is not None and evaluation_mode not in {"heldout", "diagnostic"}:
+        raise ValueError("evaluation_mode must be 'heldout' or 'diagnostic'")
+    if config.enabled and not cohort_supplied:
+        raise ValueError("enabled v2 runs require explicit cohort_id and evaluation_mode")
+
 
 def validate_timeout_budget(
     *,
@@ -53,9 +153,7 @@ def validate_timeout_budget(
     outer_margin: float = DEFAULT_OUTER_MARGIN_SEC,
 ) -> None:
     """Reject a run whose cooperative phases can consume the outer timeout."""
-    required = (
-        soft_timeout + finalization_grace + tracing_shutdown_timeout + outer_margin
-    )
+    required = soft_timeout + finalization_grace + tracing_shutdown_timeout + outer_margin
     if required > hard_timeout:
         raise ValueError(
             "timeout budget is unsafe: "
@@ -145,8 +243,7 @@ def recover_timeout_final(log_dir: Path) -> dict[str, object] | None:
         "sha256": hashlib.sha256(data).hexdigest(),
         "byte_length": len(data),
         "selection_reason": (
-            "Outer hard timeout recovery selected the smallest persisted verified "
-            "crash candidate."
+            "Outer hard timeout recovery selected the smallest persisted verified crash candidate."
         ),
         "source_agent": record.get("source_agent"),
         "source_model": record.get("source_model"),
@@ -384,6 +481,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         help="Maximum simultaneous crash-family expander agents",
     )
+    parser.add_argument("--escalation-model", help="Enable v2 with this reviewer model")
+    parser.add_argument("--escalation-trigger-age", type=int, help="Trigger age in seconds")
+    parser.add_argument(
+        "--escalation-quiet-window",
+        type=int,
+        help="Required seconds without a new verified family",
+    )
+    parser.add_argument(
+        "--escalation-min-submissions",
+        type=int,
+        help="Minimum submissions before v2 escalation",
+    )
+    parser.add_argument(
+        "--escalation-reviewer-timeout",
+        type=int,
+        help="Alternate reviewer timeout in seconds",
+    )
+    parser.add_argument(
+        "--escalation-reviewer-max-output-tokens",
+        type=int,
+        help="Alternate reviewer maximum output tokens",
+    )
+    parser.add_argument(
+        "--escalation-recovery-window",
+        type=int,
+        help="Seconds allowed for a new family after escalation is claimed",
+    )
+    parser.add_argument("--cohort-id", help="Measurement cohort identifier")
+    parser.add_argument(
+        "--evaluation-mode",
+        choices=("heldout", "diagnostic"),
+        help="Official heldout or non-official diagnostic run",
+    )
     parser.add_argument("--reasoning-effort")
     parser.add_argument("--prompt", default="")
     parser.add_argument("--container-name")
@@ -405,30 +535,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     load_dotenv(args.dotenv)
-    docker_client = docker.from_env()
-    require_local_image(docker_client, args.image, role="runner")
-
-    args.tmp_dir.mkdir(parents=True, exist_ok=True)
-    args.log_dir.mkdir(parents=True, exist_ok=True)
-    agent_id = args.agent_id or uuid4().hex
-    run_name = f"{args.task_id.replace(':', '_')}-{agent_id}"
-    task_dir = args.tmp_dir / run_name
-    log_dir = args.log_dir / run_name
-    if task_dir.exists():
-        shutil.rmtree(task_dir)
-    task_dir.mkdir(parents=True, exist_ok=False)
-    (log_dir / "agent").mkdir(parents=True, exist_ok=True)
-    (log_dir / "artifacts").mkdir(parents=True, exist_ok=True)
-
-    network = None
-    server = args.server
+    if args.cohort_id is not None:
+        args.cohort_id = args.cohort_id.strip()
     env = forwarded_env()
-    env["NOOA_CYBERGYM_SESSION_ID"] = run_name
     if args.max_iter is not None:
         env["NOOA_CYBERGYM_MAX_ITERATIONS"] = str(args.max_iter)
     if args.max_output_tokens is not None:
         env["NOOA_CYBERGYM_MAX_OUTPUT_TOKENS"] = str(args.max_output_tokens)
-    if args.soft_timeout:
+    if args.soft_timeout is not None:
         env["NOOA_CYBERGYM_SOFT_TIMEOUT_SEC"] = str(args.soft_timeout)
     if args.min_exploration is not None:
         env["NOOA_CYBERGYM_MIN_EXPLORATION_SEC"] = str(args.min_exploration)
@@ -437,6 +551,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.reasoning_effort:
         env["NOOA_CYBERGYM_REASONING_EFFORT"] = args.reasoning_effort
 
+    stagnation_config = resolve_stagnation_config(args, env)
+    stagnation_record = stagnation_args_record(stagnation_config)
     effective_soft_timeout = float(
         env.get("NOOA_CYBERGYM_SOFT_TIMEOUT_SEC", DEFAULT_SOFT_TIMEOUT_SEC)
     )
@@ -455,6 +571,40 @@ def main(argv: list[str] | None = None) -> int:
         finalization_grace=finalization_grace,
         tracing_shutdown_timeout=tracing_shutdown_timeout,
     )
+    validate_stagnation_preflight(
+        config=stagnation_config,
+        soft_timeout=effective_soft_timeout,
+        cohort_id=args.cohort_id,
+        evaluation_mode=args.evaluation_mode,
+    )
+    v2_log_record = {
+        "cohort_id": args.cohort_id,
+        "evaluation_mode": args.evaluation_mode,
+        **stagnation_record,
+    }
+    print(
+        "effective v2 settings: " + json.dumps(v2_log_record, sort_keys=True),
+        file=sys.stderr,
+    )
+
+    docker_client = docker.from_env()
+    require_local_image(docker_client, args.image, role="runner")
+
+    args.tmp_dir.mkdir(parents=True, exist_ok=True)
+    args.log_dir.mkdir(parents=True, exist_ok=True)
+    agent_id = args.agent_id or uuid4().hex
+    run_name = f"{args.task_id.replace(':', '_')}-{agent_id}"
+    task_dir = args.tmp_dir / run_name
+    log_dir = args.log_dir / run_name
+    if task_dir.exists():
+        shutil.rmtree(task_dir)
+    task_dir.mkdir(parents=True, exist_ok=False)
+    (log_dir / "agent").mkdir(parents=True, exist_ok=True)
+    (log_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+
+    network = None
+    server = args.server
+    env["NOOA_CYBERGYM_SESSION_ID"] = run_name
 
     proxy = None
     if args.use_firewall or args.connect_firewall:
@@ -514,6 +664,8 @@ def main(argv: list[str] | None = None) -> int:
     args_record = {
         "agent": f"nooa_cybergym:{args.model}",
         "agent_id": agent_id,
+        "cohort_id": args.cohort_id,
+        "evaluation_mode": args.evaluation_mode,
         "task": task.model_dump() if hasattr(task, "model_dump") else dict(task),
         "server": server,
         "image": args.image,
@@ -528,6 +680,7 @@ def main(argv: list[str] | None = None) -> int:
         "min_exploration": args.min_exploration,
         "max_concurrent_expanders": args.max_concurrent_expanders,
         "reasoning_effort": args.reasoning_effort,
+        **stagnation_record,
     }
     (log_dir / "args.json").write_text(json.dumps(args_record, indent=2, default=str) + "\n")
 

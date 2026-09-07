@@ -150,7 +150,41 @@ def test_claim_escalation_marks_one_shot_before_dispatch():
     assert state.escalation_attempted is False
     assert state.claim_escalation(now=100, config=_config()) is True
     assert state.escalation_attempted is True
+    assert state.escalation_claimed_at == 100
+    assert state.family_count_at_escalation == 0
     assert state.claim_escalation(now=200, config=_config()) is False
+
+
+def test_next_wakeup_deadline_reaches_trigger_then_recovery_without_wall_clock_sleep():
+    state = StagnationState(started_at=10)
+    config = _config(trigger_age_sec=100, quiet_window_sec=20, recovery_window_sec=40)
+    state.observe(now=50, submission_count=3, family_count=1)
+
+    assert state.next_wakeup_at(config=config) == 110
+    assert state.claim_escalation(now=110, config=config) is True
+    assert state.next_wakeup_at(config=config) == 150
+
+
+def test_recovery_expires_at_exact_deadline_without_a_new_family():
+    state = StagnationState(started_at=0)
+    config = _config(recovery_window_sec=40)
+    state.observe(now=0, submission_count=3, family_count=1)
+    assert state.claim_escalation(now=100, config=config) is True
+
+    assert state.recovery_expired_without_progress(now=139.999, config=config) is False
+    assert state.recovery_expired_without_progress(now=140, config=config) is True
+
+
+def test_new_verified_family_cancels_recovery_termination():
+    state = StagnationState(started_at=0)
+    config = _config(recovery_window_sec=40)
+    state.observe(now=0, submission_count=3, family_count=1)
+    assert state.claim_escalation(now=100, config=config) is True
+
+    state.observe(now=120, submission_count=4, family_count=2)
+
+    assert state.recovery_expired_without_progress(now=1_000, config=config) is False
+    assert state.next_wakeup_at(config=config) is None
 
 
 def test_disabled_configuration_never_claims_escalation():

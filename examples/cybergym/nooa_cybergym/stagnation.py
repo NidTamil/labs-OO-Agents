@@ -115,6 +115,8 @@ class StagnationState:
     submission_count: int = 0
     family_count: int = 0
     escalation_attempted: bool = False
+    escalation_claimed_at: float | None = None
+    family_count_at_escalation: int | None = None
 
     def __post_init__(self) -> None:
         if self.last_new_family_at is None:
@@ -152,7 +154,35 @@ class StagnationState:
         if not self.should_escalate(now=now, config=config):
             return False
         self.escalation_attempted = True
+        self.escalation_claimed_at = now
+        self.family_count_at_escalation = self.family_count
         return True
+
+    def recovery_expired_without_progress(self, *, now: float, config: StagnationConfig) -> bool:
+        """Return whether the claimed recovery window ended without a new family."""
+        if self.escalation_claimed_at is None or self.family_count_at_escalation is None:
+            return False
+        return (
+            self.family_count <= self.family_count_at_escalation
+            and now >= self.escalation_claimed_at + config.recovery_window_sec
+        )
+
+    def next_wakeup_at(self, *, config: StagnationConfig) -> float | None:
+        """Return the next monotonic deadline needed by enabled orchestration."""
+        if not config.enabled:
+            return None
+        if self.escalation_claimed_at is not None:
+            assert self.family_count_at_escalation is not None
+            if self.family_count > self.family_count_at_escalation:
+                return None
+            return self.escalation_claimed_at + config.recovery_window_sec
+        assert self.last_new_family_at is not None
+        if self.submission_count < config.minimum_submissions:
+            return None
+        return max(
+            self.started_at + config.trigger_age_sec,
+            self.last_new_family_at + config.quiet_window_sec,
+        )
 
 
 class SnapshotSubmission(Protocol):
