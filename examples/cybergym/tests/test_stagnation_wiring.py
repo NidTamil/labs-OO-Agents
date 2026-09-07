@@ -13,6 +13,9 @@ pytest.importorskip("nooa")
 
 from examples.cybergym.nooa_cybergym import agent as agent_module  # noqa: E402
 from examples.cybergym.nooa_cybergym.stagnation import StagnationConfig  # noqa: E402
+from examples.cybergym.nooa_cybergym.stagnation_reviewer import (  # noqa: E402
+    StagnationAdvice,
+)
 from nooa.unifiedllm.fake import FakeLLMClient  # noqa: E402
 
 
@@ -31,15 +34,35 @@ class FakeFinder:
         pass
 
 
-def _config(*, model: str = "alternate-reviewer") -> StagnationConfig:
-    return StagnationConfig(
-        model=model,
-        trigger_age_sec=10,
-        quiet_window_sec=5,
-        minimum_submissions=1,
-        reviewer_timeout_sec=2,
-        reviewer_max_output_tokens=128,
-        recovery_window_sec=20,
+def _config(**overrides) -> StagnationConfig:
+    values = {
+        "model": "alternate-reviewer",
+        "trigger_age_sec": 10,
+        "quiet_window_sec": 5,
+        "minimum_submissions": 1,
+        "reviewer_timeout_sec": 2,
+        "reviewer_max_output_tokens": 128,
+        "recovery_window_sec": 20,
+    }
+    values.update(overrides)
+    return StagnationConfig(**values)
+
+
+def _crash_submission(number: int, cluster_key: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        submission_number=number,
+        status="crashed",
+        source_agent="finder",
+        source_model="finder",
+        hypothesis=f"exercise {cluster_key}",
+        fingerprint=SimpleNamespace(
+            kind="crash",
+            cluster_key=cluster_key,
+            top_frames=(cluster_key,),
+            summary=f"verified {cluster_key}",
+        ),
+        submitted_path=f"/workspace/{number}.poc",
+        original_path=f"/tmp/{number}.poc",
     )
 
 
@@ -207,9 +230,7 @@ async def test_enabled_solve_claims_once_and_enters_honest_no_final_path_at_dead
 
 @pytest.mark.asyncio
 async def test_reviewer_stop_finalizes_without_respawning_finished_finder(monkeypatch, tmp_path):
-    portfolio, InertSolveAgent = _patch_inert_solve(
-        monkeypatch, tmp_path, _config(model="")
-    )
+    portfolio, InertSolveAgent = _patch_inert_solve(monkeypatch, tmp_path, _config(model=""))
     portfolio.submissions = [
         SimpleNamespace(
             submission_number=1,
@@ -345,3 +366,255 @@ async def test_disabled_solve_uses_original_wait_and_no_v2_decision_points(monke
 
     assert original_wait_calls == 1
     assert "Final PoC:" in result
+
+
+@pytest.mark.asyncio
+async def test_stale_ordinary_review_is_rejected_and_fresh_review_is_scheduled(
+    monkeypatch, tmp_path, caplog
+):
+    config = _config(trigger_age_sec=1_000, minimum_submissions=10)
+    portfolio, InertSolveAgent = _patch_inert_solve(monkeypatch, tmp_path, config)
+    first_family = _crash_submission(1, "family-one")
+    second_family = _crash_submission(2, "family-two")
+    portfolio.submissions = [first_family]
+    portfolio.mark_expanded(first_family.submission_number)
+    review_calls = 0
+
+    class StaleReviewAgent(InertSolveAgent):
+        async def _wait(self, active):
+            task = next(iter(active))
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return {task}
+
+        async def _review(self, current_portfolio_state):
+            nonlocal review_calls
+            review_calls += 1
+            if review_calls == 1:
+                portfolio.submissions.append(second_family)
+                portfolio.mark_expanded(second_family.submission_number)
+                return agent_module.Review(
+                    on_target=True,
+                    guidance="stale guidance",
+                    stop=True,
+                    reasoning="superseded while awaiting",
+                )
+            assert portfolio.guidance != "stale guidance"
+            return agent_module.Review(
+                on_target=True,
+                guidance="fresh guidance",
+                stop=True,
+                reasoning="latest snapshot",
+            )
+
+    with caplog.at_level("INFO", logger="nooa_cybergym"):
+        result = await StaleReviewAgent(llm=FakeLLMClient()).solve("inert")
+
+    assert review_calls == 2
+    assert portfolio.guidance == "fresh guidance"
+    assert portfolio.stop is True
+    assert "Final PoC:" in result
+    review_events = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("portfolio_review_event ")
+    ]
+    assert '"outcome": "stale"' in review_events[0]
+    assert '"outcome": "completed"' in review_events[1]
+    assert '"review_id": 1' in review_events[0]
+    assert '"review_id": 2' in review_events[1]
+
+
+@pytest.mark.asyncio
+async def test_plateau_callback_is_one_shot_and_local_stops_defer_until_progress(
+    monkeypatch, tmp_path
+):
+    config = _config(
+        trigger_age_sec=1_000,
+        minimum_submissions=1,
+        consecutive_no_growth_reviews=2,
+    )
+    portfolio, InertSolveAgent = _patch_inert_solve(monkeypatch, tmp_path, config)
+    first_family = _crash_submission(1, "family-one")
+    second_family = _crash_submission(2, "family-two")
+    portfolio.submissions = [first_family]
+    portfolio.mark_expanded(first_family.submission_number)
+    review_calls = 0
+    callback_calls = 0
+
+    class PlateauAgent(InertSolveAgent):
+        async def _wait(self, active):
+            if review_calls == 4:
+                portfolio.submissions.append(second_family)
+                portfolio.mark_expanded(second_family.submission_number)
+            task = next(iter(active))
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return {task}
+
+        async def _wait_until(self, active, *, deadline):
+            return await self._wait(active)
+
+        async def _review(self, current_portfolio_state):
+            nonlocal review_calls
+            review_calls += 1
+            return agent_module.Review(
+                on_target=True,
+                guidance=f"ordinary review {review_calls}",
+                stop=review_calls >= 3,
+                reasoning="synthetic plateau sequence",
+            )
+
+        async def _attempt_stagnation_review(self, *, state, now, config):
+            nonlocal callback_calls
+            assert state.escalation_reason(now=now, config=config) == "plateau"
+            assert state.claim_escalation(now=now, config=config) is True
+            callback_calls += 1
+            portfolio.apply_review(
+                agent_module.Review(
+                    on_target=True,
+                    guidance="stronger callback guidance",
+                    stop=False,
+                    reasoning="one-shot callback",
+                )
+            )
+            return SimpleNamespace(outcome="success", cleanup_status="success")
+
+    result = await PlateauAgent(llm=FakeLLMClient()).solve("inert")
+
+    assert review_calls == 5
+    assert callback_calls == 1
+    assert portfolio.distinct_families == 2
+    assert portfolio.stop is True
+    assert "Final PoC:" in result
+
+
+@pytest.mark.asyncio
+async def test_callback_failure_discards_triggering_stop_but_next_review_may_stop(
+    monkeypatch, tmp_path
+):
+    config = _config(
+        trigger_age_sec=1_000,
+        minimum_submissions=1,
+        consecutive_no_growth_reviews=1,
+    )
+    portfolio, InertSolveAgent = _patch_inert_solve(monkeypatch, tmp_path, config)
+    first_family = _crash_submission(1, "family-one")
+    portfolio.submissions = [first_family]
+    portfolio.mark_expanded(first_family.submission_number)
+    review_calls = 0
+    callback_calls = 0
+
+    class FailedCallbackAgent(InertSolveAgent):
+        async def _wait(self, active):
+            if review_calls >= 3:
+                raise AssertionError("a later completed review should have stopped the loop")
+            task = next(iter(active))
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            return {task}
+
+        async def _wait_until(self, active, *, deadline):
+            return await self._wait(active)
+
+        async def _review(self, current_portfolio_state):
+            nonlocal review_calls
+            review_calls += 1
+            return agent_module.Review(
+                on_target=True,
+                guidance=f"review {review_calls}",
+                stop=review_calls >= 2,
+                reasoning="synthetic callback failure",
+            )
+
+        async def _attempt_stagnation_review(self, *, state, now, config):
+            nonlocal callback_calls
+            assert state.claim_escalation(now=now, config=config) is True
+            callback_calls += 1
+            return SimpleNamespace(outcome="failure", cleanup_status="success")
+
+    failed_agent = FailedCallbackAgent(llm=FakeLLMClient())
+    result = await failed_agent.solve("inert")
+
+    assert review_calls == 3
+    assert callback_calls == 1
+    assert portfolio.stop is True
+    assert "Final PoC:" in result
+
+
+@pytest.mark.asyncio
+async def test_external_stop_cancels_inflight_callback_and_is_audited(monkeypatch):
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    agent = agent_module.CyberGymAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    agent.description = "bounded synthetic description"
+    review_started = asyncio.Event()
+    review_cancelled = asyncio.Event()
+
+    class FakeReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def review(self, review_input):
+            review_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                review_cancelled.set()
+                raise
+
+    monkeypatch.setattr(agent_module, "make_llm", lambda *args, **kwargs: FakeLLMClient())
+    monkeypatch.setattr(agent_module, "StagnationReviewer", FakeReviewer)
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+
+    attempt = asyncio.create_task(
+        agent._attempt_stagnation_review(state=state, now=10, config=_config())
+    )
+    await review_started.wait()
+    agent.request_stop()
+    audit = await asyncio.wait_for(attempt, timeout=0.2)
+
+    assert audit is not None and audit.outcome == "cancelled"
+    assert review_cancelled.is_set()
+    assert state.recovery_expired_without_progress(now=30, config=_config()) is False
+
+
+@pytest.mark.asyncio
+async def test_callback_result_at_recovery_deadline_is_rejected(monkeypatch):
+    clock = FakeClock(10)
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+
+    class DeadlineAgent(agent_module.CyberGymAgent):
+        @staticmethod
+        def _monotonic() -> float:
+            return clock.monotonic()
+
+    agent = DeadlineAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    agent.description = "bounded synthetic description"
+
+    class FakeReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def review(self, review_input):
+            clock.now = 30
+            return StagnationAdvice(guidance="too late", reasoning="deadline reached")
+
+    monkeypatch.setattr(agent_module, "make_llm", lambda *args, **kwargs: FakeLLMClient())
+    monkeypatch.setattr(agent_module, "StagnationReviewer", FakeReviewer)
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+
+    audit = await agent._attempt_stagnation_review(
+        state=state,
+        now=10,
+        config=_config(reviewer_timeout_sec=100, recovery_window_sec=20),
+    )
+
+    assert audit is not None and audit.outcome == "timeout"
+    assert portfolio.guidance != "too late"
+    assert state.recovery_expired_without_progress(now=30, config=_config()) is True

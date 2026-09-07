@@ -272,6 +272,20 @@ class StagnationState:
         self.family_count_at_escalation = self.family_count
         return True
 
+    def cancel_recovery(self) -> None:
+        """End recovery after an unsuccessful callback without reopening its one-shot claim."""
+        self.escalation_claimed_at = None
+        self.family_count_at_escalation = None
+
+    def recovery_active(self, *, now: float, config: StagnationConfig) -> bool:
+        """Return whether a claimed callback still owns an unexpired recovery window."""
+        if self.escalation_claimed_at is None or self.family_count_at_escalation is None:
+            return False
+        return (
+            self.family_count <= self.family_count_at_escalation
+            and now < self.escalation_claimed_at + config.recovery_window_sec
+        )
+
     def recovery_expired_without_progress(self, *, now: float, config: StagnationConfig) -> bool:
         """Return whether the claimed recovery window ended without a new family."""
         if self.escalation_claimed_at is None or self.family_count_at_escalation is None:
@@ -290,6 +304,8 @@ class StagnationState:
             if self.family_count > self.family_count_at_escalation:
                 return None
             return self.escalation_claimed_at + config.recovery_window_sec
+        if self.escalation_attempted:
+            return None
         assert self.last_new_family_at is not None
         if self.submission_count < config.minimum_submissions:
             return None
