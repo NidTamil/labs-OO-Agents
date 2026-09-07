@@ -228,15 +228,18 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch,
     agent = _agent_with_portfolio()
     original_guidance = agent._portfolio.guidance
     reviewer_llm = CloseableLLM()
+    reviewer_started = asyncio.Event()
     cancellation_seen = asyncio.Event()
     release_late_result = asyncio.Event()
     late_result = asyncio.Event()
+    clock = SimpleNamespace(now=0.0)
 
     class FakeReviewer:
         def __init__(self, *, llm):
             self.llm = llm
 
         async def review(self, review_input):
+            reviewer_started.set()
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
@@ -247,6 +250,7 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch,
 
     monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
+    monkeypatch.setattr(agent, "_monotonic", lambda: clock.now)
 
     with caplog.at_level("WARNING", logger="nooa_cybergym"):
         attempt = asyncio.create_task(
@@ -254,8 +258,10 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch,
                 state=_eligible_state(), now=100, config=_config(reviewer_timeout_sec=0.001)
             )
         )
-        await asyncio.wait_for(cancellation_seen.wait(), timeout=0.1)
-        audit = await asyncio.wait_for(attempt, timeout=0.1)
+        await asyncio.wait_for(reviewer_started.wait(), timeout=1)
+        clock.now = 1.0
+        await asyncio.wait_for(cancellation_seen.wait(), timeout=1)
+        audit = await asyncio.wait_for(attempt, timeout=1)
 
     assert audit is not None and audit.outcome == "timeout"
     payloads = _review_log_payloads(caplog)
@@ -263,7 +269,7 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch,
     assert payloads[0]["cleanup_status"] == "success"
     assert late_result.is_set() is False
     release_late_result.set()
-    await asyncio.wait_for(late_result.wait(), timeout=0.1)
+    await asyncio.wait_for(late_result.wait(), timeout=1)
     assert agent._portfolio.guidance == original_guidance
 
 
