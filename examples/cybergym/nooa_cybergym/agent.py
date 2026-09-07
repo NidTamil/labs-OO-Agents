@@ -957,16 +957,14 @@ class CyberGymAgent(Agent, context={"state": None}):
             except asyncio.CancelledError as exc:
                 pending_cancellation = exc
                 audit = make_audit("cancelled", exc)
-                self._record_stagnation_audit(audit)
+                self._stagnation_review_audit = audit
                 self._cancel_and_drain_task(review_task)
             else:
                 if review_task not in done or time.monotonic() >= deadline:
                     audit = make_audit("timeout", TimeoutError())
-                    self._record_stagnation_audit(audit)
                     self._cancel_and_drain_task(review_task)
                 elif review_task.cancelled():
                     audit = make_audit("failure", asyncio.CancelledError())
-                    self._record_stagnation_audit(audit)
                 else:
                     advice = review_task.result()
                     if time.monotonic() >= deadline:
@@ -981,16 +979,16 @@ class CyberGymAgent(Agent, context={"state": None}):
                             )
                         )
                         audit = make_audit("success")
-                    self._record_stagnation_audit(audit)
+                self._stagnation_review_audit = audit
         except asyncio.CancelledError as exc:
             pending_cancellation = exc
             if audit is None:
                 audit = make_audit("cancelled", exc)
-                self._record_stagnation_audit(audit)
+                self._stagnation_review_audit = audit
             self._cancel_and_drain_task(review_task)
         except (Exception, SystemExit) as exc:
             audit = make_audit("failure", exc)
-            self._record_stagnation_audit(audit)
+            self._stagnation_review_audit = audit
 
         assert audit is not None
         try:

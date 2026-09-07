@@ -9,16 +9,25 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 import tempfile
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cybergym.server.pocdb import PoCRecord, Session, init_engine
+from nooa_cybergym.cohort_commitment import (
+    CohortCommitmentError,
+    commitment_payload,
+    verify_cohort_commitment,
+)
 from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.integrations.sunchaser import sign_sunchaser_final_evidence
 from xeus_cybergym.ledger import Ed25519Signer
+
+_GitRunner = Callable[[Path, Sequence[str]], bytes]
 
 
 @dataclass(frozen=True)
@@ -27,6 +36,13 @@ class _RunEvidence:
     agent_id: str
     task_id: str
     cohort_id: str | None
+    harness_revision: str | None
+    runner_image_id: str | None
+    harness_policy_sha256: str | None
+    harness_policy: dict[str, object] | None
+    cohort_manifest_sha256: str | None
+    cohort_commitment_sha256: str | None
+    cohort_authority_key_id: str | None
     final_dir: Path
     selection: dict[str, object]
     poc_bytes: bytes
@@ -40,11 +56,114 @@ class _ResolvedEvidence:
     fix_exit_code: int
 
 
+@dataclass(frozen=True)
+class _CohortManifest:
+    cohort_id: str
+    evaluation_mode: str
+    expected_task_ids: tuple[str, ...]
+    sha256: str
+
+
+def _run_git(cwd: Path, args: Sequence[str]) -> bytes:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            check=True,
+            capture_output=True,
+        ).stdout
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        raise RuntimeError("cannot verify cohort manifest Git commitment") from exc
+
+
+def _validate_manifest_git_commitment(
+    *,
+    manifest_path: Path,
+    repo_root: Path,
+    harness_revision: str,
+    head_revision: str,
+    status: bytes,
+    committed_bytes: bytes,
+) -> None:
+    manifest_path = manifest_path.resolve()
+    repo_root = repo_root.resolve()
+    try:
+        manifest_path.relative_to(repo_root)
+    except ValueError:
+        raise RuntimeError("cohort manifest must be inside the executing repository") from None
+    if head_revision != harness_revision:
+        raise RuntimeError("executing repository HEAD does not match harness_revision")
+    if status:
+        raise RuntimeError("executing repository must be clean before heldout scoring")
+    try:
+        working_bytes = manifest_path.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(f"cannot read cohort manifest from {manifest_path}") from exc
+    if working_bytes != committed_bytes:
+        raise RuntimeError("cohort manifest bytes do not match the recorded harness revision")
+
+
+def _verify_manifest_git_commitment(
+    manifest_path: Path,
+    harness_revision: str,
+    *,
+    git_runner: _GitRunner | None = None,
+) -> None:
+    runner = git_runner or _run_git
+    executing_path = Path(__file__).resolve().parent
+    repo_root_raw = runner(executing_path, ("rev-parse", "--show-toplevel"))
+    try:
+        repo_root = Path(repo_root_raw.decode("utf-8").strip()).resolve()
+    except UnicodeError as exc:
+        raise RuntimeError("cannot decode executing repository root") from exc
+    manifest_path = manifest_path.resolve()
+    try:
+        relative = manifest_path.relative_to(repo_root)
+    except ValueError:
+        raise RuntimeError("cohort manifest must be inside the executing repository") from None
+
+    head_raw = runner(repo_root, ("rev-parse", "--verify", "HEAD"))
+    try:
+        head_revision = head_raw.decode("ascii").strip()
+    except UnicodeError as exc:
+        raise RuntimeError("cannot decode executing repository HEAD") from exc
+    status = runner(repo_root, ("status", "--porcelain", "--untracked-files=all"))
+    committed_bytes = runner(
+        repo_root,
+        ("show", f"{harness_revision}:{relative.as_posix()}"),
+    )
+    _validate_manifest_git_commitment(
+        manifest_path=manifest_path,
+        repo_root=repo_root,
+        harness_revision=harness_revision,
+        head_revision=head_revision,
+        status=status,
+        committed_bytes=committed_bytes,
+    )
+
+
 def _load_run_evidence(
-    run_dir: Path, *, allow_legacy_single_run: bool = False
-) -> tuple[list[_RunEvidence], str | None]:
-    args_files = sorted(run_dir.rglob("args.json"))
-    if not args_files:
+    run_dir: Path,
+    *,
+    cohort_manifest_path: Path | None = None,
+    cohort_commitment_path: Path | None = None,
+    cohort_authority_keys_path: Path | None = None,
+    allow_legacy_single_run: bool = False,
+) -> tuple[list[_RunEvidence], _CohortManifest | None]:
+    if cohort_manifest_path is not None and allow_legacy_single_run:
+        raise RuntimeError("cohort manifest and legacy single-run mode are mutually exclusive")
+
+    run_dir = run_dir.resolve()
+    discovered = sorted(path.resolve() for path in run_dir.rglob("args.json"))
+    cohort_manifest: _CohortManifest | None = None
+    if cohort_manifest_path is not None:
+        cohort_manifest = _read_cohort_manifest(run_dir, cohort_manifest_path)
+        args_files = discovered
+    else:
+        if not allow_legacy_single_run:
+            raise RuntimeError("heldout scoring requires an explicit cohort manifest")
+        args_files = discovered
+
+    if not args_files and cohort_manifest is None:
         raise RuntimeError(f"no args.json files found under {run_dir}")
 
     parsed: list[tuple[Path, dict[str, object]]] = []
@@ -57,15 +176,43 @@ def _load_run_evidence(
             raise RuntimeError(f"run metadata must be an object: {args_path}")
         parsed.append((args_path, run))
 
+    strict_fields = (
+        "cohort_id",
+        "evaluation_mode",
+        "harness_revision",
+        "runner_image_id",
+        "harness_policy_sha256",
+        "harness_policy",
+        "cohort_manifest_sha256",
+        "cohort_commitment_sha256",
+        "cohort_authority_key_id",
+    )
     legacy_single_run = (
         allow_legacy_single_run
         and len(parsed) == 1
-        and "cohort_id" not in parsed[0][1]
-        and "evaluation_mode" not in parsed[0][1]
+        and all(field not in parsed[0][1] for field in strict_fields)
     )
-    metadata: list[tuple[Path, str, str, str | None, Path]] = []
+    if allow_legacy_single_run and not legacy_single_run:
+        raise RuntimeError("legacy mode requires exactly one metadata-free run")
+
+    metadata: list[
+        tuple[
+            Path,
+            str,
+            str,
+            str | None,
+            str | None,
+            str | None,
+            str | None,
+            dict[str, object] | None,
+            str | None,
+            str | None,
+            str | None,
+            Path,
+        ]
+    ] = []
     task_paths: dict[str, Path] = {}
-    cohorts: set[str] = set()
+    policy_identity: tuple[str, str, str] | None = None
     for args_path, run in parsed:
         agent_id = run.get("agent_id")
         task = run.get("task")
@@ -77,25 +224,56 @@ def _load_run_evidence(
 
         cohort_id = run.get("cohort_id")
         evaluation_mode = run.get("evaluation_mode")
+        harness_revision = run.get("harness_revision")
+        runner_image_id = run.get("runner_image_id")
+        harness_policy_sha256 = run.get("harness_policy_sha256")
+        harness_policy = run.get("harness_policy")
+        cohort_manifest_sha256 = run.get("cohort_manifest_sha256")
+        cohort_commitment_sha256 = run.get("cohort_commitment_sha256")
+        cohort_authority_key_id = run.get("cohort_authority_key_id")
         if not legacy_single_run:
-            if (
-                not isinstance(cohort_id, str)
-                or not cohort_id
-                or not isinstance(evaluation_mode, str)
-            ):
+            values = {
+                "cohort_id": cohort_id,
+                "evaluation_mode": evaluation_mode,
+                "harness_revision": harness_revision,
+                "runner_image_id": runner_image_id,
+                "harness_policy_sha256": harness_policy_sha256,
+                "cohort_manifest_sha256": cohort_manifest_sha256,
+                "cohort_commitment_sha256": cohort_commitment_sha256,
+                "cohort_authority_key_id": cohort_authority_key_id,
+            }
+            invalid = [
+                name for name, value in values.items() if not isinstance(value, str) or not value
+            ]
+            if invalid:
                 raise RuntimeError(
-                    "cohort_id and evaluation_mode are required on every args.json "
-                    f"during strict aggregation: {args_path}"
+                    f"strict run metadata is missing or invalid ({', '.join(invalid)}): {args_path}"
                 )
-            if evaluation_mode != "heldout":
+            if not isinstance(harness_policy, dict):
+                raise RuntimeError(f"harness_policy must be an object: {args_path}")
+            computed_policy_sha256 = hashlib.sha256(canonical_json(harness_policy)).hexdigest()
+            if harness_policy_sha256 != computed_policy_sha256:
                 raise RuntimeError(
-                    f"evaluation_mode must be 'heldout', got {evaluation_mode!r} in {args_path}"
+                    f"harness_policy_sha256 does not match harness_policy: {args_path}"
                 )
-            cohorts.add(cohort_id)
-        elif cohort_id is not None or evaluation_mode is not None:
-            raise RuntimeError(
-                f"cohort_id and evaluation_mode must be supplied together in {args_path}"
-            )
+            assert cohort_manifest is not None
+            if cohort_manifest_sha256 != cohort_manifest.sha256:
+                raise RuntimeError(
+                    f"cohort_manifest_sha256 does not match cohort manifest: {args_path}"
+                )
+            if cohort_id != cohort_manifest.cohort_id:
+                raise RuntimeError(f"cohort_id does not match cohort manifest in {args_path}")
+            if evaluation_mode != cohort_manifest.evaluation_mode:
+                raise RuntimeError(f"evaluation_mode does not match cohort manifest in {args_path}")
+            if harness_policy.get("harness_revision") != harness_revision:
+                raise RuntimeError(f"harness_revision contradicts harness_policy: {args_path}")
+            if harness_policy.get("runner_image_id") != runner_image_id:
+                raise RuntimeError(f"runner_image_id contradicts harness_policy: {args_path}")
+            current_policy = (harness_revision, runner_image_id, harness_policy_sha256)
+            if policy_identity is None:
+                policy_identity = current_policy
+            elif current_policy != policy_identity:
+                raise RuntimeError(f"harness policy identity mismatch in {args_path}")
 
         previous = task_paths.get(task_id)
         if previous is not None:
@@ -107,16 +285,66 @@ def _load_run_evidence(
                 agent_id,
                 task_id,
                 cohort_id if isinstance(cohort_id, str) else None,
+                harness_revision if isinstance(harness_revision, str) else None,
+                runner_image_id if isinstance(runner_image_id, str) else None,
+                harness_policy_sha256 if isinstance(harness_policy_sha256, str) else None,
+                harness_policy if isinstance(harness_policy, dict) else None,
+                cohort_manifest_sha256 if isinstance(cohort_manifest_sha256, str) else None,
+                cohort_commitment_sha256 if isinstance(cohort_commitment_sha256, str) else None,
+                cohort_authority_key_id if isinstance(cohort_authority_key_id, str) else None,
                 args_path.parent / "artifacts" / "final_submission",
             )
         )
 
-    if len(cohorts) > 1:
-        raise RuntimeError(f"mixed cohort_id values in aggregation: {sorted(cohorts)!r}")
+    if cohort_manifest is not None:
+        expected = set(cohort_manifest.expected_task_ids)
+        discovered_tasks = set(task_paths)
+        missing = sorted(expected - discovered_tasks)
+        unexpected = sorted(discovered_tasks - expected)
+        if missing or unexpected:
+            details = []
+            if missing:
+                details.append(f"missing task IDs: {missing!r}")
+            if unexpected:
+                details.append(f"unexpected task IDs: {unexpected!r}")
+            raise RuntimeError("cohort roster mismatch (" + "; ".join(details) + ")")
+        assert policy_identity is not None
+        assert cohort_manifest_path is not None
+        _verify_manifest_git_commitment(
+            cohort_manifest_path,
+            policy_identity[0],
+        )
+        commitment_path = cohort_commitment_path or cohort_manifest_path.with_name(
+            cohort_manifest_path.name + ".commitment.signed.json"
+        )
+        authority_keys_path = cohort_authority_keys_path or cohort_manifest_path.with_name(
+            cohort_manifest_path.name + ".authority-keys.json"
+        )
+        try:
+            commitment_record = verify_cohort_commitment(
+                commitment_path,
+                authority_keys_path,
+                expected_payload=commitment_payload(
+                    cohort_id=cohort_manifest.cohort_id,
+                    cohort_manifest_sha256=cohort_manifest.sha256,
+                    expected_task_ids=cohort_manifest.expected_task_ids,
+                    harness_revision=policy_identity[0],
+                    runner_image_id=policy_identity[1],
+                    harness_policy_sha256=policy_identity[2],
+                ),
+            )
+        except CohortCommitmentError as exc:
+            raise RuntimeError(f"invalid pre-run cohort commitment: {exc}") from exc
+        for entry in metadata:
+            args_path = entry[0]
+            if entry[9] != commitment_record["cohort_commitment_sha256"]:
+                raise RuntimeError(f"cohort_commitment_sha256 does not match: {args_path}")
+            if entry[10] != commitment_record["cohort_authority_key_id"]:
+                raise RuntimeError(f"cohort_authority_key_id does not match: {args_path}")
 
     missing_artifacts = [
         args_path
-        for args_path, _, _, _, final_dir in metadata
+        for args_path, _, _, _, _, _, _, _, _, _, _, final_dir in metadata
         if not (final_dir / "selection.json").is_file() or not (final_dir / "poc").is_file()
     ]
     if missing_artifacts:
@@ -126,7 +354,20 @@ def _load_run_evidence(
         )
 
     evidence: list[_RunEvidence] = []
-    for args_path, agent_id, task_id, cohort_id, final_dir in metadata:
+    for (
+        args_path,
+        agent_id,
+        task_id,
+        cohort_id,
+        harness_revision,
+        runner_image_id,
+        harness_policy_sha256,
+        harness_policy,
+        cohort_manifest_sha256,
+        cohort_commitment_sha256,
+        cohort_authority_key_id,
+        final_dir,
+    ) in metadata:
         selection_path = final_dir / "selection.json"
         try:
             selection = json.loads(selection_path.read_text())
@@ -152,6 +393,13 @@ def _load_run_evidence(
                 agent_id=agent_id,
                 task_id=task_id,
                 cohort_id=cohort_id,
+                harness_revision=harness_revision,
+                runner_image_id=runner_image_id,
+                harness_policy_sha256=harness_policy_sha256,
+                harness_policy=harness_policy,
+                cohort_manifest_sha256=cohort_manifest_sha256,
+                cohort_commitment_sha256=cohort_commitment_sha256,
+                cohort_authority_key_id=cohort_authority_key_id,
                 final_dir=final_dir,
                 selection=selection,
                 poc_bytes=poc_bytes,
@@ -159,7 +407,49 @@ def _load_run_evidence(
             )
         )
 
-    return evidence, next(iter(cohorts)) if cohorts else None
+    return evidence, cohort_manifest
+
+
+def _read_cohort_manifest(run_dir: Path, manifest_path: Path) -> _CohortManifest:
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"cannot load cohort manifest from {manifest_path}: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise RuntimeError("cohort manifest must be an object")
+    expected_keys = {
+        "schema_version",
+        "cohort_id",
+        "evaluation_mode",
+        "expected_task_ids",
+    }
+    if set(manifest) != expected_keys:
+        raise RuntimeError(
+            "cohort manifest must contain exactly schema_version, cohort_id, "
+            "evaluation_mode, expected_task_ids"
+        )
+    if type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1:
+        raise RuntimeError("cohort manifest schema_version must be 1")
+    cohort_id = manifest["cohort_id"]
+    evaluation_mode = manifest["evaluation_mode"]
+    expected_task_ids = manifest["expected_task_ids"]
+    if not isinstance(cohort_id, str) or not cohort_id:
+        raise RuntimeError("cohort manifest cohort_id must be a non-empty string")
+    if evaluation_mode != "heldout":
+        raise RuntimeError("cohort manifest evaluation_mode must be 'heldout'")
+    if not isinstance(expected_task_ids, list) or not expected_task_ids:
+        raise RuntimeError("cohort manifest expected_task_ids must be a non-empty list")
+    if any(not isinstance(task_id, str) or not task_id for task_id in expected_task_ids):
+        raise RuntimeError("cohort manifest task IDs must be non-empty strings")
+    if len(set(expected_task_ids)) != len(expected_task_ids):
+        raise RuntimeError("cohort manifest task IDs must be unique")
+    manifest_sha256 = hashlib.sha256(canonical_json(manifest)).hexdigest()
+    return _CohortManifest(
+        cohort_id,
+        evaluation_mode,
+        tuple(expected_task_ids),
+        manifest_sha256,
+    )
 
 
 def _strict_evidence_name(cohort_id: str, task_id: str, agent_id: str) -> str:
@@ -242,11 +532,20 @@ def score_run(
     poc_db: Path,
     output_dir: Path,
     *,
+    cohort_manifest_path: Path | None = None,
+    cohort_commitment_path: Path | None = None,
+    cohort_authority_keys_path: Path | None = None,
     allow_legacy_single_run: bool = False,
 ) -> dict[str, object]:
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
-    runs, cohort_id = _load_run_evidence(run_dir, allow_legacy_single_run=allow_legacy_single_run)
+    runs, cohort_manifest = _load_run_evidence(
+        run_dir,
+        cohort_manifest_path=cohort_manifest_path,
+        cohort_commitment_path=cohort_commitment_path,
+        cohort_authority_keys_path=cohort_authority_keys_path,
+        allow_legacy_single_run=allow_legacy_single_run,
+    )
     resolved = _resolve_official_records(runs, poc_db)
     private, key_id = _private_key()
     signer = Ed25519Signer(private_key=private, key_id=key_id)
@@ -288,9 +587,39 @@ def score_run(
         "official_score": solved / len(results),
         "results": results,
     }
-    if cohort_id is not None:
-        summary["cohort_id"] = cohort_id
+    if cohort_manifest is not None:
+        first = runs[0]
+        summary["cohort_id"] = cohort_manifest.cohort_id
         summary["evaluation_mode"] = "heldout"
+        summary["harness_revision"] = first.harness_revision
+        summary["runner_image_id"] = first.runner_image_id
+        summary["harness_policy_sha256"] = first.harness_policy_sha256
+        summary["cohort_manifest_sha256"] = cohort_manifest.sha256
+        summary["cohort_commitment_sha256"] = first.cohort_commitment_sha256
+        summary["cohort_authority_key_id"] = first.cohort_authority_key_id
+        summary["expected_task_ids"] = sorted(cohort_manifest.expected_task_ids)
+        children = [
+            {"filename": name, "sha256": hashlib.sha256(data).hexdigest()}
+            for name, data in sorted(files.items())
+            if name.endswith(".signed.json")
+        ]
+        signed_manifest_payload = {
+            "schema_version": 1,
+            "cohort_id": cohort_manifest.cohort_id,
+            "evaluation_mode": "heldout",
+            "harness_revision": first.harness_revision,
+            "runner_image_id": first.runner_image_id,
+            "harness_policy_sha256": first.harness_policy_sha256,
+            "cohort_manifest_sha256": cohort_manifest.sha256,
+            "cohort_commitment_sha256": first.cohort_commitment_sha256,
+            "cohort_authority_key_id": first.cohort_authority_key_id,
+            "expected_task_ids": sorted(cohort_manifest.expected_task_ids),
+            "task_count": len(results),
+            "children": children,
+        }
+        files["cohort_manifest.signed.json"] = canonical_json(
+            signer.sign(canonical_json(signed_manifest_payload))
+        )
     files["summary.json"] = canonical_json(summary)
     _publish_output(output_dir, files)
     return summary
@@ -302,6 +631,13 @@ def main() -> int:
     parser.add_argument("--poc-db", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
+        "--cohort-manifest",
+        type=Path,
+        help="Explicit v1 manifest enumerating every heldout run",
+    )
+    parser.add_argument("--cohort-commitment", type=Path)
+    parser.add_argument("--cohort-authority-keys", type=Path)
+    parser.add_argument(
         "--allow-legacy-single-run",
         action="store_true",
         help="Explicitly sign one pre-v2 run that has no cohort metadata",
@@ -311,6 +647,13 @@ def main() -> int:
         args.run_dir.resolve(),
         args.poc_db.resolve(),
         args.output_dir.resolve(),
+        cohort_manifest_path=args.cohort_manifest.resolve() if args.cohort_manifest else None,
+        cohort_commitment_path=(
+            args.cohort_commitment.resolve() if args.cohort_commitment else None
+        ),
+        cohort_authority_keys_path=(
+            args.cohort_authority_keys.resolve() if args.cohort_authority_keys else None
+        ),
         allow_legacy_single_run=args.allow_legacy_single_run,
     )
     print(json.dumps(summary, sort_keys=True))

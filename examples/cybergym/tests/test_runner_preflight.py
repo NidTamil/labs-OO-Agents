@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from nooa_cybergym import run
+from nooa_cybergym.cohort_commitment import commitment_payload, verify_cohort_commitment
 from nooa_cybergym.stagnation import StagnationConfig
 
 
@@ -36,6 +41,385 @@ def test_missing_required_image_fails_before_run(monkeypatch):
         run.require_local_image(client, "runner:tag", role="runner")
 
 
+def test_local_image_identity_uses_immutable_docker_image_id():
+    image = SimpleNamespace(id="sha256:deadbeef", tags=["runner:latest"])
+    client = SimpleNamespace(images=SimpleNamespace(get=lambda reference: image))
+
+    resolved = run.require_local_image(client, "runner:latest", role="runner")
+
+    assert resolved is image
+    assert run.immutable_image_id(resolved) == "sha256:deadbeef"
+
+
+def test_harness_revision_cli_overrides_environment_and_blank_is_absent():
+    env = {"NOOA_CYBERGYM_HARNESS_REVISION": "environment-revision"}
+
+    assert (
+        run.resolve_harness_revision(SimpleNamespace(harness_revision=" cli-revision "), env)
+        == "cli-revision"
+    )
+    assert env["NOOA_CYBERGYM_HARNESS_REVISION"] == "environment-revision"
+    assert (
+        run.resolve_harness_revision(SimpleNamespace(harness_revision=None), env)
+        == "environment-revision"
+    )
+    assert run.resolve_harness_revision(SimpleNamespace(harness_revision=None), {}) is None
+    assert (
+        run.resolve_harness_revision(
+            SimpleNamespace(harness_revision="   "),
+            {"NOOA_CYBERGYM_HARNESS_REVISION": "environment-revision"},
+        )
+        is None
+    )
+
+    parsed = run.parse_args(
+        [
+            "--task-id",
+            "arvo:15",
+            "--data-dir",
+            "data",
+            "--server",
+            "http://server:8666",
+            "--log-dir",
+            "logs",
+            "--tmp-dir",
+            "tmp",
+            "--harness-revision",
+            "parsed-cli-revision",
+        ]
+    )
+    assert run.resolve_harness_revision(parsed, env) == "parsed-cli-revision"
+
+
+def test_attributed_runs_require_nonblank_harness_revision():
+    with pytest.raises(ValueError, match="heldout runs require.*harness revision"):
+        run.validate_harness_identity_preflight(harness_revision=None, evaluation_mode="heldout")
+    with pytest.raises(ValueError, match="heldout runs require.*harness revision"):
+        run.validate_harness_identity_preflight(harness_revision="  ", evaluation_mode="heldout")
+
+    with pytest.raises(ValueError, match="diagnostic runs require.*harness revision"):
+        run.validate_harness_identity_preflight(harness_revision=None, evaluation_mode="diagnostic")
+    run.validate_harness_identity_preflight(
+        harness_revision="diagnostic-revision", evaluation_mode="diagnostic"
+    )
+    run.validate_harness_identity_preflight(harness_revision=None, evaluation_mode=None)
+
+
+def test_heldout_manifest_is_canonical_validated_roster(tmp_path):
+    payload = {
+        "schema_version": 1,
+        "cohort_id": "heldout-v2",
+        "evaluation_mode": "heldout",
+        "expected_task_ids": ["arvo:15", "arvo:16"],
+    }
+    path = tmp_path / "cohort.json"
+    path.write_text(json.dumps(payload, indent=2))
+
+    manifest, digest = run.load_heldout_cohort_manifest(
+        path,
+        cohort_id="heldout-v2",
+        evaluation_mode="heldout",
+        task_id="arvo:15",
+    )
+
+    assert manifest == payload
+    assert digest == run.canonical_json_sha256(payload)
+    assert digest == run.canonical_json_sha256(dict(reversed(list(payload.items()))))
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ({"schema_version": 2}, "schema_version"),
+        ({"cohort_id": "other"}, "cohort_id"),
+        ({"evaluation_mode": "diagnostic"}, "evaluation_mode"),
+        ({"expected_task_ids": []}, "expected_task_ids"),
+        ({"expected_task_ids": ["arvo:15", "arvo:15"]}, "unique"),
+        ({"expected_task_ids": ["arvo:16"]}, "current task_id"),
+        ({"extra": "field"}, "exactly"),
+    ],
+)
+def test_heldout_manifest_rejects_invalid_or_mismatched_roster(mutation, message):
+    payload = {
+        "schema_version": 1,
+        "cohort_id": "heldout-v2",
+        "evaluation_mode": "heldout",
+        "expected_task_ids": ["arvo:15"],
+    }
+    payload.update(mutation)
+
+    with pytest.raises(ValueError, match=message):
+        run.validate_heldout_cohort_manifest(
+            payload,
+            cohort_id="heldout-v2",
+            evaluation_mode="heldout",
+            task_id="arvo:15",
+        )
+
+
+def test_git_identity_parser_requires_exact_head_and_clean_source():
+    head = "a" * 40
+    assert run.parse_git_source_identity(head, head + "\n", "") == head
+
+    with pytest.raises(ValueError, match="does not match.*HEAD"):
+        run.parse_git_source_identity("b" * 40, head + "\n", "")
+    with pytest.raises(ValueError, match="dirty or untracked"):
+        run.parse_git_source_identity(head, head + "\n", " M source.py\n")
+
+
+def test_git_identity_check_uses_repo_root_and_non_shell_subprocess_seam(tmp_path):
+    calls = []
+    head = "a" * 40
+
+    def runner(command, **kwargs):
+        calls.append((command, kwargs))
+        stdout = head + "\n" if command[-2:] == ["rev-parse", "HEAD"] else ""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    assert run.verify_git_source_identity(tmp_path, head, runner=runner) == head
+    assert [call[0] for call in calls] == [
+        ["git", "rev-parse", "HEAD"],
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+    ]
+    assert all(call[1]["cwd"] == tmp_path for call in calls)
+    assert all(call[1]["shell"] is False for call in calls)
+
+
+def test_authority_commitment_binds_roster_revision_image_and_policy(tmp_path):
+    private = Ed25519PrivateKey.generate()
+    public = private.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    payload = commitment_payload(
+        cohort_id="heldout-v2",
+        cohort_manifest_sha256="a" * 64,
+        expected_task_ids=["arvo:15", "arvo:16"],
+        harness_revision="b" * 40,
+        runner_image_id="sha256:image",
+        harness_policy_sha256="c" * 64,
+    )
+    payload_bytes = run.json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode()
+    envelope = {
+        "algorithm": "Ed25519",
+        "key_id": "independent-authority-v1",
+        "payload": base64.b64encode(payload_bytes).decode(),
+        "signature": base64.b64encode(private.sign(payload_bytes)).decode(),
+    }
+    commitment = tmp_path / "commitment.json"
+    keys = tmp_path / "keys.json"
+    commitment.write_text(json.dumps(envelope))
+    keys.write_text(json.dumps({"independent-authority-v1": base64.b64encode(public).decode()}))
+
+    record = verify_cohort_commitment(commitment, keys, expected_payload=payload)
+    assert record["cohort_authority_key_id"] == "independent-authority-v1"
+
+    changed = {**payload, "expected_task_ids": ["arvo:15"]}
+    with pytest.raises(ValueError, match="does not match"):
+        verify_cohort_commitment(commitment, keys, expected_payload=changed)
+
+
+def test_repo_root_is_derived_from_executing_source_path(tmp_path):
+    repo = tmp_path / "repo"
+    source = repo / "examples" / "cybergym" / "nooa_cybergym" / "run.py"
+    source.parent.mkdir(parents=True)
+    source.touch()
+    (repo / ".git").write_text("gitdir: elsewhere\n")
+
+    assert run.repo_root_for_source(source) == repo
+
+
+def test_manifest_git_binding_accepts_exact_tracked_head_bytes(tmp_path):
+    repo = tmp_path / "repo"
+    manifest = repo / "cohorts" / "heldout.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_bytes(b'{"schema_version":1}\n')
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append(command)
+        stdout = manifest.read_bytes() if command[1] == "show" else b""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr=b"")
+
+    assert run.verify_manifest_at_git_head(repo, manifest, runner=runner) == (
+        "cohorts/heldout.json"
+    )
+    assert calls == [
+        ["git", "ls-files", "--error-unmatch", "--", "cohorts/heldout.json"],
+        ["git", "show", "HEAD:cohorts/heldout.json"],
+    ]
+
+
+def test_manifest_git_binding_rejects_outside_untracked_and_mutated_files(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b"outside")
+    with pytest.raises(ValueError, match="within the harness repo"):
+        run.verify_manifest_at_git_head(repo, outside)
+
+    manifest = repo / "cohort.json"
+    manifest.write_bytes(b"working")
+
+    def untracked(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command)
+
+    with pytest.raises(ValueError, match="tracked at Git HEAD"):
+        run.verify_manifest_at_git_head(repo, manifest, runner=untracked)
+
+    def mutated(command, **kwargs):
+        stdout = b"committed" if command[1] == "show" else b""
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr=b"")
+
+    with pytest.raises(ValueError, match="bytes differ"):
+        run.verify_manifest_at_git_head(repo, manifest, runner=mutated)
+
+
+def test_provider_endpoint_normalization_removes_secrets_and_prompt_changes_policy():
+    endpoint = run.normalize_provider_endpoint(
+        "HTTPS://user:secret@API.Example.COM:8443/v1/chat?api_key=secret#token"
+    )
+    assert endpoint == "https://api.example.com:8443/v1/chat"
+    assert "user" not in endpoint
+    assert "secret" not in endpoint
+
+    base = run.harness_policy_record(
+        harness_revision="a" * 40,
+        runner_image_id="sha256:deadbeef",
+        task_difficulty="level1",
+        primary_model="model-a",
+        reasoning_effort="max",
+        prompt_sha256=run.text_sha256("prompt one"),
+        provider_endpoint=endpoint,
+        with_flag=False,
+        mask_map_sha256=None,
+        firewall_mode="none",
+        firewall_domains=["api.example.com"],
+        firewall_proxy_image_id=None,
+        task_server_endpoint="http://server:8666",
+        runtime={},
+        v2={},
+    )
+    changed_prompt = {**base, "prompt_sha256": run.text_sha256("prompt two")}
+    changed_endpoint = {**base, "provider_endpoint": "https://other.example/v1"}
+    assert run.harness_policy_sha256(base) != run.harness_policy_sha256(changed_prompt)
+    assert run.harness_policy_sha256(base) != run.harness_policy_sha256(changed_endpoint)
+    for override in (
+        {"with_flag": True},
+        {"mask_map_sha256": "f" * 64},
+        {"firewall_mode": "start"},
+        {"firewall_domains": ["api.example.com", "packages.example"]},
+        {"firewall_proxy_image_id": "sha256:proxy"},
+        {"task_server_endpoint": "http://other-server:8666"},
+    ):
+        assert run.harness_policy_sha256(base) != run.harness_policy_sha256({**base, **override})
+
+
+def test_firewall_domain_and_mask_map_policy_inputs_are_sanitized_and_hashed(tmp_path):
+    assert run.sanitized_firewall_domains(
+        " Packages.Example.,.PYPI.org,packages.example ", "API.Example.COM"
+    ) == [".pypi.org", "api.example.com", "packages.example"]
+    with pytest.raises(ValueError, match="only DNS names"):
+        run.sanitized_firewall_domains("user:secret@example.com", "api.example.com")
+
+    mask_map = tmp_path / "mask.json"
+    mask_map.write_bytes(b"mask-map-v1")
+    assert run.file_sha256(None) is None
+    assert run.file_sha256(mask_map) == hashlib.sha256(b"mask-map-v1").hexdigest()
+
+
+def test_harness_policy_fingerprint_is_canonical_and_change_sensitive():
+    runtime = run.effective_runtime_policy(
+        env={},
+        hard_timeout=14_400,
+        soft_timeout=13_920,
+        finalization_grace=300,
+        tracing_shutdown_timeout=30,
+    )
+    policy = run.harness_policy_record(
+        harness_revision="abc123",
+        runner_image_id="sha256:deadbeef",
+        task_difficulty="level1",
+        primary_model="model-a",
+        reasoning_effort="max",
+        prompt_sha256=run.text_sha256("prompt"),
+        provider_endpoint="https://api.example/v1",
+        with_flag=False,
+        mask_map_sha256=None,
+        firewall_mode="none",
+        firewall_domains=["api.example"],
+        firewall_proxy_image_id=None,
+        task_server_endpoint="http://server:8666",
+        runtime=runtime,
+        v2=run.stagnation_args_record(_stagnation_config()),
+    )
+    same_policy_different_order = dict(reversed(list(policy.items())))
+
+    digest = run.harness_policy_sha256(policy)
+
+    assert digest == run.harness_policy_sha256(same_policy_different_order)
+    assert len(digest) == 64
+    assert runtime == {
+        "hard_timeout_sec": 14_400,
+        "soft_timeout_sec": 13_920,
+        "finalization_grace_sec": 300,
+        "tracing_shutdown_timeout_sec": 30,
+        "outer_margin_sec": 60,
+        "max_iterations": 300,
+        "max_output_tokens": 384_000,
+        "control_max_output_tokens": 16_384,
+        "request_timeout_sec": 3_900,
+        "output_token_margin": 64_000,
+        "reasoning_output_floor": 8_192,
+        "summary_max_output_tokens": 16_384,
+        "min_exploration_sec": 1_200,
+        "max_concurrent_expanders": 2,
+        "submission_timeout_sec": 300.0,
+        "submission_rate_limit": 15,
+        "submission_rate_window_sec": 60.0,
+    }
+    assert set(policy["v2"]) == {
+        "escalation_enabled",
+        "escalation_model",
+        "escalation_trigger_age_sec",
+        "escalation_quiet_window_sec",
+        "escalation_min_submissions",
+        "escalation_reviewer_timeout_sec",
+        "escalation_reviewer_max_output_tokens",
+        "escalation_recovery_window_sec",
+    }
+    changed = json.loads(json.dumps(policy))
+    changed["runtime"]["max_concurrent_expanders"] = 3
+    assert run.harness_policy_sha256(changed) != digest
+
+    identity = run.harness_identity_args_record(
+        harness_revision="abc123",
+        runner_image_id="sha256:deadbeef",
+        policy=policy,
+    )
+    assert identity == {
+        "harness_revision": "abc123",
+        "runner_image_id": "sha256:deadbeef",
+        "harness_policy_sha256": digest,
+        "harness_policy": policy,
+    }
+    assert run.harness_policy_sha256(identity["harness_policy"]) == digest
+
+    unicode_policy = {"model": "reviewer-β"}
+    expected = hashlib.sha256(
+        json.dumps(
+            unicode_policy,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    assert run.harness_policy_sha256(unicode_policy) == expected
+
+
 def test_internal_route_probe_uses_runner_image_and_real_network():
     calls = []
 
@@ -60,6 +444,54 @@ def test_internal_route_probe_uses_runner_image_and_real_network():
     assert kwargs["environment"] == env
     assert kwargs["remove"] is True
     assert "http://server:8666/docs" in kwargs["command"][2]
+
+
+def test_agent_container_launch_uses_resolved_immutable_image_id(monkeypatch, tmp_path):
+    calls = []
+
+    class Container:
+        def logs(self, **kwargs):
+            return []
+
+        def wait(self):
+            return {"StatusCode": 0}
+
+        def remove(self, **kwargs):
+            return None
+
+    class Containers:
+        def run(self, image, **kwargs):
+            calls.append((image, kwargs))
+            return Container()
+
+    monkeypatch.setattr(run.docker, "from_env", lambda: SimpleNamespace(containers=Containers()))
+    task_dir = tmp_path / "task"
+    log_dir = tmp_path / "logs"
+    task_dir.mkdir()
+    (task_dir / "submit.sh").write_text("exit 0\n")
+    (log_dir / "agent").mkdir(parents=True)
+    (log_dir / "artifacts").mkdir()
+    args = SimpleNamespace(
+        timeout=10,
+        model="model-a",
+        prompt="",
+        reasoning_effort=None,
+        container_name="test-container",
+        keep_container=False,
+    )
+
+    assert (
+        run.run_container(
+            args,
+            task_dir,
+            log_dir,
+            {},
+            None,
+            "sha256:immutable-runner",
+        )
+        == 0
+    )
+    assert calls[0][0] == "sha256:immutable-runner"
 
 
 def test_timeout_budget_requires_finalization_and_shutdown_margin():
@@ -177,6 +609,69 @@ def test_enabled_v2_metadata_failure_happens_before_docker_work(monkeypatch, tmp
                 str(tmp_path / "missing.env"),
                 "--escalation-model",
                 "reviewer",
+            ]
+        )
+
+
+def test_heldout_harness_identity_failure_happens_before_docker_work(monkeypatch, tmp_path):
+    monkeypatch.delenv("NOOA_CYBERGYM_HARNESS_REVISION", raising=False)
+    monkeypatch.setattr(
+        run.docker,
+        "from_env",
+        lambda: (_ for _ in ()).throw(AssertionError("Docker must not be touched")),
+    )
+
+    with pytest.raises(ValueError, match="heldout runs require.*harness revision"):
+        run.main(
+            [
+                "--task-id",
+                "arvo:15",
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--server",
+                "http://server:8666",
+                "--log-dir",
+                str(tmp_path / "logs"),
+                "--tmp-dir",
+                str(tmp_path / "tmp"),
+                "--dotenv",
+                str(tmp_path / "missing.env"),
+                "--cohort-id",
+                "heldout-v2",
+                "--evaluation-mode",
+                "heldout",
+            ]
+        )
+
+
+def test_heldout_manifest_failure_happens_before_docker_work(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        run.docker,
+        "from_env",
+        lambda: (_ for _ in ()).throw(AssertionError("Docker must not be touched")),
+    )
+
+    with pytest.raises(ValueError, match="heldout runs require --cohort-manifest"):
+        run.main(
+            [
+                "--task-id",
+                "arvo:15",
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--server",
+                "http://server:8666",
+                "--log-dir",
+                str(tmp_path / "logs"),
+                "--tmp-dir",
+                str(tmp_path / "tmp"),
+                "--dotenv",
+                str(tmp_path / "missing.env"),
+                "--cohort-id",
+                "heldout-v2",
+                "--evaluation-mode",
+                "heldout",
+                "--harness-revision",
+                "a" * 40,
             ]
         )
 

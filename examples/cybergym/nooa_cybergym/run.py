@@ -8,11 +8,15 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -20,6 +24,23 @@ import docker
 from cybergym.task.gen_task import generate_task
 from cybergym.task.types import TaskConfig, TaskDifficulty
 from docker.errors import ImageNotFound
+
+try:
+    from .cohort_commitment import (
+        canonical_json as commitment_canonical_json,
+    )
+    from .cohort_commitment import (
+        commitment_payload,
+        verify_cohort_commitment,
+    )
+except ImportError:  # pragma: no cover - script mode
+    from cohort_commitment import (  # type: ignore[no-redef]
+        canonical_json as commitment_canonical_json,
+    )
+    from cohort_commitment import (
+        commitment_payload,
+        verify_cohort_commitment,
+    )
 
 try:
     from .stagnation import (
@@ -64,6 +85,19 @@ DEFAULT_SOFT_TIMEOUT_SEC = 13920
 DEFAULT_FINALIZATION_GRACE_SEC = 300.0
 DEFAULT_TRACING_SHUTDOWN_TIMEOUT_SEC = 30.0
 DEFAULT_OUTER_MARGIN_SEC = 60.0
+DEFAULT_MAX_ITERATIONS = 300
+DEFAULT_MAX_OUTPUT_TOKENS = 384000
+DEFAULT_MIN_EXPLORATION_SEC = 1200
+DEFAULT_MAX_CONCURRENT_EXPANDERS = 2
+DEFAULT_CONTROL_MAX_OUTPUT_TOKENS = 16384
+DEFAULT_REQUEST_TIMEOUT_SEC = 3900
+DEFAULT_OUTPUT_TOKEN_MARGIN = 64000
+DEFAULT_REASONING_OUTPUT_FLOOR = 8192
+DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS = 16384
+DEFAULT_SUBMISSION_TIMEOUT_SEC = 300.0
+DEFAULT_SUBMISSION_RATE_LIMIT = 15
+DEFAULT_SUBMISSION_RATE_WINDOW_SEC = 60.0
+HARNESS_REVISION_ENV = "NOOA_CYBERGYM_HARNESS_REVISION"
 GIT_LFS_POINTER_HEADER = b"version https://git-lfs.github.com/spec/v1"
 
 ESCALATION_ARG_ENV = (
@@ -108,6 +142,352 @@ def measurement_args_record(cohort_id: str | None, evaluation_mode: str | None) 
     if cohort_id is None or evaluation_mode is None:
         return {}
     return {"cohort_id": cohort_id, "evaluation_mode": evaluation_mode}
+
+
+def resolve_harness_revision(args: argparse.Namespace, env: dict[str, str]) -> str | None:
+    """Resolve an explicit harness revision, with CLI taking precedence over env."""
+    cli_value = getattr(args, "harness_revision", None)
+    if cli_value is not None:
+        normalized = cli_value.strip()
+        return normalized or None
+    environment_value = env.get(HARNESS_REVISION_ENV)
+    if environment_value is None:
+        return None
+    normalized = environment_value.strip()
+    return normalized or None
+
+
+def validate_harness_identity_preflight(
+    *, harness_revision: str | None, evaluation_mode: str | None
+) -> None:
+    """Require an explicit code identity for every attributed v2 run."""
+    if evaluation_mode is not None and not (harness_revision or "").strip():
+        raise ValueError(f"{evaluation_mode} runs require a nonblank harness revision")
+
+
+def canonical_json_sha256(value: object) -> str:
+    """Hash UTF-8 canonical JSON without ASCII-escaping Unicode."""
+    canonical = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def validate_heldout_cohort_manifest(
+    manifest: object,
+    *,
+    cohort_id: str | None,
+    evaluation_mode: str | None,
+    task_id: str,
+) -> dict[str, object]:
+    """Validate the exact immutable held-out roster schema and current run."""
+    if not isinstance(manifest, dict):
+        raise ValueError("cohort manifest must be a JSON object")
+    required_keys = {
+        "schema_version",
+        "cohort_id",
+        "evaluation_mode",
+        "expected_task_ids",
+    }
+    if set(manifest) != required_keys:
+        raise ValueError("cohort manifest must contain exactly the version 1 schema fields")
+    if manifest["schema_version"] != 1:
+        raise ValueError("cohort manifest schema_version must be 1")
+    manifest_cohort = manifest["cohort_id"]
+    if not isinstance(manifest_cohort, str) or not manifest_cohort.strip():
+        raise ValueError("cohort manifest cohort_id must be a nonblank string")
+    if manifest_cohort != cohort_id:
+        raise ValueError("cohort manifest cohort_id does not match --cohort-id")
+    if manifest["evaluation_mode"] != "heldout":
+        raise ValueError("cohort manifest evaluation_mode must be 'heldout'")
+    if evaluation_mode != manifest["evaluation_mode"]:
+        raise ValueError("cohort manifest evaluation_mode does not match --evaluation-mode")
+    task_ids = manifest["expected_task_ids"]
+    if (
+        not isinstance(task_ids, list)
+        or not task_ids
+        or any(not isinstance(item, str) or not item.strip() for item in task_ids)
+    ):
+        raise ValueError("cohort manifest expected_task_ids must be a nonempty string list")
+    if len(task_ids) != len(set(task_ids)):
+        raise ValueError("cohort manifest expected_task_ids must be unique")
+    if task_id not in task_ids:
+        raise ValueError("current task_id is not listed in cohort manifest")
+    return manifest
+
+
+def load_heldout_cohort_manifest(
+    path: Path,
+    *,
+    cohort_id: str | None,
+    evaluation_mode: str | None,
+    task_id: str,
+) -> tuple[dict[str, object], str]:
+    """Load, validate, and fingerprint a held-out cohort roster."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read cohort manifest {path}: {type(exc).__name__}") from exc
+    manifest = validate_heldout_cohort_manifest(
+        payload,
+        cohort_id=cohort_id,
+        evaluation_mode=evaluation_mode,
+        task_id=task_id,
+    )
+    return manifest, canonical_json_sha256(manifest)
+
+
+def parse_git_source_identity(
+    declared_revision: str, head_output: str, tracked_status_output: str
+) -> str:
+    """Validate an exact declared HEAD against clean tracked source state."""
+    head = head_output.strip()
+    if not head:
+        raise ValueError("cannot resolve harness Git HEAD")
+    if declared_revision != head:
+        raise ValueError("declared harness revision does not match exact Git HEAD")
+    if tracked_status_output.strip():
+        raise ValueError("heldout run rejects dirty or untracked harness source")
+    return head
+
+
+def verify_git_source_identity(
+    repo_root: Path,
+    declared_revision: str,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    """Read Git identity through an injectable non-shell subprocess seam."""
+    common = {
+        "cwd": repo_root,
+        "check": True,
+        "capture_output": True,
+        "text": True,
+        "shell": False,
+    }
+    try:
+        head = runner(["git", "rev-parse", "HEAD"], **common)
+        status = runner(["git", "status", "--porcelain=v1", "--untracked-files=all"], **common)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError(f"cannot verify harness Git identity: {type(exc).__name__}") from exc
+    return parse_git_source_identity(declared_revision, head.stdout, status.stdout)
+
+
+def verify_manifest_at_git_head(
+    repo_root: Path,
+    manifest_path: Path,
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[bytes]] = subprocess.run,
+) -> str:
+    """Require manifest bytes to match the tracked blob at the clean HEAD."""
+    root = repo_root.resolve()
+    resolved_manifest = manifest_path.resolve()
+    try:
+        relative = resolved_manifest.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise ValueError("heldout cohort manifest must be within the harness repo") from exc
+    common = {
+        "cwd": root,
+        "check": True,
+        "capture_output": True,
+        "shell": False,
+    }
+    try:
+        runner(["git", "ls-files", "--error-unmatch", "--", relative], **common)
+        committed = runner(["git", "show", f"HEAD:{relative}"], **common)
+        working_bytes = resolved_manifest.read_bytes()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError("heldout cohort manifest must be tracked at Git HEAD") from exc
+    if committed.stdout != working_bytes:
+        raise ValueError("heldout cohort manifest bytes differ from Git HEAD")
+    return relative
+
+
+def repo_root_for_source(source_file: Path) -> Path:
+    """Find the containing Git worktree for the executing runner source."""
+    resolved = source_file.resolve()
+    for candidate in resolved.parents:
+        if (candidate / ".git").exists():
+            return candidate
+    raise ValueError(f"cannot locate Git worktree for runner source {resolved}")
+
+
+def immutable_image_id(image: Any) -> str:
+    """Return Docker's content-addressed image ID, never its mutable tag."""
+    image_id = str(getattr(image, "id", "")).strip()
+    if not image_id:
+        raise RuntimeError("required runner image has no immutable image id")
+    return image_id
+
+
+def harness_policy_sha256(policy: Mapping[str, object]) -> str:
+    """Hash a canonical JSON representation of the complete effective policy."""
+    return canonical_json_sha256(policy)
+
+
+def text_sha256(value: str) -> str:
+    """Hash effective prompt text exactly as passed to the agent."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def file_sha256(path: Path | None) -> str | None:
+    """Hash a behavior-affecting local input, or record its absence."""
+    if path is None:
+        return None
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ValueError(f"cannot hash mask map: {type(exc).__name__}") from exc
+
+
+def normalize_provider_endpoint(endpoint: str) -> str:
+    """Retain endpoint routing while removing credentials and URL parameters."""
+    parsed = urlsplit(endpoint)
+    if not parsed.scheme or not parsed.hostname:
+        raise ValueError("provider endpoint must include a scheme and host")
+    hostname = parsed.hostname.lower()
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    netloc = hostname
+    if parsed.port is not None:
+        netloc += f":{parsed.port}"
+    return urlunsplit((parsed.scheme.lower(), netloc, parsed.path, "", ""))
+
+
+def sanitized_firewall_domains(raw_domains: str, provider_host: str) -> list[str]:
+    """Normalize the effective firewall additions without retaining URL secrets."""
+    domains = [*raw_domains.split(","), provider_host]
+    normalized: set[str] = set()
+    for raw in domains:
+        domain = raw.strip().lower().rstrip(".")
+        if not domain:
+            continue
+        core = domain[1:] if domain.startswith(".") else domain
+        if not core or not re.fullmatch(r"[a-z0-9.-]+", core):
+            raise ValueError("firewall extra domains must contain only DNS names")
+        normalized.add(domain)
+    return sorted(normalized)
+
+
+def harness_policy_record(
+    *,
+    harness_revision: str | None,
+    runner_image_id: str,
+    task_difficulty: str,
+    primary_model: str,
+    reasoning_effort: str | None,
+    prompt_sha256: str,
+    provider_endpoint: str,
+    with_flag: bool,
+    mask_map_sha256: str | None,
+    firewall_mode: str,
+    firewall_domains: list[str],
+    firewall_proxy_image_id: str | None,
+    task_server_endpoint: str,
+    runtime: Mapping[str, object],
+    v2: Mapping[str, object],
+) -> dict[str, object]:
+    """Build the stable policy document whose digest identifies run behavior."""
+    return {
+        "harness_revision": harness_revision,
+        "runner_image_id": runner_image_id,
+        "task_difficulty": task_difficulty,
+        "primary_model": primary_model,
+        "reasoning_effort": reasoning_effort,
+        "prompt_sha256": prompt_sha256,
+        "provider_endpoint": provider_endpoint,
+        "with_flag": with_flag,
+        "mask_map_sha256": mask_map_sha256,
+        "firewall_mode": firewall_mode,
+        "firewall_domains": list(firewall_domains),
+        "firewall_proxy_image_id": firewall_proxy_image_id,
+        "task_server_endpoint": task_server_endpoint,
+        "runtime": dict(runtime),
+        "v2": dict(v2),
+    }
+
+
+def harness_identity_args_record(
+    *, harness_revision: str | None, runner_image_id: str, policy: Mapping[str, object]
+) -> dict[str, object]:
+    """Return immutable identity fields and their auditable canonical policy."""
+    return {
+        "harness_revision": harness_revision,
+        "runner_image_id": runner_image_id,
+        "harness_policy_sha256": harness_policy_sha256(policy),
+        "harness_policy": dict(policy),
+    }
+
+
+def effective_runtime_policy(
+    *,
+    env: Mapping[str, str],
+    hard_timeout: int,
+    soft_timeout: float,
+    finalization_grace: float,
+    tracing_shutdown_timeout: float,
+) -> dict[str, int | float]:
+    """Resolve every timeout, token budget, rate, and concurrency control."""
+    return {
+        "hard_timeout_sec": hard_timeout,
+        "soft_timeout_sec": soft_timeout,
+        "finalization_grace_sec": finalization_grace,
+        "tracing_shutdown_timeout_sec": tracing_shutdown_timeout,
+        "outer_margin_sec": DEFAULT_OUTER_MARGIN_SEC,
+        "max_iterations": int(env.get("NOOA_CYBERGYM_MAX_ITERATIONS", DEFAULT_MAX_ITERATIONS)),
+        "max_output_tokens": int(
+            env.get("NOOA_CYBERGYM_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS)
+        ),
+        "control_max_output_tokens": int(
+            env.get(
+                "NOOA_CYBERGYM_CONTROL_MAX_OUTPUT_TOKENS",
+                DEFAULT_CONTROL_MAX_OUTPUT_TOKENS,
+            )
+        ),
+        "request_timeout_sec": int(
+            env.get("NOOA_CYBERGYM_REQUEST_TIMEOUT_S", DEFAULT_REQUEST_TIMEOUT_SEC)
+        ),
+        "output_token_margin": int(
+            env.get("NOOA_CYBERGYM_OUTPUT_TOKEN_MARGIN", DEFAULT_OUTPUT_TOKEN_MARGIN)
+        ),
+        "reasoning_output_floor": int(
+            env.get(
+                "NOOA_CYBERGYM_REASONING_OUTPUT_FLOOR",
+                DEFAULT_REASONING_OUTPUT_FLOOR,
+            )
+        ),
+        "summary_max_output_tokens": int(
+            env.get(
+                "NOOA_CYBERGYM_SUMMARY_MAX_OUTPUT_TOKENS",
+                DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS,
+            )
+        ),
+        "min_exploration_sec": int(
+            env.get("NOOA_CYBERGYM_MIN_EXPLORATION_SEC", DEFAULT_MIN_EXPLORATION_SEC)
+        ),
+        "max_concurrent_expanders": int(
+            env.get(
+                "NOOA_CYBERGYM_MAX_CONCURRENT_EXPANDERS",
+                DEFAULT_MAX_CONCURRENT_EXPANDERS,
+            )
+        ),
+        "submission_timeout_sec": float(
+            env.get("NOOA_CYBERGYM_SUBMISSION_TIMEOUT_SEC", DEFAULT_SUBMISSION_TIMEOUT_SEC)
+        ),
+        "submission_rate_limit": int(
+            env.get("NOOA_CYBERGYM_SUBMISSION_RATE_LIMIT", DEFAULT_SUBMISSION_RATE_LIMIT)
+        ),
+        "submission_rate_window_sec": float(
+            env.get(
+                "NOOA_CYBERGYM_SUBMISSION_RATE_WINDOW_SEC",
+                DEFAULT_SUBMISSION_RATE_WINDOW_SEC,
+            )
+        ),
+    }
 
 
 def validate_stagnation_preflight(
@@ -276,10 +656,10 @@ def recover_timeout_final(log_dir: Path) -> dict[str, object] | None:
     return selection
 
 
-def require_local_image(client, image: str, *, role: str) -> None:
+def require_local_image(client, image: str, *, role: str) -> Any:
     """Fail before task generation when a required image is unavailable."""
     try:
-        client.images.get(image)
+        return client.images.get(image)
     except ImageNotFound as exc:
         raise RuntimeError(f"required {role} image is not local: {image}") from exc
 
@@ -384,6 +764,7 @@ def run_container(
     log_dir: Path,
     env: dict[str, str],
     network: str | None,
+    runner_image_id: str,
 ) -> int:
     client = docker.from_env()
     command = [
@@ -419,7 +800,7 @@ def run_container(
     container = None
     try:
         container = client.containers.run(
-            args.image,
+            runner_image_id,
             command=command,
             name=container_name,
             environment=env,
@@ -521,6 +902,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=("heldout", "diagnostic"),
         help="Official heldout or non-official diagnostic run",
     )
+    parser.add_argument(
+        "--harness-revision",
+        help=f"Immutable harness revision (overrides {HARNESS_REVISION_ENV})",
+    )
+    parser.add_argument(
+        "--cohort-manifest",
+        type=Path,
+        help="Immutable held-out cohort roster JSON",
+    )
+    parser.add_argument(
+        "--cohort-commitment",
+        type=Path,
+        help="Authority-signed pre-run commitment envelope for the held-out cohort",
+    )
+    parser.add_argument(
+        "--cohort-authority-keys",
+        type=Path,
+        help="Externally controlled Ed25519 authority public-key registry",
+    )
+    parser.add_argument(
+        "--cohort-commitment-request-out",
+        type=Path,
+        help="Write the canonical authority request and exit before agent execution",
+    )
     parser.add_argument("--reasoning-effort")
     parser.add_argument("--prompt", default="")
     parser.add_argument("--container-name")
@@ -558,6 +963,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.reasoning_effort:
         env["NOOA_CYBERGYM_REASONING_EFFORT"] = args.reasoning_effort
 
+    harness_revision = resolve_harness_revision(args, env)
     stagnation_config = resolve_stagnation_config(args, env)
     stagnation_record = stagnation_args_record(stagnation_config)
     effective_soft_timeout = float(
@@ -584,6 +990,38 @@ def main(argv: list[str] | None = None) -> int:
         cohort_id=args.cohort_id,
         evaluation_mode=args.evaluation_mode,
     )
+    validate_harness_identity_preflight(
+        harness_revision=harness_revision,
+        evaluation_mode=args.evaluation_mode,
+    )
+    cohort_manifest = None
+    cohort_manifest_sha256 = None
+    if args.evaluation_mode == "heldout":
+        if args.cohort_manifest is None:
+            raise ValueError("heldout runs require --cohort-manifest")
+        if args.cohort_commitment_request_out is None and (
+            args.cohort_commitment is None or args.cohort_authority_keys is None
+        ):
+            raise ValueError("heldout runs require --cohort-commitment and --cohort-authority-keys")
+        cohort_manifest, cohort_manifest_sha256 = load_heldout_cohort_manifest(
+            args.cohort_manifest,
+            cohort_id=args.cohort_id,
+            evaluation_mode=args.evaluation_mode,
+            task_id=args.task_id,
+        )
+        repo_root = repo_root_for_source(Path(__file__))
+        verify_git_source_identity(repo_root, harness_revision or "")
+        verify_manifest_at_git_head(repo_root, args.cohort_manifest)
+
+    effective_provider_endpoint = normalize_provider_endpoint(
+        env.get("OPENAI_BASE_URL") or env.get("OPENAI_API_BASE") or DEFAULT_LLM_API_BASE
+    )
+    provider_host = urlsplit(effective_provider_endpoint).hostname or ""
+    firewall_domains = sanitized_firewall_domains(
+        os.environ.get("CYBERGYM_FIREWALL_EXTRA_DOMAINS", ""), provider_host
+    )
+    firewall_mode = "connect" if args.connect_firewall else "start" if args.use_firewall else "none"
+    mask_map_sha256 = file_sha256(args.mask_map)
     v2_log_record = {
         "cohort_id": args.cohort_id,
         "evaluation_mode": args.evaluation_mode,
@@ -595,7 +1033,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     docker_client = docker.from_env()
-    require_local_image(docker_client, args.image, role="runner")
+    runner_image = require_local_image(docker_client, args.image, role="runner")
+    runner_image_id = immutable_image_id(runner_image)
 
     args.tmp_dir.mkdir(parents=True, exist_ok=True)
     args.log_dir.mkdir(parents=True, exist_ok=True)
@@ -614,28 +1053,23 @@ def main(argv: list[str] | None = None) -> int:
     env["NOOA_CYBERGYM_SESSION_ID"] = run_name
 
     proxy = None
+    firewall_proxy_image_id = None
     if args.use_firewall or args.connect_firewall:
         from cybergym.firewall import FirewallProxyManager
         from cybergym.firewall.proxy import PROXY_IMAGE
 
-        require_local_image(docker_client, PROXY_IMAGE, role="firewall proxy")
-
-        extra_domains = [
-            d for d in os.environ.get("CYBERGYM_FIREWALL_EXTRA_DOMAINS", "").split(",") if d
-        ]
-        llm_api_base = (
-            os.environ.get("OPENAI_BASE_URL")
-            or os.environ.get("OPENAI_API_BASE")
-            or DEFAULT_LLM_API_BASE
+        proxy_image = require_local_image(docker_client, PROXY_IMAGE, role="firewall proxy")
+        firewall_proxy_image_id = immutable_image_id(proxy_image)
+        proxy = FirewallProxyManager(
+            extra_domains=firewall_domains,
+            proxy_image=firewall_proxy_image_id,
         )
-        llm_host = urlsplit(llm_api_base).hostname
-        if llm_host and llm_host not in extra_domains:
-            extra_domains.append(llm_host)
-        proxy = FirewallProxyManager(extra_domains=extra_domains)
         if args.connect_firewall:
             proxy.connect()
         else:
             proxy.start()
+        running_proxy = docker_client.containers.get(proxy.container_name)
+        firewall_proxy_image_id = immutable_image_id(running_proxy.image)
         network = proxy.network_name
         env.update(proxy.env_vars())
         server, server_no_proxy = server_for_firewall(
@@ -648,7 +1082,7 @@ def main(argv: list[str] | None = None) -> int:
             env["NO_PROXY"] = env["no_proxy"] = ",".join(no_proxy)
         preflight_internal_route(
             docker_client,
-            image=args.image,
+            image=runner_image_id,
             network=network,
             env=env,
             server=server,
@@ -668,30 +1102,108 @@ def main(argv: list[str] | None = None) -> int:
     )
     require_resolved_task_files(task_dir)
 
+    runtime_policy = effective_runtime_policy(
+        env=env,
+        hard_timeout=args.timeout,
+        soft_timeout=effective_soft_timeout,
+        finalization_grace=finalization_grace,
+        tracing_shutdown_timeout=tracing_shutdown_timeout,
+    )
+    effective_reasoning_effort = env.get("NOOA_CYBERGYM_REASONING_EFFORT") or None
+    effective_prompt = args.prompt or DEFAULT_PROMPT
+    task_difficulty = getattr(args.difficulty, "value", str(args.difficulty))
+    policy = harness_policy_record(
+        harness_revision=harness_revision,
+        runner_image_id=runner_image_id,
+        task_difficulty=task_difficulty,
+        primary_model=args.model,
+        reasoning_effort=effective_reasoning_effort,
+        prompt_sha256=text_sha256(effective_prompt),
+        provider_endpoint=effective_provider_endpoint,
+        with_flag=bool(args.with_flag),
+        mask_map_sha256=mask_map_sha256,
+        firewall_mode=firewall_mode,
+        firewall_domains=firewall_domains,
+        firewall_proxy_image_id=firewall_proxy_image_id,
+        task_server_endpoint=normalize_provider_endpoint(server),
+        runtime=runtime_policy,
+        v2=stagnation_record,
+    )
+    commitment_record: dict[str, str] = {}
+    if args.evaluation_mode == "heldout":
+        assert cohort_manifest is not None
+        assert cohort_manifest_sha256 is not None
+        assert harness_revision is not None
+        requested_commitment = commitment_payload(
+            cohort_id=str(cohort_manifest["cohort_id"]),
+            cohort_manifest_sha256=cohort_manifest_sha256,
+            expected_task_ids=cohort_manifest["expected_task_ids"],
+            harness_revision=harness_revision,
+            runner_image_id=runner_image_id,
+            harness_policy_sha256=harness_policy_sha256(policy),
+        )
+        if args.cohort_commitment_request_out is not None:
+            request_path = args.cohort_commitment_request_out.resolve()
+            request_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with request_path.open("xb") as stream:
+                    stream.write(commitment_canonical_json(requested_commitment))
+            except FileExistsError as exc:
+                raise ValueError(f"commitment request already exists: {request_path}") from exc
+            if not args.keep_tmp:
+                shutil.rmtree(task_dir, ignore_errors=True)
+            print(f"cohort_commitment_request={request_path}")
+            return 0
+        assert args.cohort_commitment is not None and args.cohort_authority_keys is not None
+        commitment_record = verify_cohort_commitment(
+            args.cohort_commitment,
+            args.cohort_authority_keys,
+            expected_payload=requested_commitment,
+        )
+
+    measurement_identity: dict[str, object] = {}
+    if args.evaluation_mode is not None:
+        measurement_identity.update(
+            harness_identity_args_record(
+                harness_revision=harness_revision,
+                runner_image_id=runner_image_id,
+                policy=policy,
+            )
+        )
+        measurement_identity.update(measurement_args_record(args.cohort_id, args.evaluation_mode))
+        if args.evaluation_mode == "heldout":
+            measurement_identity.update(
+                {
+                    "cohort_manifest_sha256": cohort_manifest_sha256,
+                    "cohort_manifest": cohort_manifest,
+                    **commitment_record,
+                }
+            )
+
     args_record = {
         "agent": f"nooa_cybergym:{args.model}",
         "agent_id": agent_id,
-        **measurement_args_record(args.cohort_id, args.evaluation_mode),
+        **measurement_identity,
         "task": task.model_dump() if hasattr(task, "model_dump") else dict(task),
         "server": server,
         "image": args.image,
         "network": network,
         "timeout": args.timeout,
-        "max_iter": args.max_iter,
-        "max_output_tokens": args.max_output_tokens,
+        "max_iter": runtime_policy["max_iterations"],
+        "max_output_tokens": runtime_policy["max_output_tokens"],
         "soft_timeout": effective_soft_timeout,
         "finalization_grace": finalization_grace,
         "tracing_shutdown_timeout": tracing_shutdown_timeout,
         "outer_margin": DEFAULT_OUTER_MARGIN_SEC,
-        "min_exploration": args.min_exploration,
-        "max_concurrent_expanders": args.max_concurrent_expanders,
-        "reasoning_effort": args.reasoning_effort,
+        "min_exploration": runtime_policy["min_exploration_sec"],
+        "max_concurrent_expanders": runtime_policy["max_concurrent_expanders"],
+        "reasoning_effort": effective_reasoning_effort,
         **stagnation_record,
     }
     (log_dir / "args.json").write_text(json.dumps(args_record, indent=2, default=str) + "\n")
 
     try:
-        exit_code = run_container(args, task_dir, log_dir, env, network)
+        exit_code = run_container(args, task_dir, log_dir, env, network, runner_image_id)
     finally:
         if not args.keep_tmp:
             shutil.rmtree(task_dir, ignore_errors=True)

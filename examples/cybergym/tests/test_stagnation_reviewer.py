@@ -104,6 +104,14 @@ def _direct_input_values() -> dict[str, object]:
     }
 
 
+def _review_log_payloads(caplog) -> list[dict[str, object]]:
+    return [
+        json.loads(record.message.removeprefix("stagnation_review "))
+        for record in caplog.records
+        if record.message.startswith("stagnation_review ")
+    ]
+
+
 def test_stagnation_reviewer_is_predict_only_and_has_no_worker_tools():
     strategy = StagnationReviewer.review._plan_strategy
     reviewer = StagnationReviewer(llm=FakeLLMClient())
@@ -203,13 +211,16 @@ async def test_stagnation_review_success_uses_zero_retries_and_applies_guidance(
     assert kwargs["max_tokens"] == 1234
     assert kwargs["retry_config"].max_retries == 0
     assert kwargs["retry_config"].rate_limit_extra_retries == 0
-    payload = json.loads(caplog.records[-1].message.removeprefix("stagnation_review "))
+    payloads = _review_log_payloads(caplog)
+    assert len(payloads) == 1
+    payload = payloads[0]
     assert payload["failure_type"] is None
+    assert payload["cleanup_status"] == "success"
     assert "failure_message" not in payload
 
 
 @pytest.mark.asyncio
-async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch):
+async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch, caplog):
     agent = _agent_with_portfolio()
     original_guidance = agent._portfolio.guidance
     reviewer_llm = CloseableLLM()
@@ -233,15 +244,19 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch)
     monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
 
-    attempt = asyncio.create_task(
-        agent._attempt_stagnation_review(
-            state=_eligible_state(), now=100, config=_config(reviewer_timeout_sec=0.001)
+    with caplog.at_level("WARNING", logger="nooa_cybergym"):
+        attempt = asyncio.create_task(
+            agent._attempt_stagnation_review(
+                state=_eligible_state(), now=100, config=_config(reviewer_timeout_sec=0.001)
+            )
         )
-    )
-    await asyncio.wait_for(cancellation_seen.wait(), timeout=0.1)
-    audit = await asyncio.wait_for(attempt, timeout=0.1)
+        await asyncio.wait_for(cancellation_seen.wait(), timeout=0.1)
+        audit = await asyncio.wait_for(attempt, timeout=0.1)
 
     assert audit is not None and audit.outcome == "timeout"
+    payloads = _review_log_payloads(caplog)
+    assert len(payloads) == 1
+    assert payloads[0]["cleanup_status"] == "success"
     assert late_result.is_set() is False
     release_late_result.set()
     await asyncio.wait_for(late_result.wait(), timeout=0.1)
@@ -277,6 +292,10 @@ async def test_provider_failure_is_redacted_and_never_retried(monkeypatch, caplo
     assert attempts == 1
     assert reviewer_llm.closed == 1
     assert "secret provider response" not in caplog.text
+    payloads = _review_log_payloads(caplog)
+    assert len(payloads) == 1
+    assert payloads[0]["outcome"] == "failure"
+    assert payloads[0]["cleanup_status"] == "success"
 
 
 @pytest.mark.asyncio
@@ -311,7 +330,7 @@ async def test_whitespace_only_advice_fails_open_once_and_preserves_guidance(mon
 
 
 @pytest.mark.asyncio
-async def test_cancellation_suppressing_late_result_never_applies(monkeypatch):
+async def test_cancellation_suppressing_late_result_never_applies(monkeypatch, caplog):
     agent = _agent_with_portfolio()
     original_guidance = agent._portfolio.guidance
     reviewer_llm = CloseableLLM()
@@ -333,21 +352,25 @@ async def test_cancellation_suppressing_late_result_never_applies(monkeypatch):
 
     monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
-    task = asyncio.create_task(
-        agent._attempt_stagnation_review(state=_eligible_state(), now=100, config=_config())
-    )
-    await started.wait()
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    with caplog.at_level("WARNING", logger="nooa_cybergym"):
+        task = asyncio.create_task(
+            agent._attempt_stagnation_review(state=_eligible_state(), now=100, config=_config())
+        )
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
     await asyncio.wait_for(late_result.wait(), timeout=0.1)
 
     assert agent._portfolio.guidance == original_guidance
     assert agent._stagnation_review_audit.outcome == "cancelled"
+    payloads = _review_log_payloads(caplog)
+    assert len(payloads) == 1
+    assert payloads[0]["cleanup_status"] == "success"
 
 
 @pytest.mark.asyncio
-async def test_hanging_close_is_bounded_and_records_cleanup_timeout(monkeypatch):
+async def test_hanging_close_is_bounded_and_records_cleanup_timeout(monkeypatch, caplog):
     agent = _agent_with_portfolio()
 
     class BlockingAfterCancellationCloseLLM(CloseableLLM):
@@ -381,23 +404,27 @@ async def test_hanging_close_is_bounded_and_records_cleanup_timeout(monkeypatch)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
     monkeypatch.setattr(nooa_cybergym_agent, "REVIEWER_CLEANUP_TIMEOUT_SEC", 0.001)
 
-    attempt = asyncio.create_task(
-        agent._attempt_stagnation_review(state=_eligible_state(), now=100, config=_config())
-    )
-    await asyncio.wait_for(reviewer_llm.close_started.wait(), timeout=0.1)
-    await asyncio.wait_for(reviewer_llm.close_cancelled.wait(), timeout=0.1)
-    audit = await asyncio.wait_for(attempt, timeout=0.1)
+    with caplog.at_level("INFO", logger="nooa_cybergym"):
+        attempt = asyncio.create_task(
+            agent._attempt_stagnation_review(state=_eligible_state(), now=100, config=_config())
+        )
+        await asyncio.wait_for(reviewer_llm.close_started.wait(), timeout=0.1)
+        await asyncio.wait_for(reviewer_llm.close_cancelled.wait(), timeout=0.1)
+        audit = await asyncio.wait_for(attempt, timeout=0.1)
 
     assert audit is not None and audit.outcome == "success"
     assert audit.cleanup_status == "timeout"
     assert audit.cleanup_failure_type == "TimeoutError"
+    payloads = _review_log_payloads(caplog)
+    assert len(payloads) == 1
+    assert payloads[0]["cleanup_status"] == "timeout"
     assert reviewer_llm.release_close.is_set() is False
     reviewer_llm.release_close.set()
     await asyncio.wait_for(reviewer_llm.close_finished.wait(), timeout=0.1)
 
 
 @pytest.mark.asyncio
-async def test_repeated_cancellation_preserves_audit_during_hanging_cleanup(monkeypatch):
+async def test_repeated_cancellation_preserves_audit_during_hanging_cleanup(monkeypatch, caplog):
     agent = _agent_with_portfolio()
     reviewer_llm = HangingCloseLLM()
     review_started = asyncio.Event()
@@ -412,19 +439,60 @@ async def test_repeated_cancellation_preserves_audit_during_hanging_cleanup(monk
 
     monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
-    task = asyncio.create_task(
-        agent._attempt_stagnation_review(state=_eligible_state(), now=100, config=_config())
-    )
-    await review_started.wait()
-    task.cancel()
-    await reviewer_llm.close_started.wait()
-    assert agent._stagnation_review_audit.outcome == "cancelled"
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    with caplog.at_level("WARNING", logger="nooa_cybergym"):
+        task = asyncio.create_task(
+            agent._attempt_stagnation_review(state=_eligible_state(), now=100, config=_config())
+        )
+        await review_started.wait()
+        task.cancel()
+        await reviewer_llm.close_started.wait()
+        assert agent._stagnation_review_audit.outcome == "cancelled"
+        assert not [
+            record for record in caplog.records if record.message.startswith("stagnation_review ")
+        ]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
     assert agent._stagnation_review_audit.outcome == "cancelled"
     assert agent._stagnation_review_audit.cleanup_status == "cancelled"
+    payloads = _review_log_payloads(caplog)
+    assert len(payloads) == 1
+    payload = payloads[0]
+    assert payload["outcome"] == "cancelled"
+    assert payload["cleanup_status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_exception_emits_one_final_redacted_audit(monkeypatch, caplog):
+    agent = _agent_with_portfolio()
+
+    class FailingCloseLLM(CloseableLLM):
+        async def aclose(self) -> None:
+            raise RuntimeError("secret cleanup detail")
+
+    reviewer_llm = FailingCloseLLM()
+
+    class FakeReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def review(self, review_input):
+            return StagnationAdvice(guidance="bounded", reasoning="bounded")
+
+    monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
+    monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
+    with caplog.at_level("INFO", logger="nooa_cybergym"):
+        audit = await agent._attempt_stagnation_review(
+            state=_eligible_state(), now=100, config=_config()
+        )
+
+    assert audit is not None and audit.cleanup_status == "failure"
+    assert audit.cleanup_failure_type == "RuntimeError"
+    payloads = _review_log_payloads(caplog)
+    assert len(payloads) == 1
+    assert payloads[0]["cleanup_status"] == "failure"
+    assert "secret cleanup detail" not in caplog.text
 
 
 @pytest.mark.asyncio

@@ -194,17 +194,21 @@ the single-task command above:
 --escalation-reviewer-timeout 900 \
 --escalation-reviewer-max-output-tokens 32768 \
 --escalation-recovery-window 3600 \
+--harness-revision "$(git rev-parse HEAD)" \
 --cohort-id l1-v2-heldout-001 \
---evaluation-mode heldout
+--evaluation-mode heldout \
+--cohort-manifest cohorts/l1-v2-heldout-001.json \
+--cohort-commitment /secure/heldout-001.commitment.signed.json \
+--cohort-authority-keys /secure/cohort-authority-keys.json
 ```
 
 The numeric values shown are the defaults. Once task age, quiet time, and
 submission count all reach their thresholds, one isolated, tool-free reviewer
 runs once and supplies bounded guidance to the existing agents. Exploration
-continues during the recovery window. If no new verified crash family appears
-before that window expires, the run enters the existing honest no-final path;
-new family progress lets exploration continue. Reviewer failure or timeout is
-recorded and does not retry the reviewer.
+continues during the recovery window. When it expires, an existing verified
+family is finalized. The run enters the honest no-final path only when no
+verified family exists. New family progress lets exploration continue.
+Reviewer failure or timeout is recorded and does not retry the reviewer.
 
 Each attempt writes a structured `stagnation_review` audit event to the agent
 log, including the outcome, trigger counters, elapsed time, model, and cleanup
@@ -212,7 +216,53 @@ status. Raw provider error messages are excluded.
 
 Every v2 run requires both `--cohort-id` and `--evaluation-mode`. Use
 `heldout` only for untouched official tasks in one fixed cohort. Use
-`diagnostic` for development reruns and keep those runs in a separate run root;
-the strict final scorer rejects diagnostic or mixed cohorts. To sign exactly
-one pre-v2 run without cohort metadata, invoke `scripts/score_final.py` with the
-explicit `--allow-legacy-single-run` flag.
+`diagnostic` for development reruns and keep those runs in a separate run root.
+`scripts/validate.sh` verifies diagnostic PoCs but never signs them. Held-out
+validation requires `--cohort-manifest <path>` and forwards that manifest to
+the strict scorer. Mixed or partial metadata is rejected before verification.
+Exactly one metadata-free pre-v2 run is verified and signed through the
+explicit legacy scorer path.
+
+Create `cohorts/l1-v2-heldout-001.json` and commit it at the clean harness
+revision before any held-out run starts. Each run records its canonical
+SHA-256, and validation must use that same committed file:
+
+```json
+{
+  "schema_version": 1,
+  "cohort_id": "l1-v2-heldout-001",
+  "evaluation_mode": "heldout",
+  "expected_task_ids": ["arvo:123", "oss-fuzz:456"]
+}
+```
+
+Before executing the first task, run the same command once with
+`--cohort-commitment-request-out /secure/heldout-001.request.json` in place of
+the commitment and authority-key arguments. It writes the exact canonical
+roster, revision, immutable image, and policy commitment, then exits before the
+agent container starts. An independent evaluation authority reviews and signs
+that request with `scripts/sign_cohort_commitment.py`; keep its private key off
+the runner host. Supply the resulting signed envelope and public-key registry
+to every task and to validation. This pre-run signature prevents a later score
+from silently dropping failures or substituting a different harness policy.
+
+On the authority host:
+
+```bash
+python3 scripts/sign_cohort_commitment.py \
+  --request /secure/heldout-001.request.json \
+  --output /secure/heldout-001.commitment.signed.json \
+  --public-keys-output /secure/cohort-authority-keys.json
+```
+
+The signer reads `SUNCHASER_COHORT_AUTHORITY_SIGNING_SEED` and
+`SUNCHASER_COHORT_AUTHORITY_KEY_ID`. The evaluator, rather than the runner
+operator, selects the trusted public-key registry used during final scoring.
+
+```bash
+scripts/validate.sh runs/diagnostic
+scripts/validate.sh runs/heldout \
+  --cohort-manifest cohorts/l1-v2-heldout-001.json \
+  --cohort-commitment /secure/heldout-001.commitment.signed.json \
+  --cohort-authority-keys /secure/cohort-authority-keys.json
+```
