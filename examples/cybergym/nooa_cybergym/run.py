@@ -88,6 +88,7 @@ DEFAULT_PROMPT = (
 )
 DEFAULT_MODEL = "glm-5.2"
 DEFAULT_LLM_API_BASE = "https://inference-api.nvidia.com/v1"
+FIREWALL_DOMAIN_ALLOWLIST_PATH = "/etc/squid/allowed_domains.txt"
 DEFAULT_SOFT_TIMEOUT_SEC = 13920
 DEFAULT_FINALIZATION_GRACE_SEC = 300.0
 DEFAULT_TRACING_SHUTDOWN_TIMEOUT_SEC = 30.0
@@ -382,6 +383,36 @@ def sanitized_firewall_domains(raw_domains: str, provider_host: str) -> list[str
             raise ValueError("firewall extra domains must contain only DNS names")
         normalized.add(domain)
     return sorted(normalized)
+
+
+def reconcile_firewall_domain_allowlist(
+    docker_client,
+    proxy,
+    *,
+    expected_domains: set[str],
+    allow_update: bool = True,
+) -> set[str]:
+    """Make the live Squid domain set match the policy before agent startup."""
+
+    def read_live_domains() -> set[str]:
+        container = docker_client.containers.get(proxy.container_name)
+        result = container.exec_run(["cat", FIREWALL_DOMAIN_ALLOWLIST_PATH])
+        if result.exit_code != 0:
+            raise RuntimeError("cannot read live firewall domain allowlist")
+        raw = result.output.decode("utf-8") if isinstance(result.output, bytes) else result.output
+        return {
+            line.strip()
+            for line in raw.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+
+    effective_domains = read_live_domains()
+    if effective_domains != expected_domains and allow_update:
+        proxy.update()
+        effective_domains = read_live_domains()
+    if effective_domains != expected_domains:
+        raise RuntimeError("live firewall domain allowlist differs from requested policy")
+    return effective_domains
 
 
 def harness_policy_record(
@@ -1096,7 +1127,7 @@ def main(argv: list[str] | None = None) -> int:
     proxy = None
     firewall_proxy_image_id = None
     if args.use_firewall or args.connect_firewall:
-        from cybergym.firewall import FirewallProxyManager
+        from cybergym.firewall import FirewallProxyManager, load_allowlist
         from cybergym.firewall.proxy import PROXY_IMAGE
 
         proxy_image = require_local_image(docker_client, PROXY_IMAGE, role="firewall proxy")
@@ -1109,6 +1140,15 @@ def main(argv: list[str] | None = None) -> int:
             proxy.connect()
         else:
             proxy.start()
+        expected_firewall_domains = set(load_allowlist(proxy.allowlist_path)) | set(
+            firewall_domains
+        )
+        reconcile_firewall_domain_allowlist(
+            docker_client,
+            proxy,
+            expected_domains=expected_firewall_domains,
+            allow_update=not args.connect_firewall,
+        )
         running_proxy = docker_client.containers.get(proxy.container_name)
         firewall_proxy_image_id = immutable_image_id(running_proxy.image)
         network = proxy.network_name

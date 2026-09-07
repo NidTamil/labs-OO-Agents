@@ -330,6 +330,55 @@ def test_firewall_domain_and_mask_map_policy_inputs_are_sanitized_and_hashed(tmp
     assert run.file_sha256(mask_map) == hashlib.sha256(b"mask-map-v1").hexdigest()
 
 
+def test_firewall_start_reconciles_stale_live_domain_allowlist():
+    class FakeContainer:
+        def __init__(self):
+            self.outputs = iter(
+                (
+                    b"api.deepseek.com\n",
+                    b"api.deepseek.com\napi.z.ai\n",
+                )
+            )
+
+        def exec_run(self, _command):
+            return SimpleNamespace(exit_code=0, output=next(self.outputs))
+
+    container = FakeContainer()
+    client = SimpleNamespace(containers=SimpleNamespace(get=lambda _name: container))
+    proxy = SimpleNamespace(container_name="cybergym-proxy", update_calls=0)
+
+    def update():
+        proxy.update_calls += 1
+
+    proxy.update = update
+    effective = run.reconcile_firewall_domain_allowlist(
+        client,
+        proxy,
+        expected_domains={"api.deepseek.com", "api.z.ai"},
+    )
+
+    assert effective == {"api.deepseek.com", "api.z.ai"}
+    assert proxy.update_calls == 1
+
+
+def test_firewall_start_fails_if_reconciled_allowlist_still_differs():
+    container = SimpleNamespace(
+        exec_run=lambda _command: SimpleNamespace(
+            exit_code=0,
+            output=b"api.deepseek.com\n",
+        )
+    )
+    client = SimpleNamespace(containers=SimpleNamespace(get=lambda _name: container))
+    proxy = SimpleNamespace(container_name="cybergym-proxy", update=lambda: None)
+
+    with pytest.raises(RuntimeError, match="live firewall domain allowlist"):
+        run.reconcile_firewall_domain_allowlist(
+            client,
+            proxy,
+            expected_domains={"api.deepseek.com", "api.z.ai"},
+        )
+
+
 def test_harness_policy_fingerprint_is_canonical_and_change_sensitive():
     runtime = run.effective_runtime_policy(
         env={},
