@@ -179,3 +179,40 @@ Validate that single run with:
 ```bash
 scripts/validate.sh runs/logs
 ```
+
+## SunChaser v2 stagnation recovery
+
+V2 is opt-in: it remains disabled unless `--escalation-model` (or
+`NOOA_CYBERGYM_ESCALATION_MODEL`) is set. To enable it, add these arguments to
+the single-task command above:
+
+```bash
+--escalation-model alternate-reviewer \
+--escalation-trigger-age 7200 \
+--escalation-quiet-window 1800 \
+--escalation-min-submissions 20 \
+--escalation-reviewer-timeout 900 \
+--escalation-reviewer-max-output-tokens 32768 \
+--escalation-recovery-window 3600 \
+--cohort-id l1-v2-heldout-001 \
+--evaluation-mode heldout
+```
+
+The numeric values shown are the defaults. Once task age, quiet time, and
+submission count all reach their thresholds, one isolated, tool-free reviewer
+runs once and supplies bounded guidance to the existing agents. Exploration
+continues during the recovery window. If no new verified crash family appears
+before that window expires, the run enters the existing honest no-final path;
+new family progress lets exploration continue. Reviewer failure or timeout is
+recorded and does not retry the reviewer.
+
+Each attempt writes a structured `stagnation_review` audit event to the agent
+log, including the outcome, trigger counters, elapsed time, model, and cleanup
+status. Raw provider error messages are excluded.
+
+Every v2 run requires both `--cohort-id` and `--evaluation-mode`. Use
+`heldout` only for untouched official tasks in one fixed cohort. Use
+`diagnostic` for development reruns and keep those runs in a separate run root;
+the strict final scorer rejects diagnostic or mixed cohorts. To sign exactly
+one pre-v2 run without cohort metadata, invoke `scripts/score_final.py` with the
+explicit `--allow-legacy-single-run` flag.
