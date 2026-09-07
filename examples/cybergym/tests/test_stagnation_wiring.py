@@ -530,6 +530,7 @@ async def test_callback_failure_discards_triggering_stop_but_next_review_may_sto
         async def _attempt_stagnation_review(self, *, state, now, config):
             nonlocal callback_calls
             assert state.claim_escalation(now=now, config=config) is True
+            state.cancel_recovery()
             callback_calls += 1
             return SimpleNamespace(outcome="failure", cleanup_status="success")
 
@@ -618,3 +619,258 @@ async def test_callback_result_at_recovery_deadline_is_rejected(monkeypatch):
     assert audit is not None and audit.outcome == "timeout"
     assert portfolio.guidance != "too late"
     assert state.recovery_expired_without_progress(now=30, config=_config()) is True
+
+
+@pytest.mark.asyncio
+async def test_ordinary_review_completing_at_recovery_expiry_is_not_applied(monkeypatch):
+    clock = FakeClock(10)
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    original_guidance = portfolio.guidance
+    config = _config(reviewer_timeout_sec=2, recovery_window_sec=20)
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+    assert state.claim_escalation(now=10, config=config) is True
+
+    class LateOrdinaryReviewAgent(agent_module.CyberGymAgent):
+        @staticmethod
+        def _monotonic() -> float:
+            return clock.monotonic()
+
+        async def _review(self, current_portfolio_state):
+            clock.now = 30
+            return agent_module.Review(
+                on_target=True,
+                guidance="late ordinary guidance",
+                stop=True,
+                reasoning="completed at recovery expiry",
+            )
+
+    agent = LateOrdinaryReviewAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+
+    review, event = await agent._run_portfolio_review(state, config=config)
+
+    assert review is None
+    assert event is not None and event.outcome == "failed"
+    assert portfolio.guidance == original_guidance
+    assert state.recovery_expired_without_progress(now=30, config=config) is True
+
+
+@pytest.mark.asyncio
+async def test_family_growth_during_ordinary_review_releases_recovery_before_expiry():
+    clock = FakeClock(10)
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    config = _config(recovery_window_sec=20)
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+    assert state.claim_escalation(now=10, config=config) is True
+
+    class ProgressReviewAgent(agent_module.CyberGymAgent):
+        @staticmethod
+        def _monotonic() -> float:
+            return clock.monotonic()
+
+        async def _review(self, current_portfolio_state):
+            portfolio.submissions.append(_crash_submission(2, "family-two"))
+            clock.now = 29
+            return agent_module.Review(
+                on_target=True,
+                guidance="superseded ordinary guidance",
+                stop=True,
+                reasoning="new family arrived",
+            )
+
+    agent = ProgressReviewAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+
+    review, event = await agent._run_portfolio_review(state, config=config)
+
+    assert review is None
+    assert event is not None and event.outcome == "stale"
+    assert state.family_count == 2
+    assert state.recovery_active(now=29, config=config) is False
+    assert state.recovery_expired_without_progress(now=31, config=config) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("callback_outcome", ["failure", "timeout"])
+async def test_callback_failure_at_recovery_expiry_preserves_terminal_claim(
+    callback_outcome,
+):
+    clock = FakeClock(10)
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    config = _config(
+        trigger_age_sec=1_000,
+        minimum_submissions=1,
+        consecutive_no_growth_reviews=1,
+        recovery_window_sec=20,
+    )
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+    state.complete_review(state.begin_review(), parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+
+    class ExpiredCallbackAgent(agent_module.CyberGymAgent):
+        @staticmethod
+        def _monotonic() -> float:
+            return clock.monotonic()
+
+        async def _attempt_stagnation_review(self, *, state, now, config):
+            assert state.claim_escalation(now=now, config=config) is True
+            clock.now = 30
+            return SimpleNamespace(outcome=callback_outcome, cleanup_status="success")
+
+    agent = ExpiredCallbackAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    should_stop = await agent._apply_review_with_arbitration(
+        agent_module.Review(
+            on_target=True,
+            guidance="pending local stop",
+            stop=True,
+            reasoning="plateau",
+        ),
+        state=state,
+        config=config,
+    )
+
+    assert should_stop is False
+    assert state.escalation_claimed_at == 10
+    assert state.recovery_expired_without_progress(now=30, config=config) is True
+
+
+@pytest.mark.asyncio
+async def test_cooperative_stop_during_callback_cleanup_cancels_cleanup(monkeypatch):
+    cleanup_started = asyncio.Event()
+    cleanup_cancelled = asyncio.Event()
+
+    class HangingCleanupLLM(FakeLLMClient):
+        async def aclose(self):
+            cleanup_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cleanup_cancelled.set()
+                raise
+
+    class ImmediateReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def review(self, review_input):
+            return StagnationAdvice(guidance="must not apply", reasoning="cleanup pending")
+
+    reviewer_llm = HangingCleanupLLM()
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    original_guidance = portfolio.guidance
+    agent = agent_module.CyberGymAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    agent.description = "bounded synthetic description"
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+    monkeypatch.setattr(agent_module, "make_llm", lambda *args, **kwargs: reviewer_llm)
+    monkeypatch.setattr(agent_module, "StagnationReviewer", ImmediateReviewer)
+
+    attempt = asyncio.create_task(
+        agent._attempt_stagnation_review(state=state, now=10, config=_config())
+    )
+    await cleanup_started.wait()
+    agent.request_stop()
+    done, _ = await asyncio.wait({attempt}, timeout=0.1)
+
+    assert attempt in done
+    audit = attempt.result()
+    assert audit is not None and audit.outcome == "cancelled"
+    assert audit.cleanup_status == "cancelled"
+    assert cleanup_cancelled.is_set()
+    assert portfolio.guidance == original_guidance
+
+
+@pytest.mark.asyncio
+async def test_ordinary_review_authority_paths_emit_terminal_events(monkeypatch, caplog):
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    review_started = asyncio.Event()
+
+    class HangingReviewAgent(agent_module.CyberGymAgent):
+        async def _review(self, current_portfolio_state):
+            review_started.set()
+            await asyncio.Event().wait()
+
+    agent = HangingReviewAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    state = agent_module.StagnationState(started_at=agent._monotonic())
+    state.observe(now=state.started_at, submission_count=1, family_count=1)
+    with caplog.at_level("WARNING", logger="nooa_cybergym"):
+        pending = asyncio.create_task(agent._run_portfolio_review(state))
+        await review_started.wait()
+        agent.request_stop()
+        review, event = await pending
+
+    assert review is None
+    assert event is not None and event.outcome == "cancelled"
+    assert '"review_id": 1' in caplog.text
+
+    memory_agent = HangingReviewAgent(llm=FakeLLMClient())
+    memory_agent._portfolio = portfolio
+    memory_state = agent_module.StagnationState(started_at=memory_agent._monotonic())
+    memory_state.observe(
+        now=memory_state.started_at,
+        submission_count=1,
+        family_count=1,
+    )
+    monkeypatch.setattr(agent_module, "_get_rss_mb", lambda: agent_module.MEMORY_LIMIT_MB + 1)
+    review, event = await memory_agent._run_portfolio_review(memory_state)
+    assert review is None
+    assert event is not None and event.outcome == "failed"
+
+    clock = FakeClock(10)
+
+    class SoftDeadlineAgent(HangingReviewAgent):
+        @staticmethod
+        def _monotonic() -> float:
+            return clock.monotonic()
+
+    monkeypatch.setattr(agent_module, "_get_rss_mb", lambda: 0)
+    monkeypatch.setattr(agent_module, "SOFT_TIMEOUT_SEC", 10)
+    deadline_agent = SoftDeadlineAgent(llm=FakeLLMClient())
+    deadline_agent._portfolio = portfolio
+    deadline_state = agent_module.StagnationState(started_at=0)
+    deadline_state.observe(now=0, submission_count=1, family_count=1)
+    review, event = await deadline_agent._run_portfolio_review(deadline_state)
+    assert review is None
+    assert event is not None and event.outcome == "failed"
+
+
+@pytest.mark.asyncio
+async def test_callback_audit_records_combined_trigger_and_latest_review_id(monkeypatch):
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    agent = agent_module.CyberGymAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    agent.description = "bounded synthetic description"
+    config = _config(consecutive_no_growth_reviews=1)
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+    state.complete_review(state.begin_review(), parsed=True)
+    latest = state.begin_review()
+    state.complete_review(latest, parsed=True)
+
+    class ImmediateReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def review(self, review_input):
+            return StagnationAdvice(guidance="bounded", reasoning="bounded")
+
+    monkeypatch.setattr(agent_module, "make_llm", lambda *args, **kwargs: FakeLLMClient())
+    monkeypatch.setattr(agent_module, "StagnationReviewer", ImmediateReviewer)
+
+    audit = await agent._attempt_stagnation_review(state=state, now=10, config=config)
+
+    assert audit is not None
+    assert audit.trigger_reason == "plateau_and_age"
+    assert audit.review_id == latest.review_id == 2

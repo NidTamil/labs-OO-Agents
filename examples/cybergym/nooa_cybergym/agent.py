@@ -702,8 +702,25 @@ class CyberGymAgent(Agent, context={"state": None}):
 
             if should_review and current_families > 0:
                 last_reviewed_families = current_families
-                review, _ = await self._run_portfolio_review(stagnation_state)
+                review, _ = await self._run_portfolio_review(
+                    stagnation_state, config=STAGNATION_CONFIG
+                )
                 if self._stop_event.is_set():
+                    break
+                if (
+                    stagnation_state is not None
+                    and stagnation_state.recovery_expired_without_progress(
+                        now=self._monotonic(), config=STAGNATION_CONFIG
+                    )
+                ):
+                    logger.warning(
+                        "stagnation recovery window ended without a new verified family; "
+                        "stopping exploration"
+                    )
+                    stagnation_failure = (
+                        "No verified crashing PoC: stagnation recovery window ended "
+                        "without a new verified family"
+                    )
                     break
                 if review is not None:
                     logger.info(
@@ -799,7 +816,10 @@ class CyberGymAgent(Agent, context={"state": None}):
         log("portfolio_review_event %s", json.dumps(payload, sort_keys=True))
 
     async def _run_portfolio_review(
-        self, state: StagnationState | None
+        self,
+        state: StagnationState | None,
+        *,
+        config: StagnationConfig = STAGNATION_CONFIG,
     ) -> tuple[Review | None, ReviewEvent | None]:
         """Bind an ordinary asynchronous review to one immutable progress snapshot."""
         if state is None:
@@ -809,8 +829,30 @@ class CyberGymAgent(Agent, context={"state": None}):
         review_task = asyncio.create_task(self._review(str(self._portfolio)))
         stop_task = asyncio.create_task(self._stop_event.wait())
         soft_deadline = state.started_at + SOFT_TIMEOUT_SEC
+
+        def observe_live_progress() -> None:
+            assert self._portfolio is not None
+            state.observe(
+                now=self._monotonic(),
+                submission_count=len(self._portfolio.submissions),
+                family_count=self._portfolio.distinct_families,
+            )
+
+        def authoritative_deadline() -> float:
+            if (
+                state.escalation_claimed_at is not None
+                and state.family_count_at_escalation is not None
+                and state.family_count <= state.family_count_at_escalation
+            ):
+                return min(
+                    soft_deadline,
+                    state.escalation_claimed_at + config.recovery_window_sec,
+                )
+            return soft_deadline
+
         try:
             while True:
+                observe_live_progress()
                 if self._stop_event.is_set():
                     self._cancel_and_drain_task(review_task)
                     event = state.complete_review(snapshot, parsed=False, cancelled=True)
@@ -821,7 +863,7 @@ class CyberGymAgent(Agent, context={"state": None}):
                     event = state.complete_review(snapshot, parsed=False)
                     self._record_portfolio_review_event(event)
                     return None, event
-                remaining = soft_deadline - self._monotonic()
+                remaining = authoritative_deadline() - self._monotonic()
                 if remaining <= 0:
                     self._cancel_and_drain_task(review_task)
                     event = state.complete_review(snapshot, parsed=False)
@@ -838,6 +880,11 @@ class CyberGymAgent(Agent, context={"state": None}):
                     self._record_portfolio_review_event(event)
                     return None, event
                 if review_task in done:
+                    observe_live_progress()
+                    if self._monotonic() >= authoritative_deadline():
+                        event = state.complete_review(snapshot, parsed=False)
+                        self._record_portfolio_review_event(event)
+                        return None, event
                     review = review_task.result()
                     break
         except asyncio.CancelledError:
@@ -854,12 +901,7 @@ class CyberGymAgent(Agent, context={"state": None}):
                 stop_task.cancel()
             await asyncio.gather(stop_task, return_exceptions=True)
 
-        assert self._portfolio is not None
-        state.observe(
-            now=self._monotonic(),
-            submission_count=len(self._portfolio.submissions),
-            family_count=self._portfolio.distinct_families,
-        )
+        observe_live_progress()
         event = state.complete_review(snapshot, parsed=True)
         self._record_portfolio_review_event(event)
         if event.outcome != "completed":
@@ -890,10 +932,6 @@ class CyberGymAgent(Agent, context={"state": None}):
         if trigger_reason is not None:
             audit = await self._attempt_stagnation_review(state=state, now=now, config=config)
             attempted_now = audit is not None
-            if audit is not None and (
-                audit.outcome != "success" or audit.cleanup_status not in ("not_needed", "success")
-            ):
-                state.cancel_recovery()
             now = self._monotonic()
             state.observe(
                 now=now,
@@ -1104,18 +1142,27 @@ class CyberGymAgent(Agent, context={"state": None}):
 
     async def _bounded_reviewer_cleanup(
         self, reviewer_llm
-    ) -> tuple[Literal["not_needed", "success", "timeout", "failure"], str | None]:
+    ) -> tuple[Literal["not_needed", "success", "timeout", "failure", "cancelled"], str | None]:
         if reviewer_llm is None:
             return "not_needed", None
         cleanup_task = asyncio.create_task(self._close_resource(reviewer_llm))
+        stop_task = asyncio.create_task(self._stop_event.wait())
         try:
             done, _ = await asyncio.wait(
-                {cleanup_task},
+                {cleanup_task, stop_task},
                 timeout=REVIEWER_CLEANUP_TIMEOUT_SEC,
+                return_when=asyncio.FIRST_COMPLETED,
             )
         except asyncio.CancelledError:
             self._cancel_and_drain_task(cleanup_task)
             raise
+        finally:
+            if not stop_task.done():
+                stop_task.cancel()
+            await asyncio.gather(stop_task, return_exceptions=True)
+        if stop_task in done:
+            self._cancel_and_drain_task(cleanup_task)
+            return "cancelled", "CancelledError"
         if cleanup_task not in done:
             self._cancel_and_drain_task(cleanup_task)
             return "timeout", "TimeoutError"
@@ -1270,6 +1317,8 @@ class CyberGymAgent(Agent, context={"state": None}):
         except asyncio.CancelledError as exc:
             audit = replace(
                 audit,
+                outcome="cancelled",
+                failure_type=self._bounded_error_type(exc),
                 cleanup_status="cancelled",
                 cleanup_failure_type=self._bounded_error_type(exc),
             )
@@ -1281,6 +1330,12 @@ class CyberGymAgent(Agent, context={"state": None}):
             cleanup_status=cleanup_status,
             cleanup_failure_type=cleanup_failure_type,
         )
+        if cleanup_status == "cancelled" or self._stop_event.is_set():
+            audit = replace(
+                audit,
+                outcome="cancelled",
+                failure_type="CancelledError",
+            )
 
         finished_at = self._monotonic()
         finished_state_at = state_time()

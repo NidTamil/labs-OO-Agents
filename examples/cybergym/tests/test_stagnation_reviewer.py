@@ -202,6 +202,8 @@ async def test_stagnation_review_success_uses_zero_retries_and_applies_guidance(
         audit = await agent._attempt_stagnation_review(state=state, now=100, config=_config())
 
     assert audit is not None and audit.outcome == "success"
+    assert audit.trigger_reason == "age"
+    assert audit.review_id is None
     assert agent._portfolio.guidance == "Try alternate lengths."
     assert reviewer_llm.closed == 1
     assert audit.cleanup_status == "success"
