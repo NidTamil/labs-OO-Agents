@@ -4,12 +4,26 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+import yaml
 
 pytest.importorskip("nooa")
 
 from examples.cybergym.nooa_cybergym import main as nooa_cybergym_main
 from examples.cybergym.nooa_cybergym import util as nooa_cybergym_util
+
+
+def test_glm_reviewer_uses_coding_plan_endpoint_with_deep_thinking():
+    config_path = Path(__file__).parents[1] / "nooa_cybergym" / "llm_config.yaml"
+    model = yaml.safe_load(config_path.read_text())["models"]["glm-5.3"]
+
+    assert model["model_name"] == "openai/glm-5.3"
+    assert model["api_base"] == "https://api.z.ai/api/coding/paas/v4"
+    assert model["api_key_env"] == "ANTHROPIC_AUTH_TOKEN"
+    assert "/api/paas/v4" not in model["api_base"]
+    assert model["extra_body"] == {"thinking": {"type": "enabled", "clear_thinking": True}}
 
 
 def test_cli_default_comes_from_agent_default(monkeypatch):

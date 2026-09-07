@@ -31,6 +31,8 @@ with hidden:
         ResponsesClient,
         RetryConfig,
         get_llm_client,
+        get_registry_config,
+        resolve_api_key_from_config,
     )
 
 logger = logging.getLogger("nooa_cybergym")
@@ -57,14 +59,21 @@ def make_llm(
     max_tokens: int = 32768,
     reasoning_effort: str | None = None,
     retry_config: RetryConfig | None = None,
+    provider_scoped: bool = False,
+    inherit_reasoning_effort: bool = True,
 ):
     """Create an LLM client for the given model, optionally with reasoning effort."""
-    if reasoning_effort is None:
+    if reasoning_effort is None and inherit_reasoning_effort:
         reasoning_effort = os.environ.get("NOOA_CYBERGYM_REASONING_EFFORT")
+    client_kwargs = (
+        _provider_scoped_llm_client_kwargs(model_name, max_tokens)
+        if provider_scoped
+        else _llm_client_kwargs(max_tokens)
+    )
     llm = get_llm_client(
         model_name,
         retry_config=retry_config or RetryConfig(max_retries=3),
-        **_llm_client_kwargs(max_tokens),
+        **client_kwargs,
     )
     if reasoning_effort:
         _apply_reasoning_effort(llm, reasoning_effort)
@@ -82,14 +91,13 @@ def _llm_client_kwargs(max_output_tokens: int) -> dict[str, object]:
             "ERROR: no LLM API key set in container env. Configure "
             "NVIDIA_INTERNAL_API_KEY or OPENAI_API_KEY."
         )
-    kwargs: dict[str, object] = {
-        "api_base": api_base,
-        "api_key": api_key,
-        "max_tokens": max_output_tokens,
-        "output_token_margin": OUTPUT_TOKEN_MARGIN,
-        "reasoning_output_floor": REASONING_OUTPUT_FLOOR,
-        "usage_log_path": "/logs/artifacts/llm_usage.jsonl",
-    }
+    kwargs = _common_llm_client_kwargs(max_output_tokens)
+    kwargs.update(
+        {
+            "api_base": api_base,
+            "api_key": api_key,
+        }
+    )
     if USE_BATCHING:
         # get_llm_client only copies selected YAML keys from llm_config.yaml.
         # Pass request transport overrides here so every model uses the
@@ -102,6 +110,52 @@ def _llm_client_kwargs(max_output_tokens: int) -> dict[str, object]:
             }
         )
     return kwargs
+
+
+@hidden
+def _provider_scoped_llm_client_kwargs(
+    model_name: str, max_output_tokens: int
+) -> dict[str, object]:
+    """Resolve an alternate model's own endpoint and credential without fallback.
+
+    Escalation reviewers may use a different provider from the worker.  Both
+    fields are mandatory so a missing provider credential can never fall back
+    to ``OPENAI_API_KEY`` and be sent to the wrong endpoint.
+    """
+    config = get_registry_config(model_name)
+    api_base = config.get("api_base")
+    api_key_env = config.get("api_key_env")
+    if not isinstance(api_base, str) or not api_base:
+        raise ValueError(
+            f"provider-scoped model {model_name!r} must declare api_base in llm_config.yaml"
+        )
+    if not isinstance(api_key_env, str) or not api_key_env:
+        raise ValueError(
+            f"provider-scoped model {model_name!r} must declare api_key_env in llm_config.yaml"
+        )
+    api_key = resolve_api_key_from_config(
+        model_name,
+        config,
+        allowed_env_vars={api_key_env},
+    )
+    if not api_key:
+        raise RuntimeError(
+            f"provider-scoped model {model_name!r} requires credential env {api_key_env!r}"
+        )
+
+    kwargs = _common_llm_client_kwargs(max_output_tokens)
+    kwargs.update({"api_base": api_base, "api_key": api_key})
+    return kwargs
+
+
+@hidden
+def _common_llm_client_kwargs(max_output_tokens: int) -> dict[str, object]:
+    return {
+        "max_tokens": max_output_tokens,
+        "output_token_margin": OUTPUT_TOKEN_MARGIN,
+        "reasoning_output_floor": REASONING_OUTPUT_FLOOR,
+        "usage_log_path": "/logs/artifacts/llm_usage.jsonl",
+    }
 
 
 @hidden

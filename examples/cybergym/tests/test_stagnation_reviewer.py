@@ -211,6 +211,8 @@ async def test_stagnation_review_success_uses_zero_retries_and_applies_guidance(
     assert kwargs["max_tokens"] == 1234
     assert kwargs["retry_config"].max_retries == 0
     assert kwargs["retry_config"].rate_limit_extra_retries == 0
+    assert kwargs["provider_scoped"] is True
+    assert kwargs["inherit_reasoning_effort"] is False
     payloads = _review_log_payloads(caplog)
     assert len(payloads) == 1
     payload = payloads[0]
@@ -540,6 +542,75 @@ def test_make_llm_preserves_worker_defaults_and_accepts_explicit_zero_retries(mo
 
     assert captured[0][1]["retry_config"] == RetryConfig(max_retries=3)
     assert captured[1][1]["retry_config"] is no_retry
+
+
+def test_provider_scoped_llm_uses_alias_endpoint_and_credential(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "worker-key-must-not-cross-provider")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "glm-plan-key")
+    monkeypatch.setattr(
+        nooa_cybergym_util,
+        "get_registry_config",
+        lambda model: {
+            "model_name": "openai/glm-5.3",
+            "api_base": "https://api.z.ai/api/coding/paas/v4",
+            "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+        },
+    )
+
+    kwargs = nooa_cybergym_util._provider_scoped_llm_client_kwargs("glm-5.3", 32768)
+
+    assert kwargs["api_base"] == "https://api.z.ai/api/coding/paas/v4"
+    assert kwargs["api_key"] == "glm-plan-key"
+    assert kwargs["api_key"] != "worker-key-must-not-cross-provider"
+    assert kwargs["max_tokens"] == 32768
+
+
+def test_provider_scoped_llm_fails_closed_without_its_credential(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "worker-key-must-not-cross-provider")
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setattr(
+        nooa_cybergym_util,
+        "get_registry_config",
+        lambda model: {
+            "model_name": "openai/glm-5.3",
+            "api_base": "https://api.z.ai/api/coding/paas/v4",
+            "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="ANTHROPIC_AUTH_TOKEN"):
+        nooa_cybergym_util._provider_scoped_llm_client_kwargs("glm-5.3", 32768)
+
+
+def test_provider_scoped_reviewer_does_not_inherit_worker_reasoning_effort(monkeypatch):
+    captured = []
+    fake_llm = FakeLLMClient()
+    monkeypatch.setenv("NOOA_CYBERGYM_REASONING_EFFORT", "max")
+    monkeypatch.setattr(
+        nooa_cybergym_util,
+        "_provider_scoped_llm_client_kwargs",
+        lambda model, max_tokens: {"max_tokens": max_tokens},
+    )
+    monkeypatch.setattr(
+        nooa_cybergym_util,
+        "get_llm_client",
+        lambda model, **kwargs: captured.append((model, kwargs)) or fake_llm,
+    )
+    monkeypatch.setattr(
+        nooa_cybergym_util,
+        "_apply_reasoning_effort",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("worker reasoning_effort must not cross providers")
+        ),
+    )
+
+    nooa_cybergym_util.make_llm(
+        "glm-5.3",
+        provider_scoped=True,
+        inherit_reasoning_effort=False,
+    )
+
+    assert captured[0][0] == "glm-5.3"
 
 
 @pytest.mark.asyncio

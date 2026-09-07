@@ -945,6 +945,8 @@ class CyberGymAgent(Agent, context={"state": None}):
                 config.model,
                 max_tokens=config.reviewer_max_output_tokens,
                 retry_config=RetryConfig(max_retries=0, rate_limit_extra_retries=0),
+                provider_scoped=True,
+                inherit_reasoning_effort=False,
             )
             reviewer = StagnationReviewer(llm=reviewer_llm)
             deadline = time.monotonic() + config.reviewer_timeout_sec

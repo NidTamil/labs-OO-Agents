@@ -37,6 +37,8 @@ gateway credential and URL in `.env`:
 ```bash
 OPENAI_API_KEY=...
 OPENAI_BASE_URL=https://your-openai-compatible-gateway.example/v1
+ANTHROPIC_AUTH_TOKEN=... # Z.AI Coding Plan reviewer only
+CYBERGYM_FIREWALL_EXTRA_DOMAINS=api.z.ai
 ```
 
 Configure the models available through your LLM provider in
@@ -54,12 +56,13 @@ lanes in [`agent.py`](nooa_cybergym/agent.py) must match entries in that file.
 | Expander model | `DEFAULT_MODEL_NAME` in `nooa_cybergym/agent.py` |
 | Reasoning effort | `REASONING_EFFORT` (default: `xhigh`) |
 
-The current plumbing passes one endpoint and credential to every configured
-model. Using provider-specific endpoints or credentials requires adapting the
-client construction in `util.py`. Changing the models can materially change
-results. The runner automatically adds the hostname from `OPENAI_BASE_URL` or
-`OPENAI_API_BASE` to the firewall; use `CYBERGYM_FIREWALL_EXTRA_DOMAINS` only for
-additional hosts.
+Worker models use the shared OpenAI-compatible endpoint. The optional v2
+reviewer resolves its own endpoint and credential from `llm_config.yaml` and
+fails closed if either is absent. The `glm-5.3` reviewer alias uses Z.AI's
+dedicated Coding Plan endpoint with deep thinking enabled; it does not use the
+separately billed general API. Changing the models can materially change
+results. Add `api.z.ai` to the runner's outbound allowlist when that reviewer is
+enabled.
 
 You do **not** need to set a CyberGym API key: `scripts/setup.sh` generates a
 random local one into `.env` (which is gitignored). It is just a shared token
@@ -187,7 +190,7 @@ V2 is opt-in: it remains disabled unless `--escalation-model` (or
 the single-task command above:
 
 ```bash
---escalation-model alternate-reviewer \
+--escalation-model glm-5.3 \
 --escalation-trigger-age 7200 \
 --escalation-quiet-window 1800 \
 --escalation-min-submissions 20 \
@@ -209,6 +212,10 @@ continues during the recovery window. When it expires, an existing verified
 family is finalized. The run enters the honest no-final path only when no
 verified family exists. New family progress lets exploration continue.
 Reviewer failure or timeout is recorded and does not retry the reviewer.
+The primary worker remains DeepSeek V4 Flash at `max` reasoning effort. Z.AI
+exposes the GLM reviewer reasoning control as deep thinking enabled/disabled,
+so the `glm-5.3` alias pins deep thinking enabled and the 32,768-token reviewer
+output cap.
 
 Each attempt writes a structured `stagnation_review` audit event to the agent
 log, including the outcome, trigger counters, elapsed time, model, and cleanup
