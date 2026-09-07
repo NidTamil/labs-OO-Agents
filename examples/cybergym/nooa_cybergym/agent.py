@@ -888,6 +888,9 @@ class CyberGymAgent(Agent, context={"state": None}):
                     self._cancel_and_drain_task(review_task)
                     raise storage_task.result()
                 return review_task.result(), None
+            except BaseException:
+                self._cancel_and_drain_task(review_task)
+                raise
             finally:
                 if not storage_task.done():
                     storage_task.cancel()

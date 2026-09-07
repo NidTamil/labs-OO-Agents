@@ -816,6 +816,34 @@ async def test_coincident_recovery_and_soft_expiry_fails_before_finalize_or_resp
 
 
 @pytest.mark.asyncio
+async def test_disabled_review_parent_cancellation_cancels_inner_review_without_orphan():
+    manager = TerminalStorageManager()
+    portfolio = agent_module.Portfolio(manager)
+    review_started = asyncio.Event()
+    review_cancelled = asyncio.Event()
+
+    class HangingReviewAgent(agent_module.CyberGymAgent):
+        async def _review(self, current_portfolio_state):
+            review_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                review_cancelled.set()
+                raise
+
+    agent = HangingReviewAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    pending = asyncio.create_task(agent._run_portfolio_review(None))
+    await asyncio.wait_for(review_started.wait(), timeout=0.2)
+    pending.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    await asyncio.wait_for(review_cancelled.wait(), timeout=0.2)
+
+
+@pytest.mark.asyncio
 async def test_terminal_storage_interrupts_ordinary_review_and_propagates_original_error():
     manager = TerminalStorageManager()
     portfolio = agent_module.Portfolio(manager)
@@ -834,10 +862,11 @@ async def test_terminal_storage_interrupts_ordinary_review_and_propagates_origin
 
     agent = HangingReviewAgent(llm=FakeLLMClient())
     agent._portfolio = portfolio
-    state = agent_module.StagnationState(started_at=0)
-    state.observe(now=0, submission_count=1, family_count=1)
+    started_at = agent._monotonic()
+    state = agent_module.StagnationState(started_at=started_at)
+    state.observe(now=started_at, submission_count=1, family_count=1)
     pending = asyncio.create_task(agent._run_portfolio_review(state))
-    await review_started.wait()
+    await asyncio.wait_for(review_started.wait(), timeout=0.2)
     manager.failed.set()
 
     with pytest.raises(agent_module.SubmissionStorageError) as raised:
