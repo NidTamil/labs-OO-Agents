@@ -368,6 +368,7 @@ class SubmissionManager:
         self._last_crashing_poc = ""
         self._last_crashing_submission: SubmitResult | None = None
         self._terminal_storage_error: SubmissionStorageError | None = None
+        self._terminal_storage_event = asyncio.Event()
         for submission in self._submissions:
             self._remember_crashing_submission(submission)
 
@@ -878,6 +879,13 @@ class SubmissionManager:
         """Latch and return the first fatal local-storage failure."""
         if self._terminal_storage_error is None:
             self._terminal_storage_error = SubmissionStorageError(message)
+            self._terminal_storage_event.set()
+        return self._terminal_storage_error
+
+    async def wait_for_storage_failure(self) -> SubmissionStorageError:
+        """Wait until fatal local storage state is latched, then return its cause."""
+        await self._terminal_storage_event.wait()
+        assert self._terminal_storage_error is not None
         return self._terminal_storage_error
 
     def _raise_if_storage_terminal(self) -> None:

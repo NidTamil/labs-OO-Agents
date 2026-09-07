@@ -656,6 +656,78 @@ async def test_worker_storage_failure_reaches_orchestration_terminal_gate():
         agent._raise_terminal_storage_failure(done)
 
 
+@pytest.mark.asyncio
+async def test_manager_storage_signal_terminates_solve_when_worker_swallows_error(
+    monkeypatch, tmp_path
+):
+    description = tmp_path / "description.txt"
+    description.write_text("Exercise terminal submission storage handling.")
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(b"candidate")
+    candidate_dir_blocker = tmp_path / "candidate-dir-blocker"
+    candidate_dir_blocker.write_text("not a directory")
+    manager = _submission_manager()
+    manager.CANDIDATE_DIR = candidate_dir_blocker
+    manager.SUBMISSION_LOG_PATH = tmp_path / "submissions.jsonl"
+    worker_started = asyncio.Event()
+    worker_cancelled = asyncio.Event()
+    failures = []
+    finder_runs = 0
+    finalize_calls = 0
+
+    class BoundaryFinder:
+        def record_portfolio_context_if_changed(self, reason):
+            pass
+
+    class BoundaryAgent(nooa_cybergym_agent.CyberGymAgent):
+        def _make_finder(self, lane):
+            return BoundaryFinder()
+
+        async def _run_finder(self, finder):
+            nonlocal finder_runs
+            finder_runs += 1
+            try:
+                await self._portfolio.submit(
+                    str(source),
+                    hypothesis="Trigger a destination storage failure.",
+                )
+            except cybergym_submissions.SubmissionStorageError as failure:
+                # CodeAct serializes the parent-tool failure and continues its worker loop.
+                failures.append(failure)
+                worker_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    worker_cancelled.set()
+                    raise
+
+        async def _finalize_portfolio(self):
+            nonlocal finalize_calls
+            finalize_calls += 1
+            raise AssertionError("terminal storage failure must prevent finalization")
+
+    monkeypatch.setattr(nooa_cybergym_agent, "DESCRIPTION_PATH", description)
+    monkeypatch.setattr(nooa_cybergym_agent, "LANES", [SimpleNamespace(label="lane")])
+    monkeypatch.setattr(nooa_cybergym_agent, "SOFT_TIMEOUT_SEC", 1_000)
+    monkeypatch.setattr(nooa_cybergym_agent, "_get_rss_mb", lambda: 0)
+    monkeypatch.setattr(nooa_cybergym_agent, "STAGNATION_CONFIG", SimpleNamespace(enabled=False))
+    monkeypatch.setattr(nooa_cybergym_agent, "SubmissionManager", lambda shell: manager)
+
+    agent = BoundaryAgent(llm=FakeLLMClient())
+    with pytest.raises(
+        cybergym_submissions.SubmissionStorageError,
+        match="cannot create candidate staging",
+    ) as raised:
+        await asyncio.wait_for(agent.solve("inert"), timeout=1)
+
+    assert worker_started.is_set()
+    assert worker_cancelled.is_set()
+    assert raised.value is failures[0]
+    assert finder_runs == 1
+    assert finalize_calls == 0
+    assert agent._active_tasks == set()
+
+
 @pytest.mark.skipif(
     not hasattr(os, "mkfifo") or not hasattr(os, "O_NONBLOCK"),
     reason="POSIX FIFO support required",

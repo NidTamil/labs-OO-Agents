@@ -596,24 +596,24 @@ class CyberGymAgent(Agent, context={"state": None}):
 
             # Wait for any worker to finish or portfolio to change. Enabled v2 runs
             # also wake at the next trigger/recovery deadline even when workers are quiet.
-            if stagnation_state is None:
-                done = await self._wait(active)
-            else:
-                now = self._monotonic()
-                stagnation_state.observe(
-                    now=now,
-                    submission_count=len(self._portfolio.submissions),
-                    family_count=self._portfolio.distinct_families,
-                )
-                wakeup_at = stagnation_state.next_wakeup_at(config=STAGNATION_CONFIG)
-                if wakeup_at is not None and wakeup_at <= now:
-                    done = set()
-                elif wakeup_at is None:
+            try:
+                if stagnation_state is None:
                     done = await self._wait(active)
                 else:
-                    done = await self._wait_until(active, deadline=wakeup_at)
-            active -= done
-            try:
+                    now = self._monotonic()
+                    stagnation_state.observe(
+                        now=now,
+                        submission_count=len(self._portfolio.submissions),
+                        family_count=self._portfolio.distinct_families,
+                    )
+                    wakeup_at = stagnation_state.next_wakeup_at(config=STAGNATION_CONFIG)
+                    if wakeup_at is not None and wakeup_at <= now:
+                        done = set()
+                    elif wakeup_at is None:
+                        done = await self._wait(active)
+                    else:
+                        done = await self._wait_until(active, deadline=wakeup_at)
+                active -= done
                 self._raise_terminal_storage_failure(done)
             except SubmissionStorageError:
                 await self._stop_workers()
@@ -731,22 +731,37 @@ class CyberGymAgent(Agent, context={"state": None}):
                 raise error
 
     async def _wait(self, active: set[asyncio.Task]) -> set[asyncio.Task]:
-        """Wait for any worker to finish or portfolio to change."""
+        """Wait for worker, portfolio, stop, or terminal storage activity."""
         changed_task = asyncio.create_task(self._portfolio.changed.wait())
         stop_task = asyncio.create_task(self._stop_event.wait())
-        done, _ = await asyncio.wait(
-            active | {changed_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
-        )
+        storage_task = self._storage_failure_task()
+        auxiliary_tasks = {changed_task, stop_task}
+        if storage_task is not None:
+            auxiliary_tasks.add(storage_task)
+        try:
+            done, _ = await asyncio.wait(
+                active | auxiliary_tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+        except BaseException:
+            for task in auxiliary_tasks:
+                task.cancel()
+            await asyncio.gather(*auxiliary_tasks, return_exceptions=True)
+            raise
+        storage_failure = None
+        if storage_task is not None and storage_task in done:
+            storage_failure = storage_task.result()
+            done.discard(storage_task)
         if changed_task in done:
             self._portfolio.changed.clear()
             done.discard(changed_task)
-        else:
-            changed_task.cancel()
         if stop_task in done:
             done.discard(stop_task)
-        else:
-            stop_task.cancel()
-        await asyncio.gather(changed_task, stop_task, return_exceptions=True)
+        for task in auxiliary_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*auxiliary_tasks, return_exceptions=True)
+        if storage_failure is not None:
+            raise storage_failure
         return done
 
     async def _wait_until(self, active: set[asyncio.Task], *, deadline: float) -> set[asyncio.Task]:
@@ -754,7 +769,10 @@ class CyberGymAgent(Agent, context={"state": None}):
         changed_task = asyncio.create_task(self._portfolio.changed.wait())
         stop_task = asyncio.create_task(self._stop_event.wait())
         timer_task = asyncio.create_task(asyncio.sleep(max(0.0, deadline - self._monotonic())))
+        storage_task = self._storage_failure_task()
         auxiliary_tasks = {changed_task, stop_task, timer_task}
+        if storage_task is not None:
+            auxiliary_tasks.add(storage_task)
         try:
             done, _ = await asyncio.wait(
                 active | auxiliary_tasks,
@@ -765,21 +783,32 @@ class CyberGymAgent(Agent, context={"state": None}):
                 task.cancel()
             await asyncio.gather(*auxiliary_tasks, return_exceptions=True)
             raise
+        storage_failure = None
+        if storage_task is not None and storage_task in done:
+            storage_failure = storage_task.result()
+            done.discard(storage_task)
         if changed_task in done:
             self._portfolio.changed.clear()
             done.discard(changed_task)
-        else:
-            changed_task.cancel()
         if stop_task in done:
             done.discard(stop_task)
-        else:
-            stop_task.cancel()
         if timer_task in done:
             done.discard(timer_task)
-        else:
-            timer_task.cancel()
-        await asyncio.gather(changed_task, stop_task, timer_task, return_exceptions=True)
+        for task in auxiliary_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*auxiliary_tasks, return_exceptions=True)
+        if storage_failure is not None:
+            raise storage_failure
         return done
+
+    def _storage_failure_task(self) -> asyncio.Task | None:
+        """Create the manager-owned terminal-storage waiter when supported."""
+        manager = getattr(self._portfolio, "_manager", None)
+        wait_for_failure = getattr(manager, "wait_for_storage_failure", None)
+        if wait_for_failure is None:
+            return None
+        return asyncio.create_task(wait_for_failure())
 
     @staticmethod
     def _monotonic() -> float:
