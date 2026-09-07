@@ -173,7 +173,7 @@ def test_stagnation_review_input_is_structurally_bounded_and_excludes_sensitive_
 
 
 @pytest.mark.asyncio
-async def test_stagnation_review_success_uses_zero_retries_and_applies_guidance(
+async def test_stagnation_review_success_uses_bounded_transport_retries_and_applies_guidance(
     monkeypatch, caplog
 ):
     agent = _agent_with_portfolio()
@@ -211,8 +211,8 @@ async def test_stagnation_review_success_uses_zero_retries_and_applies_guidance(
     model, kwargs = make_calls[0]
     assert model == "alternate-reviewer"
     assert kwargs["max_tokens"] == 1234
-    assert kwargs["retry_config"].max_retries == 0
-    assert kwargs["retry_config"].rate_limit_extra_retries == 0
+    assert kwargs["retry_config"].max_retries == 3
+    assert kwargs["retry_config"].rate_limit_extra_retries == 3
     assert kwargs["provider_scoped"] is True
     assert kwargs["inherit_reasoning_effort"] is False
     payloads = _review_log_payloads(caplog)
