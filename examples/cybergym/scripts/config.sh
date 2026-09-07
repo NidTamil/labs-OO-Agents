@@ -20,6 +20,7 @@ export XEUS_CYBERGYM_REPO="${XEUS_CYBERGYM_REPO:-/srv/sunchaser/xeus-cybergym}"
 
 # CyberGym submission server.
 export CYBERGYM_SERVER="${CYBERGYM_SERVER:-http://127.0.0.1:8666}"
+export CYBERGYM_POC_DB="${CYBERGYM_POC_DB:-$AGENT_REPO/runs/server/poc.db}"
 
 # Shared token between the CyberGym server and the validation step. It is not a
 # real secret (only local /submit-fix, /query-poc, /verify-agent-pocs use it, and

@@ -95,7 +95,12 @@ mapfile -t args_files < <(
     <<<"$validation_plan"
 )
 
-POC_DB="$AGENT_REPO/runs/server/poc.db"
+POC_DB="$CYBERGYM_POC_DB"
+if [ ! -f "$POC_DB" ]; then
+  echo "CyberGym PoC database not found at $POC_DB." >&2
+  echo "Set CYBERGYM_POC_DB to the database used by the running task server." >&2
+  exit 1
+fi
 echo "==> Validating runs under $RUN_DIR"
 
 for args in "${args_files[@]}"; do
