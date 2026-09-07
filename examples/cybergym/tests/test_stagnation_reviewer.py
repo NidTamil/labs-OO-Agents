@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from types import SimpleNamespace
 
@@ -116,6 +117,7 @@ def test_stagnation_reviewer_is_predict_only_and_has_no_worker_tools():
     strategy = StagnationReviewer.review._plan_strategy
     reviewer = StagnationReviewer(llm=FakeLLMClient())
     api = doc(reviewer).lower()
+    review_prompt = inspect.getdoc(StagnationReviewer.review).lower()
 
     assert isinstance(strategy, PredictStrategy)
     assert strategy.config.max_retries == 1
@@ -124,6 +126,9 @@ def test_stagnation_reviewer_is_predict_only_and_has_no_worker_tools():
     assert "submit(" not in api
     assert "portfolio" not in api
     assert "shell" not in api
+    assert "vulnerable-build crash is candidate evidence" in review_prompt
+    assert "never claim that the task is solved" in review_prompt
+    assert "patch-specific" in review_prompt
     with pytest.raises(ValueError):
         StagnationAdvice(guidance="x" * (MAX_ADVICE_CHARS + 1), reasoning="bounded")
     with pytest.raises(ValueError):
@@ -173,7 +178,7 @@ def test_stagnation_review_input_is_structurally_bounded_and_excludes_sensitive_
 
 
 @pytest.mark.asyncio
-async def test_stagnation_review_success_uses_zero_retries_and_applies_guidance(
+async def test_stagnation_review_success_uses_bounded_transport_retries_and_applies_guidance(
     monkeypatch, caplog
 ):
     agent = _agent_with_portfolio()
@@ -202,6 +207,8 @@ async def test_stagnation_review_success_uses_zero_retries_and_applies_guidance(
         audit = await agent._attempt_stagnation_review(state=state, now=100, config=_config())
 
     assert audit is not None and audit.outcome == "success"
+    assert audit.trigger_reason == "age"
+    assert audit.review_id is None
     assert agent._portfolio.guidance == "Try alternate lengths."
     assert reviewer_llm.closed == 1
     assert audit.cleanup_status == "success"
@@ -209,8 +216,10 @@ async def test_stagnation_review_success_uses_zero_retries_and_applies_guidance(
     model, kwargs = make_calls[0]
     assert model == "alternate-reviewer"
     assert kwargs["max_tokens"] == 1234
-    assert kwargs["retry_config"].max_retries == 0
-    assert kwargs["retry_config"].rate_limit_extra_retries == 0
+    assert kwargs["retry_config"].max_retries == 5
+    assert kwargs["retry_config"].base_delay == 3.0
+    assert kwargs["retry_config"].max_delay == 30.0
+    assert kwargs["retry_config"].rate_limit_extra_retries == 3
     assert kwargs["provider_scoped"] is True
     assert kwargs["inherit_reasoning_effort"] is False
     payloads = _review_log_payloads(caplog)
@@ -226,15 +235,18 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch,
     agent = _agent_with_portfolio()
     original_guidance = agent._portfolio.guidance
     reviewer_llm = CloseableLLM()
+    reviewer_started = asyncio.Event()
     cancellation_seen = asyncio.Event()
     release_late_result = asyncio.Event()
     late_result = asyncio.Event()
+    clock = SimpleNamespace(now=0.0)
 
     class FakeReviewer:
         def __init__(self, *, llm):
             self.llm = llm
 
         async def review(self, review_input):
+            reviewer_started.set()
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
@@ -245,6 +257,7 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch,
 
     monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
+    monkeypatch.setattr(agent, "_monotonic", lambda: clock.now)
 
     with caplog.at_level("WARNING", logger="nooa_cybergym"):
         attempt = asyncio.create_task(
@@ -252,8 +265,10 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch,
                 state=_eligible_state(), now=100, config=_config(reviewer_timeout_sec=0.001)
             )
         )
-        await asyncio.wait_for(cancellation_seen.wait(), timeout=0.1)
-        audit = await asyncio.wait_for(attempt, timeout=0.1)
+        await asyncio.wait_for(reviewer_started.wait(), timeout=1)
+        clock.now = 1.0
+        await asyncio.wait_for(cancellation_seen.wait(), timeout=1)
+        audit = await asyncio.wait_for(attempt, timeout=1)
 
     assert audit is not None and audit.outcome == "timeout"
     payloads = _review_log_payloads(caplog)
@@ -261,7 +276,7 @@ async def test_timeout_rejects_cancellation_suppressing_late_result(monkeypatch,
     assert payloads[0]["cleanup_status"] == "success"
     assert late_result.is_set() is False
     release_late_result.set()
-    await asyncio.wait_for(late_result.wait(), timeout=0.1)
+    await asyncio.wait_for(late_result.wait(), timeout=1)
     assert agent._portfolio.guidance == original_guidance
 
 
@@ -417,6 +432,8 @@ async def test_hanging_close_is_bounded_and_records_cleanup_timeout(monkeypatch,
     assert audit is not None and audit.outcome == "success"
     assert audit.cleanup_status == "timeout"
     assert audit.cleanup_failure_type == "TimeoutError"
+    assert audit.one_shot_outcome == "timeout"
+    assert audit.recovery_result == "not_entered"
     payloads = _review_log_payloads(caplog)
     assert len(payloads) == 1
     assert payloads[0]["cleanup_status"] == "timeout"
@@ -491,6 +508,8 @@ async def test_cleanup_exception_emits_one_final_redacted_audit(monkeypatch, cap
 
     assert audit is not None and audit.cleanup_status == "failure"
     assert audit.cleanup_failure_type == "RuntimeError"
+    assert audit.one_shot_outcome == "failure"
+    assert audit.recovery_result == "not_entered"
     payloads = _review_log_payloads(caplog)
     assert len(payloads) == 1
     assert payloads[0]["cleanup_status"] == "failure"

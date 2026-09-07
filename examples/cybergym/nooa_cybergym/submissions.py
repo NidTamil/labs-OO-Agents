@@ -13,6 +13,7 @@ import re
 import secrets
 import shlex
 import shutil
+import stat
 import tempfile
 import time
 from collections import deque
@@ -21,9 +22,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from nooa.tools.shell_tools import ShellTools
+
+try:
+    from .selection import SELECTION_GROUND_FIELDS, trim_selection_text
+except ImportError:  # pragma: no cover - script mode
+    from selection import SELECTION_GROUND_FIELDS, trim_selection_text  # type: ignore[no-redef]
 
 SubmitStatus = Literal[
     "crashed",
@@ -31,6 +37,7 @@ SubmitStatus = Literal[
     "no_crash",
     "timeout",
     "server_error",
+    "local_candidate_error",
     "reconsider",
 ]
 
@@ -72,6 +79,8 @@ class PocSubmission(BaseModel):
     submission_number: int
     original_path: str
     submitted_path: str | None = None
+    sha256: str | None = None
+    byte_length: int | None = None
     status: SubmitStatus
     exit_code: int
     fingerprint: CrashFingerprint
@@ -86,7 +95,9 @@ class PocSubmission(BaseModel):
 class FinalPocArtifact(BaseModel):
     """Immutable final PoC designation consumed by the official scorer."""
 
-    schema_version: int = 1
+    schema_version: Literal[2] = 2
+    selection_source: Literal["model"] = "model"
+    grounds_status: Literal["provided"] = "provided"
     submission_number: int
     poc_path: str
     sha256: str
@@ -96,6 +107,23 @@ class FinalPocArtifact(BaseModel):
     source_model: str | None = None
     hypothesis: str
     cluster_key: str
+    target_path: str
+    unsafe_operation: str
+    description_alignment: str
+    crash_stability: str
+    remaining_ambiguity: str
+
+    @field_validator(
+        "selection_reason",
+        "target_path",
+        "unsafe_operation",
+        "description_alignment",
+        "crash_stability",
+        "remaining_ambiguity",
+    )
+    @classmethod
+    def trim_selection_text(cls, value: str) -> str:
+        return trim_selection_text("selection metadata", value)
 
 
 class KnownFamily(BaseModel):
@@ -120,10 +148,25 @@ class SubmissionShellCircuitOpen(RuntimeError):
     """The verifier shell repeatedly lost framing and is no longer trusted."""
 
 
+class SubmissionStorageError(RuntimeError):
+    """Persistent submission staging or audit storage is unavailable."""
+
+
+class _CandidateSourceError(RuntimeError):
+    """A public candidate could not be safely staged from its source."""
+
+
 @dataclass
 class _ShellRequest:
     command: str
     future: asyncio.Future[Any]
+
+
+@dataclass(frozen=True)
+class _StagedCandidate:
+    path: Path
+    sha256: str
+    byte_length: int
 
 
 class SubmissionShellOwner:
@@ -327,6 +370,7 @@ class SubmissionManager:
     CAPTURE_RESPONSE_SCRIPT = Path("/app/nooa_cybergym/capture_submit_response.py")
     OUTPUT_LIMIT = 2048
     EXCERPT_LIMIT = 1200
+    STAGING_CHUNK_SIZE = 1024 * 1024
 
     def __init__(
         self,
@@ -347,6 +391,8 @@ class SubmissionManager:
         self._crashed_poc_paths: set[str] = set()
         self._last_crashing_poc = ""
         self._last_crashing_submission: SubmitResult | None = None
+        self._terminal_storage_error: SubmissionStorageError | None = None
+        self._terminal_storage_event = asyncio.Event()
         for submission in self._submissions:
             self._remember_crashing_submission(submission)
 
@@ -363,44 +409,200 @@ class SubmissionManager:
         source_model: str | None = None,
     ) -> SubmitResult:
         """Run public submit.sh, record the candidate, and update crash state."""
+        self._raise_if_storage_terminal()
         hypothesis = " ".join(hypothesis.split())
         if not hypothesis:
             raise ValueError("hypothesis must briefly explain the expected trigger")
+        submission_number = self._next_number()
+        try:
+            staged = self._stage_candidate(poc_path, submission_number)
+        except _CandidateSourceError as exc:
+            output = f"Local candidate error: {exc}"
+            result = SubmitResult(
+                status="local_candidate_error",
+                exit_code=-1,
+                output=output,
+                submission_number=submission_number,
+                fingerprint=self.fingerprint_output("local_candidate_error", -1, output),
+            )
+            submission = self._record_result(
+                poc_path=poc_path,
+                result=result,
+                submitted_path=None,
+                hypothesis=hypothesis,
+                source_agent=source_agent,
+                source_model=source_model,
+            )
+            self._append_submission_log(submission)
+            self._accept_submission(submission)
+            return result
+
         result = await self._run_submit_script(
-            poc_path,
-            submission_number=self._next_number(),
+            str(staged.path),
+            submission_number=submission_number,
         )
-        submitted_poc = self._preserve_candidate(poc_path, result.submission_number)
         submission = self._record_result(
             poc_path=poc_path,
             result=result,
-            submitted_path=str(submitted_poc) if submitted_poc else None,
+            submitted_path=str(staged.path),
+            sha256=staged.sha256,
+            byte_length=staged.byte_length,
             hypothesis=hypothesis,
             source_agent=source_agent,
             source_model=source_model,
         )
-        self._remember_crashing_submission(submission)
         self._append_submission_log(submission)
+        self._accept_submission(submission)
+        self._remember_crashing_submission(submission)
         return result
 
-    def _preserve_candidate(self, poc_path: str, submission_number: int) -> Path | None:
-        """Copy candidate bytes to the persistent artifact mount before returning."""
+    def _stage_candidate(self, poc_path: str, submission_number: int) -> _StagedCandidate:
+        """Publish one immutable, content-addressed snapshot of a candidate source."""
         source = Path(poc_path)
-        if not source.is_file():
-            return self.get_latest_submitted_poc()
-        self.CANDIDATE_DIR.mkdir(parents=True, exist_ok=True)
-        destination = self.CANDIDATE_DIR / f"submission_{submission_number}.poc"
-        stage = destination.with_suffix(".tmp")
+        source_fd: int | None = None
+        temp_fd: int | None = None
+        temp_path: Path | None = None
+        incomplete_link: Path | None = None
+        open_flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
         try:
-            shutil.copyfile(source, stage)
-            os.replace(stage, destination)
-            return destination
-        except OSError:
-            stage.unlink(missing_ok=True)
-            return self.get_latest_submitted_poc()
+            try:
+                source_fd = os.open(source, open_flags)
+                initial = os.fstat(source_fd)
+            except OSError as exc:
+                raise _CandidateSourceError(f"cannot open {source}: {exc}") from exc
+            if not stat.S_ISREG(initial.st_mode):
+                raise _CandidateSourceError(f"candidate is not a regular file: {source}")
+
+            try:
+                self.CANDIDATE_DIR.mkdir(parents=True, exist_ok=True)
+                raw_temp_fd, raw_temp_path = tempfile.mkstemp(
+                    prefix=f".submission_{submission_number}.",
+                    suffix=".tmp",
+                    dir=self.CANDIDATE_DIR,
+                )
+                temp_fd = raw_temp_fd
+                temp_path = Path(raw_temp_path)
+            except OSError as exc:
+                raise self._storage_failure(
+                    f"cannot create candidate staging file in {self.CANDIDATE_DIR}"
+                ) from exc
+
+            digest = hashlib.sha256()
+            byte_length = 0
+            while True:
+                try:
+                    chunk = os.read(source_fd, self.STAGING_CHUNK_SIZE)
+                except OSError as exc:
+                    raise _CandidateSourceError(
+                        f"cannot read candidate source {source}: {exc}"
+                    ) from exc
+                if not chunk:
+                    break
+                digest.update(chunk)
+                byte_length += len(chunk)
+                try:
+                    self._write_all(temp_fd, chunk)
+                except OSError as exc:
+                    raise self._storage_failure(
+                        f"cannot write candidate staging file {temp_path}"
+                    ) from exc
+
+            try:
+                final_descriptor = os.fstat(source_fd)
+                current_path = os.stat(source)
+            except OSError as exc:
+                raise _CandidateSourceError(
+                    f"candidate disappeared during staging: {source}"
+                ) from exc
+            if self._source_changed(initial, final_descriptor, current_path, byte_length):
+                raise _CandidateSourceError(f"candidate changed during staging: {source}")
+
+            try:
+                os.fsync(temp_fd)
+                os.close(temp_fd)
+                temp_fd = None
+                temp_path.chmod(0o444)
+            except OSError as exc:
+                raise self._storage_failure(
+                    f"cannot durably stage candidate at {temp_path}"
+                ) from exc
+
+            destination = self.CANDIDATE_DIR / f"submission_{submission_number}.poc"
+            try:
+                if os.name == "nt":
+                    os.rename(temp_path, destination)
+                else:
+                    os.link(temp_path, destination)
+                    incomplete_link = destination
+                    temp_path.unlink()
+                    incomplete_link = None
+                temp_path = None
+            except OSError as exc:
+                raise self._storage_failure(
+                    f"cannot publish staged candidate without overwrite at {destination}"
+                ) from exc
+            return _StagedCandidate(
+                path=destination,
+                sha256=digest.hexdigest(),
+                byte_length=byte_length,
+            )
+        finally:
+            if source_fd is not None:
+                os.close(source_fd)
+            if temp_fd is not None:
+                os.close(temp_fd)
+            if incomplete_link is not None:
+                try:
+                    incomplete_link.unlink(missing_ok=True)
+                except OSError as exc:
+                    raise self._storage_failure(
+                        f"cannot clean incomplete candidate publication {incomplete_link}"
+                    ) from exc
+            if temp_path is not None:
+                try:
+                    temp_path.chmod(0o600)
+                    temp_path.unlink(missing_ok=True)
+                except OSError as exc:
+                    raise self._storage_failure(
+                        f"cannot clean candidate staging file {temp_path}"
+                    ) from exc
+
+    @staticmethod
+    def _write_all(fd: int, data: bytes) -> None:
+        view = memoryview(data)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OSError("staging write made no progress")
+            view = view[written:]
+
+    @staticmethod
+    def _source_changed(
+        initial: os.stat_result,
+        descriptor: os.stat_result,
+        current_path: os.stat_result,
+        byte_length: int,
+    ) -> bool:
+        stable_fields = (
+            "st_dev",
+            "st_ino",
+            "st_mode",
+            "st_size",
+            "st_mtime_ns",
+            "st_ctime_ns",
+        )
+        return (
+            any(getattr(initial, name) != getattr(descriptor, name) for name in stable_fields)
+            or initial.st_dev != current_path.st_dev
+            or initial.st_ino != current_path.st_ino
+            or not stat.S_ISREG(current_path.st_mode)
+            or byte_length != initial.st_size
+            or getattr(descriptor, "st_nlink", 1) == 0
+        )
 
     async def verify_existing(self, poc_path: str) -> SubmitResult:
         """Re-submit an existing PoC without creating a new public candidate."""
+        self._raise_if_storage_terminal()
         result = await self._run_submit_script(
             poc_path,
             submission_number=self._submission_count,
@@ -611,6 +813,12 @@ class SubmissionManager:
             kind = "server_error"
             cluster_key = "server_error:" + cls._slug(output.splitlines()[0] if output else "")
             summary = "server_error"
+        elif status == "local_candidate_error":
+            kind = "infra"
+            cluster_key = "local_candidate_error:" + cls._slug(
+                output.splitlines()[0] if output else ""
+            )
+            summary = "local candidate error"
         elif status == "no_crash":
             kind = "no_crash"
             if "Usage for fuzzing:" in output or "Usage:" in output:
@@ -662,7 +870,7 @@ class SubmissionManager:
         )
 
     def _append_submission_log(self, submission: PocSubmission) -> None:
-        """Append one JSONL record per submit to the artifacts log (best-effort)."""
+        """Durably append one JSONL record per public submit attempt."""
         fp = submission.fingerprint
         record = {
             "submission_number": submission.submission_number,
@@ -673,16 +881,43 @@ class SubmissionManager:
             "hypothesis": submission.hypothesis,
             "original_path": submission.original_path,
             "submitted_path": submission.submitted_path,
+            "sha256": submission.sha256,
+            "byte_length": submission.byte_length,
             "cluster_key": fp.cluster_key,
             "kind": fp.kind,
             "summary": fp.summary,
+            "output_excerpt": submission.output_excerpt,
         }
         try:
             self.SUBMISSION_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with self.SUBMISSION_LOG_PATH.open("a") as f:
+            with self.SUBMISSION_LOG_PATH.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(record) + "\n")
-        except OSError:
-            pass
+                f.flush()
+                os.fsync(f.fileno())
+        except OSError as exc:
+            raise self._storage_failure(
+                f"cannot durably append submission audit at {self.SUBMISSION_LOG_PATH}"
+            ) from exc
+
+    def _storage_failure(self, message: str) -> SubmissionStorageError:
+        """Latch and return the first fatal local-storage failure."""
+        if self._terminal_storage_error is None:
+            self._terminal_storage_error = SubmissionStorageError(message)
+            self._terminal_storage_event.set()
+        return self._terminal_storage_error
+
+    async def wait_for_storage_failure(self) -> SubmissionStorageError:
+        """Wait until fatal local storage state is latched, then return its cause."""
+        await self._terminal_storage_event.wait()
+        assert self._terminal_storage_error is not None
+        return self._terminal_storage_error
+
+    def _raise_if_storage_terminal(self) -> None:
+        if self._terminal_storage_error is None:
+            return
+        raise SubmissionStorageError(
+            f"submission storage is terminal: {self._terminal_storage_error}"
+        ) from self._terminal_storage_error
 
     def _remember_crashing_submission(self, submission: PocSubmission) -> None:
         if submission.status != "crashed":
@@ -761,11 +996,36 @@ class SubmissionManager:
         """Stop the submission worker and close its private shell."""
         await self._owner.close()
 
-    def finalize(self, submission_number: int, *, selection_reason: str) -> FinalPocArtifact:
+    def finalize(
+        self,
+        submission_number: int,
+        *,
+        selection_reason: str,
+        target_path: str | None = None,
+        unsafe_operation: str | None = None,
+        description_alignment: str | None = None,
+        crash_stability: str | None = None,
+        remaining_ambiguity: str | None = None,
+    ) -> FinalPocArtifact:
         """Freeze exactly one model-designated verified crash as an atomic artifact."""
+        self._raise_if_storage_terminal()
         selection_reason = " ".join(selection_reason.split())
         if not selection_reason:
             raise ValueError("selection_reason must explain why the model chose this PoC")
+        grounds = {
+            field_name: trim_selection_text(field_name, value)
+            for field_name, value in zip(
+                SELECTION_GROUND_FIELDS,
+                (
+                    target_path,
+                    unsafe_operation,
+                    description_alignment,
+                    crash_stability,
+                    remaining_ambiguity,
+                ),
+                strict=True,
+            )
+        }
         submission = self._find_submission(submission_number)
         if submission is None:
             raise ValueError(f"unknown submission_number={submission_number}")
@@ -773,47 +1033,176 @@ class SubmissionManager:
             raise ValueError(
                 f"submission_number={submission_number} is not a verified crash candidate"
             )
+        if (
+            not submission.submitted_path
+            or submission.sha256 is None
+            or submission.byte_length is None
+        ):
+            raise ValueError(
+                f"submission_number={submission_number} has no recorded staged identity"
+            )
 
-        source = Path(submission.submitted_path or submission.original_path)
-        data = source.read_bytes()
+        source = Path(submission.submitted_path)
         final_dir = self.FINAL_SUBMISSION_DIR
         if final_dir.exists():
             raise FileExistsError(f"final submission already exists at {final_dir}")
 
-        final_dir.parent.mkdir(parents=True, exist_ok=True)
-        stage = Path(tempfile.mkdtemp(prefix=".final_submission-", dir=final_dir.parent))
+        try:
+            final_dir.parent.mkdir(parents=True, exist_ok=True)
+            stage = Path(tempfile.mkdtemp(prefix=".final_submission-", dir=final_dir.parent))
+        except OSError as exc:
+            raise self._storage_failure(
+                f"cannot create final submission staging directory for {final_dir}"
+            ) from exc
         try:
             poc_path = stage / "poc"
-            poc_path.write_bytes(data)
+            self._copy_recorded_stage(
+                source,
+                poc_path,
+                expected_sha256=submission.sha256,
+                expected_byte_length=submission.byte_length,
+            )
             artifact = FinalPocArtifact(
                 submission_number=submission.submission_number,
                 poc_path=str(final_dir / "poc"),
-                sha256=hashlib.sha256(data).hexdigest(),
-                byte_length=len(data),
+                sha256=submission.sha256,
+                byte_length=submission.byte_length,
                 selection_reason=selection_reason,
                 source_agent=submission.source_agent,
                 source_model=submission.source_model,
                 hypothesis=submission.hypothesis,
                 cluster_key=submission.fingerprint.cluster_key,
+                **grounds,
             )
-            (stage / "selection.json").write_text(
-                json.dumps(_model_data(artifact), sort_keys=True, separators=(",", ":")) + "\n"
-            )
+            manifest_path = stage / "selection.json"
             try:
+                with manifest_path.open("x", encoding="utf-8") as manifest:
+                    manifest.write(
+                        json.dumps(_model_data(artifact), sort_keys=True, separators=(",", ":"))
+                        + "\n"
+                    )
+                    manifest.flush()
+                    os.fsync(manifest.fileno())
+                manifest_path.chmod(0o444)
                 os.rename(stage, final_dir)
             except OSError as exc:
                 if final_dir.exists():
                     raise FileExistsError(
                         f"final submission already exists at {final_dir}"
                     ) from exc
-                raise
-            (final_dir / "poc").chmod(0o444)
-            (final_dir / "selection.json").chmod(0o444)
-            final_dir.chmod(0o555)
-            return artifact
+                raise self._storage_failure(
+                    f"cannot publish final submission at {final_dir}"
+                ) from exc
+            try:
+                final_dir.chmod(0o555)
+            except OSError as exc:
+                raise self._storage_failure(
+                    f"cannot make final submission read-only at {final_dir}"
+                ) from exc
+        except BaseException:
+            self._cleanup_final_stage(stage, preserve_error=True)
+            raise
+        self._cleanup_final_stage(stage, preserve_error=False)
+        return artifact
+
+    def _cleanup_final_stage(self, stage: Path, *, preserve_error: bool) -> None:
+        """Remove a finalization temp tree without masking its primary failure."""
+        if not stage.exists():
+            return
+        try:
+            for child in stage.rglob("*"):
+                child.chmod(0o700 if child.is_dir() else 0o600)
+            stage.chmod(0o700)
+            shutil.rmtree(stage)
+        except OSError as exc:
+            failure = self._storage_failure(
+                f"cannot clean final submission staging directory {stage}"
+            )
+            if preserve_error:
+                return
+            raise failure from exc
+
+    def _copy_recorded_stage(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        expected_sha256: str,
+        expected_byte_length: int,
+    ) -> None:
+        source_fd: int | None = None
+        destination_fd: int | None = None
+        try:
+            try:
+                source_fd = os.open(
+                    source,
+                    os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0),
+                )
+                initial = os.fstat(source_fd)
+            except OSError as exc:
+                raise ValueError(
+                    f"staged candidate identity mismatch: cannot open {source}"
+                ) from exc
+            if not stat.S_ISREG(initial.st_mode):
+                raise ValueError(
+                    f"staged candidate identity mismatch: {source} is not a regular file"
+                )
+            try:
+                destination_fd = os.open(
+                    destination,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+                    0o600,
+                )
+            except OSError as exc:
+                raise self._storage_failure(
+                    f"cannot create final staged PoC at {destination}"
+                ) from exc
+
+            digest = hashlib.sha256()
+            byte_length = 0
+            while True:
+                try:
+                    chunk = os.read(source_fd, self.STAGING_CHUNK_SIZE)
+                except OSError as exc:
+                    raise ValueError(
+                        f"staged candidate identity mismatch: cannot read {source}"
+                    ) from exc
+                if not chunk:
+                    break
+                digest.update(chunk)
+                byte_length += len(chunk)
+                try:
+                    self._write_all(destination_fd, chunk)
+                except OSError as exc:
+                    raise self._storage_failure(
+                        f"cannot write final staged PoC at {destination}"
+                    ) from exc
+
+            try:
+                descriptor = os.fstat(source_fd)
+                current_path = os.stat(source)
+            except OSError as exc:
+                raise ValueError(
+                    f"staged candidate identity mismatch: {source} disappeared"
+                ) from exc
+            if self._source_changed(initial, descriptor, current_path, byte_length):
+                raise ValueError(f"staged candidate identity mismatch: {source} changed")
+            if byte_length != expected_byte_length or digest.hexdigest() != expected_sha256:
+                raise ValueError(f"staged candidate identity mismatch for submission path {source}")
+            try:
+                os.fsync(destination_fd)
+                os.close(destination_fd)
+                destination_fd = None
+                destination.chmod(0o444)
+            except OSError as exc:
+                raise self._storage_failure(
+                    f"cannot durably write final staged PoC at {destination}"
+                ) from exc
         finally:
-            if stage.exists():
-                shutil.rmtree(stage)
+            if source_fd is not None:
+                os.close(source_fd)
+            if destination_fd is not None:
+                os.close(destination_fd)
 
     def _record_result(
         self,
@@ -822,6 +1211,8 @@ class SubmissionManager:
         result: SubmitResult,
         submitted_path: str | None,
         hypothesis: str,
+        sha256: str | None = None,
+        byte_length: int | None = None,
         source_agent: str | None = None,
         source_model: str | None = None,
     ) -> PocSubmission:
@@ -832,6 +1223,8 @@ class SubmissionManager:
             submission_number=result.submission_number,
             original_path=str(poc_path),
             submitted_path=submitted_path,
+            sha256=sha256,
+            byte_length=byte_length,
             status=result.status,
             exit_code=result.exit_code,
             fingerprint=fingerprint,
@@ -840,9 +1233,12 @@ class SubmissionManager:
             source_agent=source_agent,
             source_model=source_model,
         )
-        self._submissions.append(submission)
-        self._submission_count = max(self._submission_count, result.submission_number)
         return submission
+
+    def _accept_submission(self, submission: PocSubmission) -> None:
+        """Publish an already-audited submission into in-memory portfolio state."""
+        self._submissions.append(submission)
+        self._submission_count = max(self._submission_count, submission.submission_number)
 
     def _find_submission(self, submission_number: int | None) -> PocSubmission | None:
         if submission_number is None:

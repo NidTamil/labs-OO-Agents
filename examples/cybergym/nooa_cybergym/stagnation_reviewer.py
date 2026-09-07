@@ -97,10 +97,12 @@ class StagnationReviewer(Agent, context={"state": None}):
     async def review(self, review_input: StagnationReviewInput) -> StagnationAdvice:
         """Recommend one concrete next direction from the bounded review input.
 
-        Use the task description to understand the vulnerability. Infer which
-        hypotheses are repetitive, which plausible code paths or input structures
-        remain unexplored, and what focused variation is most likely to discover a
-        new verified crash family. Return concise guidance and reasoning grounded
-        only in the provided input.
+        A vulnerable-build crash is candidate evidence; hidden fixed-build evidence
+        is unavailable during the run. Never claim that the task is solved, that a
+        crash is patch-specific, or that one family is the only reachable bug.
+        Use the task description to rank hypotheses by patch-specific alignment,
+        identify repetitive generic sanitizer crashes, and direct the worker toward
+        plausible code paths or input structures that can produce a distinct family.
+        Return concise guidance and reasoning grounded only in the provided input.
         """
         ...

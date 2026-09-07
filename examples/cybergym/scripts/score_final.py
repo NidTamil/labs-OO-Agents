@@ -23,11 +23,19 @@ from nooa_cybergym.cohort_commitment import (
     commitment_payload,
     verify_cohort_commitment,
 )
+from nooa_cybergym.selection import validate_selection_metadata
 from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.integrations.sunchaser import sign_sunchaser_final_evidence
 from xeus_cybergym.ledger import Ed25519Signer
 
 _GitRunner = Callable[[Path, Sequence[str]], bytes]
+
+
+def _validate_selection_metadata(selection: dict[str, object]) -> None:
+    try:
+        validate_selection_metadata(selection)
+    except ValueError as exc:
+        raise RuntimeError(f"invalid final selection metadata: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -387,6 +395,7 @@ def _load_run_evidence(
         submission_number = selection.get("submission_number")
         if not isinstance(submission_number, int) or submission_number < 1:
             raise RuntimeError(f"selection has no valid submission_number: {selection_path}")
+        _validate_selection_metadata(selection)
         evidence.append(
             _RunEvidence(
                 args_path=args_path,

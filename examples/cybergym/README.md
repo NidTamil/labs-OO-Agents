@@ -197,6 +197,7 @@ the single-task command above:
 --escalation-reviewer-timeout 900 \
 --escalation-reviewer-max-output-tokens 32768 \
 --escalation-recovery-window 3600 \
+--escalation-consecutive-no-growth-reviews 3 \
 --harness-revision "$(git rev-parse HEAD)" \
 --cohort-id l1-v2-heldout-001 \
 --evaluation-mode heldout \
@@ -205,26 +206,40 @@ the single-task command above:
 --cohort-authority-keys /secure/cohort-authority-keys.json
 ```
 
-The numeric values shown are the defaults. Once task age, quiet time, and
-submission count all reach their thresholds, one isolated, tool-free reviewer
-runs once and supplies bounded guidance to the existing agents. Exploration
-continues during the recovery window. When it expires, an existing verified
-family is finalized. The run enters the honest no-final path only when no
-verified family exists. New family progress lets exploration continue.
-Reviewer failure or timeout is recorded and does not retry the reviewer.
-The primary worker remains DeepSeek V4 Flash at `max` reasoning effort. Z.AI
-exposes the GLM reviewer reasoning control as deep thinking enabled/disabled,
-so the `glm-5.3` alias pins deep thinking enabled and the 32,768-token reviewer
-output cap.
+`--escalation-consecutive-no-growth-reviews` overrides
+`NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS` when both are set.
 
-Each attempt writes a structured `stagnation_review` audit event to the agent
-log, including the outcome, trigger counters, elapsed time, model, and cleanup
-status. Raw provider error messages are excluded.
+The numeric values shown are the defaults. Escalation has two independent
+triggers after the minimum submission count: the configured age plus quiet
+window, or exactly one verified family followed by the configured number of
+completed no-growth reviews. The first valid review establishes a baseline;
+family growth resets the count, and stale, failed, cancelled, or duplicate
+reviews never count. If both predicates hold, the audit reason is
+`plateau_and_age`; otherwise it is `age` or `plateau`. Reviewer timeout must be
+strictly shorter than the recovery window, and the age plus recovery window
+must fit within the soft timeout.
+
+An eligible local stop is deferred and discarded while the one-shot reviewer
+claim runs. Valid guidance enters the existing recovery window with `stop=False`;
+ordinary local stops remain deferred. A configured sequence of consecutive
+decisive no-growth stops ends recovery early; any completed continue decision
+resets that sequence. New-family progress resumes normal stopping, while expiry
+without progress fails the run. Reviewer or cleanup failure consumes the
+in-process one-shot invocation and cannot approve the pending stop; a later
+distinct ordinary review may stop. Provider telemetry may still show its
+separately bounded internal retries.
+
+The effective trigger settings are recorded in `args.json` and the immutable
+pre-run policy hash. Append-only `portfolio_review_event`, `stagnation_review`,
+and `stagnation_recovery` log events record only review IDs, snapshot counters,
+completed outcomes, trigger/claim facts, and recovery results; they never copy
+prompts, guidance, reasoning, or provider error messages.
 
 Every v2 run requires both `--cohort-id` and `--evaluation-mode`. Use
 `heldout` only for untouched official tasks in one fixed cohort. Use
 `diagnostic` for development reruns and keep those runs in a separate run root.
-`scripts/validate.sh` verifies diagnostic PoCs but never signs them. Held-out
+Diagnostic runs never create signed official evidence; `scripts/validate.sh`
+may verify their PoCs but never signs them. Held-out
 validation requires `--cohort-manifest <path>` and forwards that manifest to
 the strict scorer. Mixed or partial metadata is rejected before verification.
 Exactly one metadata-free pre-v2 run is verified and signed through the

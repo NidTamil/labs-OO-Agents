@@ -44,6 +44,7 @@ except ImportError:  # pragma: no cover - script mode
 
 try:
     from .stagnation import (
+        ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV,
         ESCALATION_MIN_SUBMISSIONS_ENV,
         ESCALATION_MODEL_ENV,
         ESCALATION_QUIET_WINDOW_SEC_ENV,
@@ -55,6 +56,7 @@ try:
     )
 except ImportError:  # pragma: no cover - script mode
     from stagnation import (  # type: ignore[no-redef]
+        ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV,
         ESCALATION_MIN_SUBMISSIONS_ENV,
         ESCALATION_MODEL_ENV,
         ESCALATION_QUIET_WINDOW_SEC_ENV,
@@ -64,6 +66,11 @@ except ImportError:  # pragma: no cover - script mode
         ESCALATION_TRIGGER_AGE_SEC_ENV,
         StagnationConfig,
     )
+
+try:
+    from .selection import validate_selection_metadata
+except ImportError:  # pragma: no cover - script mode
+    from selection import validate_selection_metadata  # type: ignore[no-redef]
 
 ENV_PREFIXES = (
     "NOOA_CYBERGYM_",
@@ -81,6 +88,7 @@ DEFAULT_PROMPT = (
 )
 DEFAULT_MODEL = "glm-5.2"
 DEFAULT_LLM_API_BASE = "https://inference-api.nvidia.com/v1"
+FIREWALL_DOMAIN_ALLOWLIST_PATH = "/etc/squid/allowed_domains.txt"
 DEFAULT_SOFT_TIMEOUT_SEC = 13920
 DEFAULT_FINALIZATION_GRACE_SEC = 300.0
 DEFAULT_TRACING_SHUTDOWN_TIMEOUT_SEC = 30.0
@@ -110,6 +118,10 @@ ESCALATION_ARG_ENV = (
         ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV,
     ),
     ("escalation_recovery_window", ESCALATION_RECOVERY_WINDOW_SEC_ENV),
+    (
+        "escalation_consecutive_no_growth_reviews",
+        ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV,
+    ),
 )
 
 
@@ -133,6 +145,7 @@ def stagnation_args_record(config: StagnationConfig) -> dict[str, object]:
         "escalation_reviewer_timeout_sec": config.reviewer_timeout_sec,
         "escalation_reviewer_max_output_tokens": config.reviewer_max_output_tokens,
         "escalation_recovery_window_sec": config.recovery_window_sec,
+        "escalation_consecutive_no_growth_reviews": config.consecutive_no_growth_reviews,
     }
 
 
@@ -372,6 +385,36 @@ def sanitized_firewall_domains(raw_domains: str, provider_host: str) -> list[str
     return sorted(normalized)
 
 
+def reconcile_firewall_domain_allowlist(
+    docker_client,
+    proxy,
+    *,
+    expected_domains: set[str],
+    allow_update: bool = True,
+) -> set[str]:
+    """Make the live Squid domain set match the policy before agent startup."""
+
+    def read_live_domains() -> set[str]:
+        container = docker_client.containers.get(proxy.container_name)
+        result = container.exec_run(["cat", FIREWALL_DOMAIN_ALLOWLIST_PATH])
+        if result.exit_code != 0:
+            raise RuntimeError("cannot read live firewall domain allowlist")
+        raw = result.output.decode("utf-8") if isinstance(result.output, bytes) else result.output
+        return {
+            line.strip()
+            for line in raw.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+
+    effective_domains = read_live_domains()
+    if effective_domains != expected_domains and allow_update:
+        proxy.update()
+        effective_domains = read_live_domains()
+    if effective_domains != expected_domains:
+        raise RuntimeError("live firewall domain allowlist differs from requested policy")
+    return effective_domains
+
+
 def harness_policy_record(
     *,
     harness_revision: str | None,
@@ -501,14 +544,15 @@ def validate_stagnation_preflight(
         "reviewer_timeout_sec": config.reviewer_timeout_sec,
         "reviewer_max_output_tokens": config.reviewer_max_output_tokens,
         "recovery_window_sec": config.recovery_window_sec,
+        "consecutive_no_growth_reviews": config.consecutive_no_growth_reviews,
     }
     for name, value in positive_values.items():
         if value <= 0:
             raise ValueError(f"{name} must be positive, got {value}")
-    if config.enabled and config.reviewer_timeout_sec > config.recovery_window_sec:
+    if config.enabled and config.reviewer_timeout_sec >= config.recovery_window_sec:
         raise ValueError(
-            "reviewer_timeout_sec must be <= recovery_window_sec "
-            f"({config.reviewer_timeout_sec} > {config.recovery_window_sec})"
+            "reviewer_timeout_sec must be < recovery_window_sec "
+            f"({config.reviewer_timeout_sec} >= {config.recovery_window_sec})"
         )
     if config.enabled and config.trigger_age_sec + config.recovery_window_sec > soft_timeout:
         raise ValueError(
@@ -576,7 +620,18 @@ def _existing_final(log_dir: Path) -> dict[str, object] | None:
         selection = json.loads(selection_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(selection, dict):
+        return None
+    try:
+        validate_selection_metadata(selection)
+    except ValueError:
+        return None
     if selection.get("sha256") != hashlib.sha256(poc_path.read_bytes()).hexdigest():
+        return None
+    if selection.get("byte_length") != poc_path.stat().st_size:
+        return None
+    submission_number = selection.get("submission_number")
+    if not isinstance(submission_number, int) or submission_number < 1:
         return None
     return selection
 
@@ -594,7 +649,7 @@ def recover_timeout_final(log_dir: Path) -> dict[str, object] | None:
     if not log_path.is_file():
         return None
 
-    candidates: list[tuple[int, int, bytes, dict[str, object]]] = []
+    candidates: list[tuple[int, int, bytes, str, dict[str, object]]] = []
     for line in log_path.read_text(errors="replace").splitlines():
         try:
             record = json.loads(line)
@@ -607,24 +662,47 @@ def recover_timeout_final(log_dir: Path) -> dict[str, object] | None:
         except (KeyError, TypeError, ValueError):
             continue
         candidate_path = artifacts_dir / "candidates" / f"submission_{number}.poc"
-        if not candidate_path.is_file():
+        # The audit is written in-container; recovery reads the same bind mount on the host.
+        recorded_candidate_path = f"/logs/artifacts/candidates/submission_{number}.poc"
+        submitted_path = record.get("submitted_path")
+        expected_sha256 = record.get("sha256")
+        expected_byte_length = record.get("byte_length")
+        if (
+            not isinstance(submitted_path, str)
+            or not submitted_path
+            or not isinstance(expected_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+            or type(expected_byte_length) is not int
+            or expected_byte_length < 0
+        ):
             continue
-        data = candidate_path.read_bytes()
-        candidates.append((len(data), number, data, record))
+        try:
+            if submitted_path != recorded_candidate_path:
+                continue
+            if not candidate_path.is_file():
+                continue
+            data = candidate_path.read_bytes()
+        except OSError:
+            continue
+        if len(data) != expected_byte_length or hashlib.sha256(data).hexdigest() != expected_sha256:
+            continue
+        candidates.append((expected_byte_length, number, data, expected_sha256, record))
 
     if not candidates:
         return None
 
-    _, number, data, record = min(candidates, key=lambda item: (item[0], item[1]))
+    byte_length, number, data, sha256, record = min(candidates, key=lambda item: (item[0], item[1]))
     final_dir = artifacts_dir / "final_submission"
     final_dir.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".final_submission-", dir=final_dir.parent))
     selection: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "selection_source": "hard_timeout_recovery",
+        "grounds_status": "unavailable",
         "submission_number": number,
         "poc_path": "/logs/artifacts/final_submission/poc",
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "byte_length": len(data),
+        "sha256": sha256,
+        "byte_length": byte_length,
         "selection_reason": (
             "Outer hard timeout recovery selected the smallest persisted verified crash candidate."
         ),
@@ -887,6 +965,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         help="Seconds allowed for a new family after escalation is claimed",
     )
+    parser.add_argument(
+        "--escalation-consecutive-no-growth-reviews",
+        type=int,
+        help="Completed no-growth reviews required for plateau escalation",
+    )
     parser.add_argument("--cohort-id", help="Measurement cohort identifier")
     parser.add_argument(
         "--evaluation-mode",
@@ -1044,7 +1127,7 @@ def main(argv: list[str] | None = None) -> int:
     proxy = None
     firewall_proxy_image_id = None
     if args.use_firewall or args.connect_firewall:
-        from cybergym.firewall import FirewallProxyManager
+        from cybergym.firewall import FirewallProxyManager, load_allowlist
         from cybergym.firewall.proxy import PROXY_IMAGE
 
         proxy_image = require_local_image(docker_client, PROXY_IMAGE, role="firewall proxy")
@@ -1057,6 +1140,15 @@ def main(argv: list[str] | None = None) -> int:
             proxy.connect()
         else:
             proxy.start()
+        expected_firewall_domains = set(load_allowlist(proxy.allowlist_path)) | set(
+            firewall_domains
+        )
+        reconcile_firewall_domain_allowlist(
+            docker_client,
+            proxy,
+            expected_domains=expected_firewall_domains,
+            allow_update=not args.connect_firewall,
+        )
         running_proxy = docker_client.containers.get(proxy.container_name)
         firewall_proxy_image_id = immutable_image_id(running_proxy.image)
         network = proxy.network_name

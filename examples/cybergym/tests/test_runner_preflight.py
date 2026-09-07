@@ -330,6 +330,55 @@ def test_firewall_domain_and_mask_map_policy_inputs_are_sanitized_and_hashed(tmp
     assert run.file_sha256(mask_map) == hashlib.sha256(b"mask-map-v1").hexdigest()
 
 
+def test_firewall_start_reconciles_stale_live_domain_allowlist():
+    class FakeContainer:
+        def __init__(self):
+            self.outputs = iter(
+                (
+                    b"api.deepseek.com\n",
+                    b"api.deepseek.com\napi.z.ai\n",
+                )
+            )
+
+        def exec_run(self, _command):
+            return SimpleNamespace(exit_code=0, output=next(self.outputs))
+
+    container = FakeContainer()
+    client = SimpleNamespace(containers=SimpleNamespace(get=lambda _name: container))
+    proxy = SimpleNamespace(container_name="cybergym-proxy", update_calls=0)
+
+    def update():
+        proxy.update_calls += 1
+
+    proxy.update = update
+    effective = run.reconcile_firewall_domain_allowlist(
+        client,
+        proxy,
+        expected_domains={"api.deepseek.com", "api.z.ai"},
+    )
+
+    assert effective == {"api.deepseek.com", "api.z.ai"}
+    assert proxy.update_calls == 1
+
+
+def test_firewall_start_fails_if_reconciled_allowlist_still_differs():
+    container = SimpleNamespace(
+        exec_run=lambda _command: SimpleNamespace(
+            exit_code=0,
+            output=b"api.deepseek.com\n",
+        )
+    )
+    client = SimpleNamespace(containers=SimpleNamespace(get=lambda _name: container))
+    proxy = SimpleNamespace(container_name="cybergym-proxy", update=lambda: None)
+
+    with pytest.raises(RuntimeError, match="live firewall domain allowlist"):
+        run.reconcile_firewall_domain_allowlist(
+            client,
+            proxy,
+            expected_domains={"api.deepseek.com", "api.z.ai"},
+        )
+
+
 def test_harness_policy_fingerprint_is_canonical_and_change_sensitive():
     runtime = run.effective_runtime_policy(
         env={},
@@ -388,7 +437,13 @@ def test_harness_policy_fingerprint_is_canonical_and_change_sensitive():
         "escalation_reviewer_timeout_sec",
         "escalation_reviewer_max_output_tokens",
         "escalation_recovery_window_sec",
+        "escalation_consecutive_no_growth_reviews",
     }
+    assert "trigger_reason" not in policy["v2"]
+    assert "review_id" not in policy["v2"]
+    changed_threshold = json.loads(json.dumps(policy))
+    changed_threshold["v2"]["escalation_consecutive_no_growth_reviews"] = 4
+    assert run.harness_policy_sha256(changed_threshold) != digest
     changed = json.loads(json.dumps(policy))
     changed["runtime"]["max_concurrent_expanders"] = 3
     assert run.harness_policy_sha256(changed) != digest
@@ -521,6 +576,7 @@ def test_timeout_budget_requires_finalization_and_shutdown_margin():
         "reviewer_timeout_sec",
         "reviewer_max_output_tokens",
         "recovery_window_sec",
+        "consecutive_no_growth_reviews",
     ],
 )
 @pytest.mark.parametrize("invalid", [0, -1])
@@ -537,7 +593,7 @@ def test_stagnation_preflight_requires_positive_values(field, invalid):
 def test_stagnation_preflight_rejects_inconsistent_reviewer_and_run_windows():
     with pytest.raises(ValueError, match="reviewer_timeout_sec.*recovery_window_sec"):
         run.validate_stagnation_preflight(
-            config=_stagnation_config(reviewer_timeout_sec=41),
+            config=_stagnation_config(reviewer_timeout_sec=40),
             soft_timeout=1_000,
             cohort_id="heldout-v2",
             evaluation_mode="heldout",
@@ -706,6 +762,8 @@ def test_runner_forwards_cli_overrides_and_records_all_effective_v2_settings():
             "1024",
             "--escalation-recovery-window",
             "40",
+            "--escalation-consecutive-no-growth-reviews",
+            "5",
         ]
     )
     env = {}
@@ -721,6 +779,7 @@ def test_runner_forwards_cli_overrides_and_records_all_effective_v2_settings():
         "NOOA_CYBERGYM_ESCALATION_REVIEWER_TIMEOUT_SEC": "10",
         "NOOA_CYBERGYM_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS": "1024",
         "NOOA_CYBERGYM_ESCALATION_RECOVERY_WINDOW_SEC": "40",
+        "NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS": "5",
     }
     assert record == {
         "escalation_enabled": True,
@@ -731,6 +790,7 @@ def test_runner_forwards_cli_overrides_and_records_all_effective_v2_settings():
         "escalation_reviewer_timeout_sec": 10,
         "escalation_reviewer_max_output_tokens": 1024,
         "escalation_recovery_window_sec": 40,
+        "escalation_consecutive_no_growth_reviews": 5,
     }
 
 
@@ -743,6 +803,7 @@ def test_escalation_cli_values_override_conflicting_environment_values():
         escalation_reviewer_timeout=10,
         escalation_reviewer_max_output_tokens=1024,
         escalation_recovery_window=40,
+        escalation_consecutive_no_growth_reviews=3,
     )
     env = {
         "NOOA_CYBERGYM_ESCALATION_MODEL": "environment-reviewer",
@@ -752,11 +813,47 @@ def test_escalation_cli_values_override_conflicting_environment_values():
         "NOOA_CYBERGYM_ESCALATION_REVIEWER_TIMEOUT_SEC": "996",
         "NOOA_CYBERGYM_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS": "995",
         "NOOA_CYBERGYM_ESCALATION_RECOVERY_WINDOW_SEC": "994",
+        "NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS": "993",
     }
 
     config = run.resolve_stagnation_config(args, env)
 
     assert config == _stagnation_config(model="cli-reviewer")
+
+
+def test_escalation_no_growth_cli_rejects_non_integer_and_zero_values():
+    required = [
+        "--task-id",
+        "arvo:15",
+        "--data-dir",
+        "data",
+        "--server",
+        "http://server:8666",
+        "--log-dir",
+        "logs",
+        "--tmp-dir",
+        "tmp",
+    ]
+    with pytest.raises(SystemExit):
+        run.parse_args([*required, "--escalation-consecutive-no-growth-reviews", "three"])
+
+    args = run.parse_args(
+        [
+            *required,
+            "--escalation-model",
+            "reviewer",
+            "--escalation-consecutive-no-growth-reviews",
+            "0",
+        ]
+    )
+    config = run.resolve_stagnation_config(args, {})
+    with pytest.raises(ValueError, match="consecutive_no_growth_reviews"):
+        run.validate_stagnation_preflight(
+            config=config,
+            soft_timeout=14_000,
+            cohort_id=None,
+            evaluation_mode=None,
+        )
 
 
 def test_omitted_v2_cli_uses_environment_defaults_without_enabling_escalation():
@@ -793,8 +890,10 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
     artifacts = tmp_path / "artifacts"
     candidates = artifacts / "candidates"
     candidates.mkdir(parents=True)
-    (candidates / "submission_1.poc").write_bytes(b"larger-crash")
-    (candidates / "submission_2.poc").write_bytes(b"tiny")
+    first_path = candidates / "submission_1.poc"
+    second_path = candidates / "submission_2.poc"
+    first_path.write_bytes(b"larger-crash")
+    second_path.write_bytes(b"tiny")
     (candidates / "submission_3.poc").write_bytes(b"safe")
     records = [
         {
@@ -805,6 +904,9 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
             "hypothesis": "first crash",
             "kind": "crash",
             "cluster_key": "asan:a",
+            "submitted_path": "/logs/artifacts/candidates/submission_1.poc",
+            "sha256": hashlib.sha256(b"larger-crash").hexdigest(),
+            "byte_length": len(b"larger-crash"),
         },
         {
             "submission_number": 2,
@@ -814,6 +916,9 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
             "hypothesis": "small deterministic crash",
             "kind": "crash",
             "cluster_key": "asan:b",
+            "submitted_path": "/logs/artifacts/candidates/submission_2.poc",
+            "sha256": hashlib.sha256(b"tiny").hexdigest(),
+            "byte_length": len(b"tiny"),
         },
         {
             "submission_number": 3,
@@ -833,10 +938,122 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
     assert (artifacts / "final_submission" / "poc").read_bytes() == b"tiny"
     selection = json.loads((artifacts / "final_submission" / "selection.json").read_text())
     assert selection["submission_number"] == 2
+    assert selection["schema_version"] == 2
+    assert selection["selection_source"] == "hard_timeout_recovery"
+    assert selection["grounds_status"] == "unavailable"
+    assert not {
+        "target_path",
+        "unsafe_operation",
+        "description_alignment",
+        "crash_stability",
+        "remaining_ambiguity",
+    }.intersection(selection)
     assert selection["sha256"] == hashlib.sha256(b"tiny").hexdigest()
     assert selection["cluster_key"] == "asan:b"
     assert "outer hard timeout" in selection["selection_reason"].lower()
     assert (artifacts / "output.txt").is_file()
+
+
+@pytest.mark.parametrize("missing_field", ["submitted_path", "sha256", "byte_length"])
+def test_hard_timeout_recovery_rejects_missing_persisted_identity(tmp_path, missing_field):
+    artifacts = tmp_path / "artifacts"
+    candidate = artifacts / "candidates" / "submission_1.poc"
+    candidate.parent.mkdir(parents=True)
+    data = b"verified-crash"
+    candidate.write_bytes(data)
+    record = {
+        "submission_number": 1,
+        "status": "crashed",
+        "kind": "crash",
+        "cluster_key": "asan:verified",
+        "submitted_path": "/logs/artifacts/candidates/submission_1.poc",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
+    }
+    record.pop(missing_field)
+    (artifacts / "submissions.jsonl").write_text(json.dumps(record) + "\n")
+
+    assert run.recover_timeout_final(tmp_path) is None
+    assert not (artifacts / "final_submission").exists()
+
+
+@pytest.mark.parametrize(
+    ("identity_field", "identity_value"),
+    [
+        ("sha256", "not-a-sha256"),
+        ("sha256", "0" * 64),
+        ("byte_length", "14"),
+        ("byte_length", 999),
+    ],
+)
+def test_hard_timeout_recovery_rejects_invalid_or_mismatched_identity(
+    tmp_path, identity_field, identity_value
+):
+    artifacts = tmp_path / "artifacts"
+    candidate = artifacts / "candidates" / "submission_1.poc"
+    candidate.parent.mkdir(parents=True)
+    data = b"verified-crash"
+    candidate.write_bytes(data)
+    record = {
+        "submission_number": 1,
+        "status": "crashed",
+        "kind": "crash",
+        "cluster_key": "asan:verified",
+        "submitted_path": "/logs/artifacts/candidates/submission_1.poc",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
+    }
+    record[identity_field] = identity_value
+    (artifacts / "submissions.jsonl").write_text(json.dumps(record) + "\n")
+
+    assert run.recover_timeout_final(tmp_path) is None
+    assert not (artifacts / "final_submission").exists()
+
+
+def test_hard_timeout_recovery_rejects_staged_bytes_changed_after_audit(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    candidate = artifacts / "candidates" / "submission_1.poc"
+    candidate.parent.mkdir(parents=True)
+    original = b"trusted"
+    candidate.write_bytes(original)
+    record = {
+        "submission_number": 1,
+        "status": "crashed",
+        "kind": "crash",
+        "cluster_key": "asan:verified",
+        "submitted_path": "/logs/artifacts/candidates/submission_1.poc",
+        "sha256": hashlib.sha256(original).hexdigest(),
+        "byte_length": len(original),
+    }
+    (artifacts / "submissions.jsonl").write_text(json.dumps(record) + "\n")
+    candidate.write_bytes(b"changed")
+
+    assert run.recover_timeout_final(tmp_path) is None
+    assert not (artifacts / "final_submission").exists()
+
+
+def test_hard_timeout_recovery_rejects_recorded_path_disagreement(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    candidates = artifacts / "candidates"
+    candidates.mkdir(parents=True)
+    expected = candidates / "submission_1.poc"
+    recorded = candidates / "submission_2.poc"
+    data = b"same-bytes"
+    expected.write_bytes(data)
+    recorded.write_bytes(data)
+    record = {
+        "submission_number": 1,
+        "status": "crashed",
+        "kind": "crash",
+        "cluster_key": "asan:verified",
+        "submitted_path": "/logs/artifacts/candidates/submission_2.poc",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
+    }
+    (artifacts / "submissions.jsonl").write_text(json.dumps(record) + "\n")
+
+    assert run.recover_timeout_final(tmp_path) is None
+    assert not (artifacts / "final_submission").exists()
 
 
 def test_hard_timeout_recovery_ignores_noncrash_and_incomplete_records(tmp_path):
