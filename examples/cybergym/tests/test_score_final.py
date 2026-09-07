@@ -77,7 +77,26 @@ def _write_db(path, rows: list[tuple[str, str, str]]) -> None:
         session.commit()
 
 
-def test_score_run_preserves_legacy_single_run_and_verifiable_evidence(tmp_path, monkeypatch):
+def test_score_run_rejects_metadata_free_single_run_by_default(tmp_path, monkeypatch):
+    _configure_signing(monkeypatch)
+    run_dir = tmp_path / "run"
+    _write_run(
+        run_dir,
+        "task",
+        "agent-1",
+        "arvo:1",
+        cohort_id=_MISSING,
+        evaluation_mode=_MISSING,
+    )
+    output_dir = run_dir / "official_evidence"
+
+    with pytest.raises(RuntimeError, match="cohort_id and evaluation_mode"):
+        score_run(run_dir, tmp_path / "poc.db", output_dir)
+
+    assert not output_dir.exists()
+
+
+def test_explicit_legacy_single_run_mode_produces_verifiable_evidence(tmp_path, monkeypatch):
     _configure_signing(monkeypatch)
     run_dir = tmp_path / "run"
     digest = _write_run(
@@ -92,7 +111,7 @@ def test_score_run_preserves_legacy_single_run_and_verifiable_evidence(tmp_path,
     _write_db(db_path, [("agent-1", "arvo:1", digest)])
     output_dir = run_dir / "official_evidence"
 
-    summary = score_run(run_dir, db_path, output_dir)
+    summary = score_run(run_dir, db_path, output_dir, allow_legacy_single_run=True)
 
     assert summary["official_solved"] == 1
     envelope = SignedEnvelope.model_validate_json((output_dir / "arvo_1.signed.json").read_bytes())
@@ -100,9 +119,9 @@ def test_score_run_preserves_legacy_single_run_and_verifiable_evidence(tmp_path,
     public = Ed25519PublicKey.from_public_bytes(base64.b64decode(keys["test-key"]))
     payload = Ed25519Verifier({"test-key": public}).verify(envelope)
     assert json.loads(payload)["official_solved"] is True
-    assert canonical_json(SignedEnvelope.model_validate_json(canonical_json(envelope))) == canonical_json(
-        envelope
-    )
+    assert canonical_json(
+        SignedEnvelope.model_validate_json(canonical_json(envelope))
+    ) == canonical_json(envelope)
 
 
 def test_score_run_rejects_duplicate_task_ids_before_output_mutation(tmp_path, monkeypatch):
@@ -232,7 +251,11 @@ def test_score_run_scores_valid_two_entry_strict_cohort(tmp_path, monkeypatch):
 
     summary = score_run(run_dir, db_path, output_dir)
 
-    assert (summary["task_count"], summary["official_solved"], summary["official_score"]) == (2, 2, 1)
+    assert (summary["task_count"], summary["official_solved"], summary["official_score"]) == (
+        2,
+        2,
+        1,
+    )
     assert (summary["cohort_id"], summary["evaluation_mode"]) == ("heldout-v2", "heldout")
     assert {path.name for path in output_dir.glob("*.signed.json")} == {
         _strict_evidence_name("heldout-v2", task_id, agent_id) for agent_id, task_id, _ in rows

@@ -40,7 +40,9 @@ class _ResolvedEvidence:
     fix_exit_code: int
 
 
-def _load_run_evidence(run_dir: Path) -> tuple[list[_RunEvidence], str | None]:
+def _load_run_evidence(
+    run_dir: Path, *, allow_legacy_single_run: bool = False
+) -> tuple[list[_RunEvidence], str | None]:
     args_files = sorted(run_dir.rglob("args.json"))
     if not args_files:
         raise RuntimeError(f"no args.json files found under {run_dir}")
@@ -55,8 +57,11 @@ def _load_run_evidence(run_dir: Path) -> tuple[list[_RunEvidence], str | None]:
             raise RuntimeError(f"run metadata must be an object: {args_path}")
         parsed.append((args_path, run))
 
-    strict = len(parsed) > 1 or any(
-        "cohort_id" in run or "evaluation_mode" in run for _, run in parsed
+    legacy_single_run = (
+        allow_legacy_single_run
+        and len(parsed) == 1
+        and "cohort_id" not in parsed[0][1]
+        and "evaluation_mode" not in parsed[0][1]
     )
     metadata: list[tuple[Path, str, str, str | None, Path]] = []
     task_paths: dict[str, Path] = {}
@@ -72,9 +77,11 @@ def _load_run_evidence(run_dir: Path) -> tuple[list[_RunEvidence], str | None]:
 
         cohort_id = run.get("cohort_id")
         evaluation_mode = run.get("evaluation_mode")
-        if strict:
-            if not isinstance(cohort_id, str) or not cohort_id or not isinstance(
-                evaluation_mode, str
+        if not legacy_single_run:
+            if (
+                not isinstance(cohort_id, str)
+                or not cohort_id
+                or not isinstance(evaluation_mode, str)
             ):
                 raise RuntimeError(
                     "cohort_id and evaluation_mode are required on every args.json "
@@ -92,9 +99,7 @@ def _load_run_evidence(run_dir: Path) -> tuple[list[_RunEvidence], str | None]:
 
         previous = task_paths.get(task_id)
         if previous is not None:
-            raise RuntimeError(
-                f"duplicate task_id {task_id!r} in {previous} and {args_path}"
-            )
+            raise RuntimeError(f"duplicate task_id {task_id!r} in {previous} and {args_path}")
         task_paths[task_id] = args_path
         metadata.append(
             (
@@ -112,8 +117,7 @@ def _load_run_evidence(run_dir: Path) -> tuple[list[_RunEvidence], str | None]:
     missing_artifacts = [
         args_path
         for args_path, _, _, _, final_dir in metadata
-        if not (final_dir / "selection.json").is_file()
-        or not (final_dir / "poc").is_file()
+        if not (final_dir / "selection.json").is_file() or not (final_dir / "poc").is_file()
     ]
     if missing_artifacts:
         raise RuntimeError(
@@ -199,9 +203,7 @@ def _resolve_official_records(runs: list[_RunEvidence], poc_db: Path) -> list[_R
                 .all()
             )
             matches = [
-                record
-                for record in records
-                if _matches_hash(str(record.poc_hash), item.poc_digest)
+                record for record in records if _matches_hash(str(record.poc_hash), item.poc_digest)
             ]
             if len(matches) != 1:
                 raise RuntimeError(
@@ -225,9 +227,7 @@ def _resolve_official_records(runs: list[_RunEvidence], poc_db: Path) -> list[_R
 
 def _publish_output(output_dir: Path, files: dict[str, bytes]) -> None:
     output_dir.parent.mkdir(parents=True, exist_ok=True)
-    stage = Path(
-        tempfile.mkdtemp(prefix=f".{output_dir.name}-", dir=output_dir.parent)
-    )
+    stage = Path(tempfile.mkdtemp(prefix=f".{output_dir.name}-", dir=output_dir.parent))
     try:
         for name, data in files.items():
             (stage / name).write_bytes(data)
@@ -237,10 +237,16 @@ def _publish_output(output_dir: Path, files: dict[str, bytes]) -> None:
             shutil.rmtree(stage)
 
 
-def score_run(run_dir: Path, poc_db: Path, output_dir: Path) -> dict[str, object]:
+def score_run(
+    run_dir: Path,
+    poc_db: Path,
+    output_dir: Path,
+    *,
+    allow_legacy_single_run: bool = False,
+) -> dict[str, object]:
     if output_dir.exists():
         raise FileExistsError(f"output directory already exists: {output_dir}")
-    runs, cohort_id = _load_run_evidence(run_dir)
+    runs, cohort_id = _load_run_evidence(run_dir, allow_legacy_single_run=allow_legacy_single_run)
     resolved = _resolve_official_records(runs, poc_db)
     private, key_id = _private_key()
     signer = Ed25519Signer(private_key=private, key_id=key_id)
@@ -251,9 +257,7 @@ def score_run(run_dir: Path, poc_db: Path, output_dir: Path) -> dict[str, object
     )
     files = {
         "verifiers.json": (
-            json.dumps(
-                {key_id: base64.b64encode(public_raw).decode("ascii")}, sort_keys=True
-            )
+            json.dumps({key_id: base64.b64encode(public_raw).decode("ascii")}, sort_keys=True)
             + "\n"
         ).encode(),
     }
@@ -297,8 +301,18 @@ def main() -> int:
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--poc-db", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--allow-legacy-single-run",
+        action="store_true",
+        help="Explicitly sign one pre-v2 run that has no cohort metadata",
+    )
     args = parser.parse_args()
-    summary = score_run(args.run_dir.resolve(), args.poc_db.resolve(), args.output_dir.resolve())
+    summary = score_run(
+        args.run_dir.resolve(),
+        args.poc_db.resolve(),
+        args.output_dir.resolve(),
+        allow_legacy_single_run=args.allow_legacy_single_run,
+    )
     print(json.dumps(summary, sort_keys=True))
     return 0
 
