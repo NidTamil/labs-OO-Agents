@@ -58,10 +58,11 @@ discard that stop, claim escalation, and invoke the stronger reviewer. A valid
 review enters the existing recovery state and applies guidance with effective
 `stop=False`, then resets the no-growth counter so recovery evidence is fresh.
 While recovery is active, an individual ordinary stop is deferred. A new family
-ends recovery and normal stopping resumes. If the configured number of fresh
-no-growth reviews all return a decisive stop, recovery terminates early as an
-explicit failed search; expiry without progress is the same terminal failure at
-the hard upper bound. Provider construction failure, invalid response, reviewer
+ends recovery and normal stopping resumes. If the configured number of fresh,
+consecutive no-growth reviews all return a decisive stop, recovery terminates
+early as an explicit failed search; any completed continue decision resets that
+sequence. Expiry without progress is the same terminal failure at the hard upper
+bound. Provider construction failure, invalid response, reviewer
 timeout, cleanup failure, or callback cancellation records its exact failure
 and makes the pending stop ineffective; a later, distinct successful ordinary
 review may stop after the consumed attempt. External cancellation, cooperative

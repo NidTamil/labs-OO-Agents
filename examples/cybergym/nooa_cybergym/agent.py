@@ -575,7 +575,8 @@ class CyberGymAgent(Agent, context={"state": None}):
     _shutdown_complete: Annotated[bool, hidden]
     _stagnation_review_audit: Annotated[StagnationReviewAudit | None, hidden]
     _stagnation_recovery_result: Annotated[
-        Literal["new_family", "expired_without_progress"] | None, hidden
+        Literal["new_family", "expired_without_progress", "exhausted_without_progress"] | None,
+        hidden,
     ]
 
     def __init__(self, **kwargs):
@@ -730,7 +731,7 @@ class CyberGymAgent(Agent, context={"state": None}):
 
             if should_review and current_families > 0:
                 last_reviewed_families = current_families
-                review, _ = await self._run_portfolio_review(
+                review, review_event = await self._run_portfolio_review(
                     stagnation_state, config=STAGNATION_CONFIG
                 )
                 if self._stop_event.is_set():
@@ -763,6 +764,13 @@ class CyberGymAgent(Agent, context={"state": None}):
                         review.guidance,
                         review.reasoning,
                     )
+                    if stagnation_state is not None and review_event is not None:
+                        stagnation_state.record_recovery_review(
+                            review_event,
+                            now=self._monotonic(),
+                            config=STAGNATION_CONFIG,
+                            decisive_stop=review.stop,
+                        )
                     should_stop = await self._apply_review_with_arbitration(
                         review,
                         state=stagnation_state,
@@ -773,7 +781,6 @@ class CyberGymAgent(Agent, context={"state": None}):
                         and stagnation_state.recovery_exhausted_without_progress(
                             now=self._monotonic(),
                             config=STAGNATION_CONFIG,
-                            decisive_stop=review.stop,
                         )
                     ):
                         self._record_recovery_result_if_needed(
@@ -1281,6 +1288,8 @@ class CyberGymAgent(Agent, context={"state": None}):
             "result": result,
             "submission_count": state.submission_count,
         }
+        if result == "exhausted_without_progress":
+            payload["consecutive_recovery_stop_reviews"] = state.consecutive_recovery_stop_reviews
         log = logger.info if result == "new_family" else logger.warning
         log("stagnation_recovery %s", json.dumps(payload, sort_keys=True))
         return result

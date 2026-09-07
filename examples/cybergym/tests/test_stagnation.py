@@ -217,22 +217,25 @@ def test_recovery_uses_fresh_reviews_and_can_end_early_when_exploration_is_exhau
     state.begin_recovery()
 
     assert state.consecutive_no_growth_reviews == 0
-    for expected in (1, 2):
-        state.complete_review(state.begin_review(), parsed=True)
-        assert state.consecutive_no_growth_reviews == expected
-        assert (
-            state.recovery_exhausted_without_progress(now=11, config=config, decisive_stop=True)
-            is False
-        )
+    assert state.consecutive_recovery_stop_reviews == 0
 
-    state.complete_review(state.begin_review(), parsed=True)
-    assert (
-        state.recovery_exhausted_without_progress(now=11, config=config, decisive_stop=False)
-        is False
-    )
-    assert (
-        state.recovery_exhausted_without_progress(now=11, config=config, decisive_stop=True) is True
-    )
+    for decisive_stop, expected in ((False, 0), (False, 0), (True, 1)):
+        event = state.complete_review(state.begin_review(), parsed=True)
+        state.record_recovery_review(
+            event,
+            now=11,
+            config=config,
+            decisive_stop=decisive_stop,
+        )
+        assert state.consecutive_recovery_stop_reviews == expected
+        assert state.recovery_exhausted_without_progress(now=11, config=config) is False
+
+    for expected in (2, 3):
+        event = state.complete_review(state.begin_review(), parsed=True)
+        state.record_recovery_review(event, now=11, config=config, decisive_stop=True)
+        assert state.consecutive_recovery_stop_reviews == expected
+
+    assert state.recovery_exhausted_without_progress(now=11, config=config) is True
 
 
 def test_disabled_configuration_never_claims_escalation():

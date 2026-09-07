@@ -221,12 +221,13 @@ must fit within the soft timeout.
 
 An eligible local stop is deferred and discarded while the one-shot reviewer
 claim runs. Valid guidance enters the existing recovery window with `stop=False`;
-ordinary local stops remain deferred until a new family appears or recovery
-expires. New-family progress resumes normal stopping, while expiry without
-progress fails the run. Reviewer or cleanup failure consumes the in-process
-one-shot invocation and cannot approve the pending stop; a later distinct
-ordinary review may stop. Provider telemetry may still show its separately
-bounded internal retries.
+ordinary local stops remain deferred. A configured sequence of consecutive
+decisive no-growth stops ends recovery early; any completed continue decision
+resets that sequence. New-family progress resumes normal stopping, while expiry
+without progress fails the run. Reviewer or cleanup failure consumes the
+in-process one-shot invocation and cannot approve the pending stop; a later
+distinct ordinary review may stop. Provider telemetry may still show its
+separately bounded internal retries.
 
 The effective trigger settings are recorded in `args.json` and the immutable
 pre-run policy hash. Append-only `portfolio_review_event`, `stagnation_review`,

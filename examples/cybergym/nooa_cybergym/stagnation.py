@@ -152,6 +152,7 @@ class StagnationState:
     family_count_at_escalation: int | None = None
     review_id_at_escalation: int | None = None
     consecutive_no_growth_reviews: int = 0
+    consecutive_recovery_stop_reviews: int = 0
     latest_review_id: int | None = None
     _next_review_id: int = field(default=1, init=False, repr=False)
     _last_valid_review_family_count: int | None = field(default=None, init=False, repr=False)
@@ -170,6 +171,7 @@ class StagnationState:
         if family_count > self.family_count:
             self.last_new_family_at = max(self.last_new_family_at, now)
             self.consecutive_no_growth_reviews = 0
+            self.consecutive_recovery_stop_reviews = 0
         self.submission_count = max(self.submission_count, submission_count)
         self.family_count = max(self.family_count, family_count)
 
@@ -288,13 +290,37 @@ class StagnationState:
         """End recovery after an unsuccessful callback without reopening its one-shot claim."""
         self.escalation_claimed_at = None
         self.family_count_at_escalation = None
+        self.consecutive_recovery_stop_reviews = 0
 
     def begin_recovery(self) -> None:
         """Start a fresh no-growth baseline after successful stronger guidance."""
         if self.escalation_claimed_at is None or self.family_count_at_escalation is None:
             raise RuntimeError("recovery requires a claimed escalation")
         self.consecutive_no_growth_reviews = 0
+        self.consecutive_recovery_stop_reviews = 0
         self._last_valid_review_family_count = self.family_count
+
+    def record_recovery_review(
+        self,
+        event: ReviewEvent,
+        *,
+        now: float,
+        config: StagnationConfig,
+        decisive_stop: bool,
+    ) -> bool:
+        """Record a completed current review in the active recovery stop sequence."""
+        if (
+            event.outcome != "completed"
+            or event.snapshot.review_id != self.latest_review_id
+            or event.snapshot.family_count != self.family_count
+            or not self.recovery_active(now=now, config=config)
+        ):
+            return False
+        if decisive_stop:
+            self.consecutive_recovery_stop_reviews += 1
+        else:
+            self.consecutive_recovery_stop_reviews = 0
+        return True
 
     def recovery_active(self, *, now: float, config: StagnationConfig) -> bool:
         """Return whether a claimed callback still owns an unexpired recovery window."""
@@ -319,13 +345,11 @@ class StagnationState:
         *,
         now: float,
         config: StagnationConfig,
-        decisive_stop: bool,
     ) -> bool:
         """Return whether fresh recovery reviews decisively exhausted exploration."""
         return (
-            decisive_stop
-            and self.recovery_active(now=now, config=config)
-            and self.consecutive_no_growth_reviews >= config.consecutive_no_growth_reviews
+            self.recovery_active(now=now, config=config)
+            and self.consecutive_recovery_stop_reviews >= config.consecutive_no_growth_reviews
         )
 
     def next_wakeup_at(self, *, config: StagnationConfig) -> float | None:

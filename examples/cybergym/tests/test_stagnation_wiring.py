@@ -502,7 +502,9 @@ async def test_plateau_callback_is_one_shot_and_local_stops_defer_until_progress
 
 
 @pytest.mark.asyncio
-async def test_recovery_fails_after_bounded_decisive_no_growth_reviews(monkeypatch, tmp_path):
+async def test_recovery_fails_after_consecutive_decisive_no_growth_reviews(
+    monkeypatch, tmp_path, caplog
+):
     config = _config(
         trigger_age_sec=1_000,
         minimum_submissions=1,
@@ -532,10 +534,11 @@ async def test_recovery_fails_after_bounded_decisive_no_growth_reviews(monkeypat
         async def _review(self, current_portfolio_state):
             nonlocal review_calls
             review_calls += 1
+            recovery_stop = review_calls != 6
             return agent_module.Review(
                 on_target=True,
                 guidance="no distinct path remains",
-                stop=callback_calls == 1,
+                stop=callback_calls == 1 and recovery_stop,
                 reasoning="recovery exploration is exhausted",
             )
 
@@ -554,12 +557,20 @@ async def test_recovery_fails_after_bounded_decisive_no_growth_reviews(monkeypat
             )
             return SimpleNamespace(outcome="success", cleanup_status="success")
 
-    with pytest.raises(RuntimeError, match="recovery exploration was exhausted"):
-        await ExhaustedRecoveryAgent(llm=FakeLLMClient()).solve("inert")
+    with caplog.at_level("WARNING", logger="nooa_cybergym"):
+        with pytest.raises(RuntimeError, match="recovery exploration was exhausted"):
+            await ExhaustedRecoveryAgent(llm=FakeLLMClient()).solve("inert")
 
     assert callback_calls == 1
-    assert review_calls == 7
-    assert finder_runs == 7
+    assert review_calls == 9
+    assert finder_runs == 9
+    recovery_payload = next(
+        json.loads(record.message.removeprefix("stagnation_recovery "))
+        for record in caplog.records
+        if record.message.startswith("stagnation_recovery ")
+    )
+    assert recovery_payload["result"] == "exhausted_without_progress"
+    assert recovery_payload["consecutive_recovery_stop_reviews"] == 3
 
 
 @pytest.mark.asyncio
@@ -1144,6 +1155,7 @@ async def test_callback_audit_records_opaque_trigger_claim_and_recovery_facts(mo
     state.complete_review(state.begin_review(), parsed=True)
     latest = state.begin_review()
     state.complete_review(latest, parsed=True)
+    state.consecutive_recovery_stop_reviews = 2
 
     class ImmediateReviewer:
         def __init__(self, *, llm):
@@ -1165,6 +1177,8 @@ async def test_callback_audit_records_opaque_trigger_claim_and_recovery_facts(mo
     assert audit.one_shot_claimed is True
     assert audit.one_shot_outcome == "success"
     assert audit.recovery_result == "entered"
+    assert state.consecutive_no_growth_reviews == 0
+    assert state.consecutive_recovery_stop_reviews == 0
     payload = next(
         json.loads(record.message.removeprefix("stagnation_review "))
         for record in caplog.records
