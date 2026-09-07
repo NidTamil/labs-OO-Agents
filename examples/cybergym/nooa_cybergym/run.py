@@ -65,6 +65,11 @@ except ImportError:  # pragma: no cover - script mode
         StagnationConfig,
     )
 
+try:
+    from .selection import validate_selection_metadata
+except ImportError:  # pragma: no cover - script mode
+    from selection import validate_selection_metadata  # type: ignore[no-redef]
+
 ENV_PREFIXES = (
     "NOOA_CYBERGYM_",
     "OPENAI_",
@@ -576,7 +581,18 @@ def _existing_final(log_dir: Path) -> dict[str, object] | None:
         selection = json.loads(selection_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+    if not isinstance(selection, dict):
+        return None
+    try:
+        validate_selection_metadata(selection)
+    except ValueError:
+        return None
     if selection.get("sha256") != hashlib.sha256(poc_path.read_bytes()).hexdigest():
+        return None
+    if selection.get("byte_length") != poc_path.stat().st_size:
+        return None
+    submission_number = selection.get("submission_number")
+    if not isinstance(submission_number, int) or submission_number < 1:
         return None
     return selection
 
@@ -620,7 +636,9 @@ def recover_timeout_final(log_dir: Path) -> dict[str, object] | None:
     final_dir.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".final_submission-", dir=final_dir.parent))
     selection: dict[str, object] = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "selection_source": "hard_timeout_recovery",
+        "grounds_status": "unavailable",
         "submission_number": number,
         "poc_path": "/logs/artifacts/final_submission/poc",
         "sha256": hashlib.sha256(data).hexdigest(),

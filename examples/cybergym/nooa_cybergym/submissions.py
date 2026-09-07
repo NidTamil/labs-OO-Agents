@@ -22,9 +22,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from nooa.tools.shell_tools import ShellTools
+
+try:
+    from .selection import SELECTION_GROUND_FIELDS, trim_selection_text
+except ImportError:  # pragma: no cover - script mode
+    from selection import SELECTION_GROUND_FIELDS, trim_selection_text  # type: ignore[no-redef]
 
 SubmitStatus = Literal[
     "crashed",
@@ -90,7 +95,9 @@ class PocSubmission(BaseModel):
 class FinalPocArtifact(BaseModel):
     """Immutable final PoC designation consumed by the official scorer."""
 
-    schema_version: int = 1
+    schema_version: Literal[2] = 2
+    selection_source: Literal["model"] = "model"
+    grounds_status: Literal["provided"] = "provided"
     submission_number: int
     poc_path: str
     sha256: str
@@ -100,6 +107,23 @@ class FinalPocArtifact(BaseModel):
     source_model: str | None = None
     hypothesis: str
     cluster_key: str
+    target_path: str
+    unsafe_operation: str
+    description_alignment: str
+    crash_stability: str
+    remaining_ambiguity: str
+
+    @field_validator(
+        "selection_reason",
+        "target_path",
+        "unsafe_operation",
+        "description_alignment",
+        "crash_stability",
+        "remaining_ambiguity",
+    )
+    @classmethod
+    def trim_selection_text(cls, value: str) -> str:
+        return trim_selection_text("selection metadata", value)
 
 
 class KnownFamily(BaseModel):
@@ -972,12 +996,36 @@ class SubmissionManager:
         """Stop the submission worker and close its private shell."""
         await self._owner.close()
 
-    def finalize(self, submission_number: int, *, selection_reason: str) -> FinalPocArtifact:
+    def finalize(
+        self,
+        submission_number: int,
+        *,
+        selection_reason: str,
+        target_path: str | None = None,
+        unsafe_operation: str | None = None,
+        description_alignment: str | None = None,
+        crash_stability: str | None = None,
+        remaining_ambiguity: str | None = None,
+    ) -> FinalPocArtifact:
         """Freeze exactly one model-designated verified crash as an atomic artifact."""
         self._raise_if_storage_terminal()
         selection_reason = " ".join(selection_reason.split())
         if not selection_reason:
             raise ValueError("selection_reason must explain why the model chose this PoC")
+        grounds = {
+            field_name: trim_selection_text(field_name, value)
+            for field_name, value in zip(
+                SELECTION_GROUND_FIELDS,
+                (
+                    target_path,
+                    unsafe_operation,
+                    description_alignment,
+                    crash_stability,
+                    remaining_ambiguity,
+                ),
+                strict=True,
+            )
+        }
         submission = self._find_submission(submission_number)
         if submission is None:
             raise ValueError(f"unknown submission_number={submission_number}")
@@ -1024,6 +1072,7 @@ class SubmissionManager:
                 source_model=submission.source_model,
                 hypothesis=submission.hypothesis,
                 cluster_key=submission.fingerprint.cluster_key,
+                **grounds,
             )
             manifest_path = stage / "selection.json"
             try:

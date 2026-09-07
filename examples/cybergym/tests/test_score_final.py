@@ -29,6 +29,23 @@ _DEFAULT_POLICY = {
     "version": 2,
 }
 _DEFAULT_POLICY_SHA256 = hashlib.sha256(canonical_json(_DEFAULT_POLICY)).hexdigest()
+_SELECTION_GROUND_FIELDS = (
+    "target_path",
+    "unsafe_operation",
+    "description_alignment",
+    "crash_stability",
+    "remaining_ambiguity",
+)
+_V2_MODEL_METADATA = {
+    "schema_version": 2,
+    "selection_source": "model",
+    "grounds_status": "provided",
+    "target_path": "src/pe/parser.c:parse_directory",
+    "unsafe_operation": "An unchecked length reaches the directory copy.",
+    "description_alignment": "The crash matches the described PE heap read.",
+    "crash_stability": "The fingerprint reproduced across three verifier runs.",
+    "remaining_ambiguity": "The current-run source does not expose the fixed hunk.",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -231,6 +248,119 @@ def test_explicit_legacy_single_run_mode_produces_verifiable_evidence(tmp_path, 
     assert canonical_json(
         SignedEnvelope.model_validate_json(canonical_json(envelope))
     ) == canonical_json(envelope)
+
+
+def test_selection_reader_accepts_v1_minimal_v2_forms_and_additive_keys():
+    score_final_module._validate_selection_metadata(
+        {"submission_number": 1, "sha256": "0" * 64, "byte_length": 1}
+    )
+    score_final_module._validate_selection_metadata(
+        {
+            "schema_version": 1,
+            "submission_number": 1,
+            "sha256": "0" * 64,
+            "byte_length": 1,
+        }
+    )
+    score_final_module._validate_selection_metadata(
+        {
+            **_V2_MODEL_METADATA,
+            "submission_number": 1,
+            "sha256": "0" * 64,
+            "byte_length": 1,
+            "future_artifact_detail": {"revision": 3},
+        }
+    )
+    score_final_module._validate_selection_metadata(
+        {
+            "schema_version": 2,
+            "selection_source": "hard_timeout_recovery",
+            "grounds_status": "unavailable",
+            "submission_number": 1,
+            "sha256": "0" * 64,
+            "byte_length": 1,
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "override, message",
+    [
+        ({"selection_source": "reviewer"}, "selection_source"),
+        ({"grounds_status": "unavailable"}, "combination"),
+        ({"schema_version": True}, "schema_version"),
+        ({"schema_version": 3}, "schema_version"),
+    ],
+)
+def test_selection_reader_rejects_invalid_v2_identifiers(override, message):
+    with pytest.raises(RuntimeError, match=message):
+        score_final_module._validate_selection_metadata({**_V2_MODEL_METADATA, **override})
+
+
+@pytest.mark.parametrize("field", _SELECTION_GROUND_FIELDS)
+def test_selection_reader_rejects_incomplete_or_untrimmed_v2_model_grounds(field):
+    incomplete = dict(_V2_MODEL_METADATA)
+    incomplete.pop(field)
+    with pytest.raises(RuntimeError, match=field):
+        score_final_module._validate_selection_metadata(incomplete)
+
+    with pytest.raises(RuntimeError, match=field):
+        score_final_module._validate_selection_metadata({**_V2_MODEL_METADATA, field: "  "})
+
+    with pytest.raises(RuntimeError, match=field):
+        score_final_module._validate_selection_metadata(
+            {**_V2_MODEL_METADATA, field: f" {_V2_MODEL_METADATA[field]} "}
+        )
+
+
+def test_selection_reader_rejects_model_grounds_on_timeout_recovery():
+    with pytest.raises(RuntimeError, match="must omit model selection grounds"):
+        score_final_module._validate_selection_metadata(
+            {
+                **_V2_MODEL_METADATA,
+                "selection_source": "hard_timeout_recovery",
+                "grounds_status": "unavailable",
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "field, invalid_value, message",
+    [
+        ("sha256", "f" * 64, "hash does not match"),
+        ("byte_length", 99, "length does not match"),
+    ],
+)
+def test_v2_selection_preserves_digest_and_length_rejection(
+    tmp_path, field, invalid_value, message
+):
+    run_dir = tmp_path / "run"
+    poc = b"official-final"
+    digest = hashlib.sha256(poc).hexdigest()
+    selection = {
+        **_V2_MODEL_METADATA,
+        "submission_number": 1,
+        "sha256": digest,
+        "byte_length": len(poc),
+        field: invalid_value,
+    }
+    _write_run(
+        run_dir,
+        "task",
+        "agent-1",
+        "arvo:1",
+        cohort_id=_MISSING,
+        evaluation_mode=_MISSING,
+        harness_revision=_MISSING,
+        runner_image_id=_MISSING,
+        harness_policy_sha256=_MISSING,
+        harness_policy=_MISSING,
+        poc=poc,
+        selection=selection,
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        score_final_module._load_run_evidence(run_dir, allow_legacy_single_run=True)
 
 
 def test_manifest_rejects_duplicate_roster_and_duplicate_discovered_tasks(tmp_path, monkeypatch):

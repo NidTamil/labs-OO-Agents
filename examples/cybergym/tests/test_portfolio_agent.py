@@ -25,6 +25,19 @@ from nooa.prompts import build_prompt_data  # noqa: E402
 from nooa.tracing import flush_traces  # noqa: E402
 from nooa.unifiedllm.fake import FakeLLMClient  # noqa: E402
 
+_SELECTION_GROUNDS = {
+    "target_path": "The input reaches src/pe/parser.c through parse_directory().",
+    "unsafe_operation": "The length controls a copy before the bounds check.",
+    "description_alignment": "This is the PE heap read described by the task.",
+    "crash_stability": "The same crash fingerprint reproduced on three submissions.",
+    "remaining_ambiguity": "The exact patched helper is unavailable in current-run evidence.",
+}
+_MODEL_SELECTION_IDENTIFIERS = {
+    "schema_version": 2,
+    "selection_source": "model",
+    "grounds_status": "provided",
+}
+
 
 def _unused_shell() -> SimpleNamespace:
     """Return isolated placeholder shell state for tests that never execute commands."""
@@ -605,7 +618,7 @@ def test_audit_failure_is_terminal_before_submission_state_is_accepted(tmp_path)
     with pytest.raises(cybergym_submissions.SubmissionStorageError, match="terminal"):
         asyncio.run(manager.submit(str(source), hypothesis="Must not retry."))
     with pytest.raises(cybergym_submissions.SubmissionStorageError, match="terminal"):
-        manager.finalize(1, selection_reason="Must not finalize.")
+        manager.finalize(1, selection_reason="Must not finalize.", **_SELECTION_GROUNDS)
     assert shell.calls == 1
     assert manager.submission_count == 1
 
@@ -637,7 +650,7 @@ def test_destination_failure_is_terminal_before_any_verifier_call(tmp_path):
     with pytest.raises(cybergym_submissions.SubmissionStorageError, match="terminal"):
         asyncio.run(manager.submit(str(source), hypothesis="Must not retry."))
     with pytest.raises(cybergym_submissions.SubmissionStorageError, match="terminal"):
-        manager.finalize(1, selection_reason="Must not finalize.")
+        manager.finalize(1, selection_reason="Must not finalize.", **_SELECTION_GROUNDS)
     assert shell.calls == 0
     assert manager.submission_count == 1
 
@@ -784,7 +797,7 @@ def test_finalize_rejects_fifo_without_blocking_on_open(tmp_path, monkeypatch):
     manager.FINAL_SUBMISSION_DIR = tmp_path / "final_submission"
 
     with pytest.raises(ValueError, match="not a regular file"):
-        manager.finalize(9, selection_reason="Reject FIFO.")
+        manager.finalize(9, selection_reason="Reject FIFO.", **_SELECTION_GROUNDS)
 
 
 def test_finalize_cleanup_preserves_publish_error_with_read_only_temp_files(tmp_path, monkeypatch):
@@ -823,7 +836,7 @@ def test_finalize_cleanup_preserves_publish_error_with_read_only_temp_files(tmp_
     with pytest.raises(
         cybergym_submissions.SubmissionStorageError, match="cannot publish final submission"
     ) as raised:
-        manager.finalize(10, selection_reason="Exercise cleanup.")
+        manager.finalize(10, selection_reason="Exercise cleanup.", **_SELECTION_GROUNDS)
 
     assert "manifest publish failed" in str(raised.value.__cause__)
     assert not list(tmp_path.glob(".final_submission-*"))
@@ -914,7 +927,11 @@ def test_finalize_writes_one_immutable_model_selected_poc(tmp_path):
     manager = _submission_manager(submission_count=7, submissions=[submission])
     manager.FINAL_SUBMISSION_DIR = tmp_path / "final_submission"
 
-    artifact = manager.finalize(7, selection_reason="Strongest patch-relevant crash.")
+    artifact = manager.finalize(
+        7,
+        selection_reason="Strongest patch-relevant crash.",
+        **_SELECTION_GROUNDS,
+    )
 
     final_poc = manager.FINAL_SUBMISSION_DIR / "poc"
     manifest_path = manager.FINAL_SUBMISSION_DIR / "selection.json"
@@ -922,14 +939,51 @@ def test_finalize_writes_one_immutable_model_selected_poc(tmp_path):
     manifest = json.loads(manifest_path.read_text())
     assert manifest["submission_number"] == 7
     assert manifest["selection_reason"] == "Strongest patch-relevant crash."
+    assert manifest["schema_version"] == 2
+    assert manifest["selection_source"] == "model"
+    assert manifest["grounds_status"] == "provided"
+    assert {key: manifest[key] for key in _SELECTION_GROUNDS} == _SELECTION_GROUNDS
     assert manifest["sha256"] == hashlib.sha256(b"chosen-poc").hexdigest()
     assert artifact.sha256 == manifest["sha256"]
     assert artifact.byte_length == len(staged_bytes)
     assert not final_poc.stat().st_mode & 0o222
 
     with pytest.raises(FileExistsError, match="already exists"):
-        manager.finalize(7, selection_reason="A second choice must never replace it.")
+        manager.finalize(
+            7,
+            selection_reason="A second choice must never replace it.",
+            **_SELECTION_GROUNDS,
+        )
     assert final_poc.read_bytes() == b"chosen-poc"
+
+
+@pytest.mark.parametrize("field", list(_SELECTION_GROUNDS))
+def test_finalize_rejects_missing_or_whitespace_only_model_grounds(tmp_path, field):
+    staged_bytes = b"chosen-poc"
+    source = tmp_path / "candidate.bin"
+    source.write_bytes(staged_bytes)
+    submission = cybergym_submissions.PocSubmission(
+        submission_number=7,
+        original_path=str(source),
+        submitted_path=str(source),
+        sha256=hashlib.sha256(staged_bytes).hexdigest(),
+        byte_length=len(staged_bytes),
+        status="crashed",
+        exit_code=139,
+        fingerprint=cybergym_submissions.SubmissionManager.fingerprint_output(
+            "crashed", 139, "SIGSEGV"
+        ),
+        hypothesis="The length field reaches the vulnerable copy.",
+    )
+    manager = _submission_manager(submission_count=7, submissions=[submission])
+    manager.FINAL_SUBMISSION_DIR = tmp_path / "final_submission"
+
+    for invalid_value in (None, " \t\n "):
+        grounds = {**_SELECTION_GROUNDS, field: invalid_value}
+        with pytest.raises(ValueError, match=field):
+            manager.finalize(7, selection_reason="Concrete choice.", **grounds)
+
+    assert not manager.FINAL_SUBMISSION_DIR.exists()
 
 
 def test_finalize_rejects_a_non_crashing_candidate(tmp_path):
@@ -952,7 +1006,7 @@ def test_finalize_rejects_a_non_crashing_candidate(tmp_path):
     manager.FINAL_SUBMISSION_DIR = tmp_path / "final_submission"
 
     with pytest.raises(ValueError, match="verified crash"):
-        manager.finalize(2, selection_reason="Invalid selection")
+        manager.finalize(2, selection_reason="Invalid selection", **_SELECTION_GROUNDS)
 
     assert not manager.FINAL_SUBMISSION_DIR.exists()
 
@@ -979,7 +1033,7 @@ def test_finalize_rejects_staged_identity_mismatch_without_original_fallback(tmp
     manager.FINAL_SUBMISSION_DIR = tmp_path / "final_submission"
 
     with pytest.raises(ValueError, match="staged candidate identity mismatch"):
-        manager.finalize(3, selection_reason="Expected verified identity.")
+        manager.finalize(3, selection_reason="Expected verified identity.", **_SELECTION_GROUNDS)
 
     assert not manager.FINAL_SUBMISSION_DIR.exists()
 
@@ -1002,7 +1056,7 @@ def test_finalize_requires_recorded_staged_identity(tmp_path):
     manager.FINAL_SUBMISSION_DIR = tmp_path / "final_submission"
 
     with pytest.raises(ValueError, match="recorded staged identity"):
-        manager.finalize(5, selection_reason="Must use the staged bytes.")
+        manager.finalize(5, selection_reason="Must use the staged bytes.", **_SELECTION_GROUNDS)
 
     assert not manager.FINAL_SUBMISSION_DIR.exists()
 
@@ -1035,8 +1089,10 @@ async def test_agent_uses_model_selection_to_finalize_portfolio(tmp_path, monkey
     async def choose(self, current_portfolio_state):
         assert "crash_families=1" in current_portfolio_state
         return nooa_cybergym_agent.FinalSelection(
+            **_MODEL_SELECTION_IDENTIFIERS,
             submission_number=4,
             reasoning="Most direct and reproducible trigger.",
+            **_SELECTION_GROUNDS,
         )
 
     monkeypatch.setattr(nooa_cybergym_agent.CyberGymAgent, "_select_final", choose)
@@ -1044,7 +1100,87 @@ async def test_agent_uses_model_selection_to_finalize_portfolio(tmp_path, monkey
     artifact = await agent._finalize_portfolio()
 
     assert artifact.submission_number == 4
+    assert artifact.model_dump(include=set(_SELECTION_GROUNDS)) == _SELECTION_GROUNDS
     assert (manager.FINAL_SUBMISSION_DIR / "poc").read_bytes() == b"agent-choice"
+
+
+@pytest.mark.parametrize("field", list(_SELECTION_GROUNDS))
+def test_final_selection_rejects_missing_or_whitespace_only_grounds(field):
+    incomplete = dict(_SELECTION_GROUNDS)
+    incomplete.pop(field)
+    with pytest.raises(ValueError, match=field):
+        nooa_cybergym_agent.FinalSelection(
+            **_MODEL_SELECTION_IDENTIFIERS,
+            submission_number=1,
+            reasoning="A concrete choice.",
+            **incomplete,
+        )
+
+    whitespace = {**_SELECTION_GROUNDS, field: " \t\n "}
+    with pytest.raises(ValueError, match=field):
+        nooa_cybergym_agent.FinalSelection(
+            **_MODEL_SELECTION_IDENTIFIERS,
+            submission_number=1,
+            reasoning="A concrete choice.",
+            **whitespace,
+        )
+
+
+def test_final_selection_trims_model_metadata_before_persistence():
+    selection = nooa_cybergym_agent.FinalSelection(
+        **_MODEL_SELECTION_IDENTIFIERS,
+        submission_number=1,
+        reasoning="  Concrete choice.  ",
+        **{key: f"  {value}  " for key, value in _SELECTION_GROUNDS.items()},
+    )
+
+    assert selection.reasoning == "Concrete choice."
+    assert selection.model_dump(include=set(_SELECTION_GROUNDS)) == _SELECTION_GROUNDS
+
+
+@pytest.mark.parametrize("submission_number", [0, -1, True, "1"])
+def test_final_selection_rejects_invalid_submission_identifiers(submission_number):
+    with pytest.raises(ValueError, match="submission_number"):
+        nooa_cybergym_agent.FinalSelection(
+            **_MODEL_SELECTION_IDENTIFIERS,
+            submission_number=submission_number,
+            reasoning="A concrete choice.",
+            **_SELECTION_GROUNDS,
+        )
+
+
+@pytest.mark.parametrize(
+    "field, invalid_value",
+    [
+        ("schema_version", 1),
+        ("schema_version", True),
+        ("schema_version", 2.0),
+        ("selection_source", "hard_timeout_recovery"),
+        ("grounds_status", "unavailable"),
+    ],
+)
+def test_final_selection_rejects_invalid_identifiers_and_status(field, invalid_value):
+    identifiers = {**_MODEL_SELECTION_IDENTIFIERS, field: invalid_value}
+    with pytest.raises(ValueError, match=field):
+        nooa_cybergym_agent.FinalSelection(
+            **identifiers,
+            submission_number=1,
+            reasoning="A concrete choice.",
+            **_SELECTION_GROUNDS,
+        )
+
+
+@pytest.mark.parametrize("field", list(_MODEL_SELECTION_IDENTIFIERS))
+def test_final_selection_rejects_missing_identifiers(field):
+    identifiers = dict(_MODEL_SELECTION_IDENTIFIERS)
+    identifiers.pop(field)
+    with pytest.raises(ValueError, match=field):
+        nooa_cybergym_agent.FinalSelection(
+            **identifiers,
+            submission_number=1,
+            reasoning="A concrete choice.",
+            **_SELECTION_GROUNDS,
+        )
 
 
 @pytest.mark.asyncio
@@ -1164,6 +1300,17 @@ async def test_final_selection_ranks_target_family_before_candidate_size():
     assert "generic vulnerability class is not enough" in normalized
     assert "ahead of byte size" in normalized
     assert "underspecified" in normalized
+    assert "do not invent source or patch evidence" in normalized
+    assert "schema_version=2" in normalized
+    assert "selection_source=model" in normalized
+    assert "grounds_status=provided" in normalized
+    assert normalized.index("target path and unsafe operation") < normalized.index(
+        "alignment with the vulnerability description"
+    )
+    assert normalized.index("alignment with the vulnerability description") < normalized.index(
+        "crash stability and reproducibility"
+    )
+    assert normalized.index("crash stability and reproducibility") < normalized.index("byte size")
 
 
 def test_cybergym_agents_have_isolated_shell_sessions():

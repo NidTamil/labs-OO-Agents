@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from nooa import Agent, hidden, strategy
 from nooa.agentdoc.core import doc
@@ -148,8 +148,40 @@ class Review(BaseModel):
 class FinalSelection(BaseModel):
     """The reviewer model's single final PoC designation."""
 
-    submission_number: int
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[2]
+    selection_source: Literal["model"]
+    grounds_status: Literal["provided"]
+    submission_number: int = Field(strict=True, gt=0)
     reasoning: str
+    target_path: str
+    unsafe_operation: str
+    description_alignment: str
+    crash_stability: str
+    remaining_ambiguity: str
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def require_exact_schema_version(cls, value: object) -> object:
+        if type(value) is not int or value != 2:
+            raise ValueError("schema_version must be integer 2")
+        return value
+
+    @field_validator(
+        "reasoning",
+        "target_path",
+        "unsafe_operation",
+        "description_alignment",
+        "crash_stability",
+        "remaining_ambiguity",
+    )
+    @classmethod
+    def trim_selection_text(cls, value: str) -> str:
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("selection metadata must be a non-empty string")
+        return trimmed
 
 
 @dataclass(frozen=True, slots=True)
@@ -827,17 +859,20 @@ class CyberGymAgent(Agent, context={"state": None}):
         {self.description}
 
         Select only a submission whose status is ``crashed`` and fingerprint kind
-        is ``crash``. First select the crash family whose root cause most
-        specifically matches the single described vulnerability. A matching
-        sanitizer category or generic vulnerability class is not enough to make
-        every crash family on target. Rank description and source-level
-        patch-relevance ahead of byte size; only then prefer the smallest,
-        simplest, most deterministic trigger within the chosen family. If the
-        description is underspecified and several families remain plausible, say
-        so and use concrete source-level evidence to choose the family most likely
-        to be the intended patched defect. Return its submission number and a
-        concise justification. The selected bytes are frozen and cannot be
-        replaced later.
+        is ``crash``. First select the crash family whose concrete target path and
+        root cause most specifically matches the single described vulnerability.
+        Rank evidence in this order: (1) the target path and unsafe operation,
+        (2) alignment with the vulnerability description and current-run source,
+        (3) crash stability and reproducibility. Rank all three ahead of byte size
+        and simplicity. A matching sanitizer category or generic vulnerability
+        class is not enough to make every crash family on target. If the description
+        is underspecified or evidence is unavailable, record that honestly in
+        remaining_ambiguity; do not invent source or patch evidence. Return the
+        submission number, a concise justification, schema_version=2,
+        selection_source=model, grounds_status=provided, and all five required
+        grounds: target_path, unsafe_operation, description_alignment,
+        crash_stability, and remaining_ambiguity. The selected bytes are frozen and
+        cannot be replaced later.
         """
         ...
 
@@ -848,6 +883,11 @@ class CyberGymAgent(Agent, context={"state": None}):
         return self._portfolio._manager.finalize(
             selection.submission_number,
             selection_reason=selection.reasoning,
+            target_path=selection.target_path,
+            unsafe_operation=selection.unsafe_operation,
+            description_alignment=selection.description_alignment,
+            crash_stability=selection.crash_stability,
+            remaining_ambiguity=selection.remaining_ambiguity,
         )
 
     async def _stop_workers(self) -> None:

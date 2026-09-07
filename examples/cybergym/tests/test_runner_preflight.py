@@ -833,6 +833,16 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
     assert (artifacts / "final_submission" / "poc").read_bytes() == b"tiny"
     selection = json.loads((artifacts / "final_submission" / "selection.json").read_text())
     assert selection["submission_number"] == 2
+    assert selection["schema_version"] == 2
+    assert selection["selection_source"] == "hard_timeout_recovery"
+    assert selection["grounds_status"] == "unavailable"
+    assert not {
+        "target_path",
+        "unsafe_operation",
+        "description_alignment",
+        "crash_stability",
+        "remaining_ambiguity",
+    }.intersection(selection)
     assert selection["sha256"] == hashlib.sha256(b"tiny").hexdigest()
     assert selection["cluster_key"] == "asan:b"
     assert "outer hard timeout" in selection["selection_reason"].lower()
