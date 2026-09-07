@@ -111,7 +111,6 @@ DEFAULT_MODEL_NAME = "glm-5.2"
 MAX_ITERATIONS = int(os.environ.get("NOOA_CYBERGYM_MAX_ITERATIONS", "300"))
 MAX_OUTPUT_TOKENS = int(os.environ.get("NOOA_CYBERGYM_MAX_OUTPUT_TOKENS", "384000"))
 SOFT_TIMEOUT_SEC = int(os.environ.get("NOOA_CYBERGYM_SOFT_TIMEOUT_SEC", "13920"))
-MIN_EXPLORATION_SEC = int(os.environ.get("NOOA_CYBERGYM_MIN_EXPLORATION_SEC", "1200"))
 MAX_CONCURRENT_EXPANDERS = int(os.environ.get("NOOA_CYBERGYM_MAX_CONCURRENT_EXPANDERS", "2"))
 
 
@@ -517,7 +516,6 @@ class CyberGymAgent(Agent, context={"state": None}):
     _worker_agents: Annotated[list[Agent], hidden]
     _stop_event: Annotated[asyncio.Event, hidden]
     _shutdown_complete: Annotated[bool, hidden]
-    _minimum_exploration_sec: Annotated[int, hidden]
     _stagnation_review_audit: Annotated[StagnationReviewAudit | None, hidden]
 
     def __init__(self, **kwargs):
@@ -527,7 +525,6 @@ class CyberGymAgent(Agent, context={"state": None}):
         self._worker_agents = []
         self._stop_event = asyncio.Event()
         self._shutdown_complete = False
-        self._minimum_exploration_sec = MIN_EXPLORATION_SEC
         self._stagnation_review_audit = None
 
     async def solve(self, instruction: str) -> str:
@@ -660,11 +657,7 @@ class CyberGymAgent(Agent, context={"state": None}):
                 for finder in finders:
                     finder.record_portfolio_context_if_changed("review")
 
-                # Honor stop only after the minimum exploration window has elapsed.
-                if (
-                    review.stop
-                    and (self._monotonic() - started_at) >= self._minimum_exploration_sec
-                ):
+                if review.stop:
                     break
 
             # Respawn finished finders (persistent instance, new call)
@@ -1028,9 +1021,7 @@ class CyberGymAgent(Agent, context={"state": None}):
         - guidance: free-text steering for finders — what new families to chase,
           what to avoid, what patterns look promising.
         - stop: True only if you believe further exploration won't yield new
-          distinct families. The orchestrator ignores stop during the configured
-          minimum exploration window ({self._minimum_exploration_sec} seconds),
-          then treats stop=True as decisive.
+          distinct families. The orchestrator treats stop=True as decisive.
         - reasoning: brief justification.
         - current_portfolio_state contains your review from previous portfolio review rounds under "Reviewer guidance (what to explore next)"
         """

@@ -374,7 +374,6 @@ def test_harness_policy_fingerprint_is_canonical_and_change_sensitive():
         "output_token_margin": 64_000,
         "reasoning_output_floor": 8_192,
         "summary_max_output_tokens": 16_384,
-        "min_exploration_sec": 1_200,
         "max_concurrent_expanders": 2,
         "submission_timeout_sec": 300.0,
         "submission_rate_limit": 15,

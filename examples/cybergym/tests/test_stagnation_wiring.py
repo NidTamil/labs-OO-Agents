@@ -206,6 +206,55 @@ async def test_enabled_solve_claims_once_and_enters_honest_no_final_path_at_dead
 
 
 @pytest.mark.asyncio
+async def test_reviewer_stop_finalizes_without_respawning_finished_finder(monkeypatch, tmp_path):
+    portfolio, InertSolveAgent = _patch_inert_solve(
+        monkeypatch, tmp_path, _config(model="")
+    )
+    portfolio.submissions = [
+        SimpleNamespace(
+            submission_number=1,
+            status="crashed",
+            source_agent="expander",
+            source_model="finder",
+            hypothesis="verified target crash",
+            fingerprint=SimpleNamespace(
+                kind="crash",
+                cluster_key="msan:target-family",
+                top_frames=("target_parser",),
+                summary="verified target crash",
+            ),
+            submitted_path="/workspace/submissions/poc_001",
+            original_path="/tmp/poc_001",
+        )
+    ]
+    finder_runs = 0
+    review_calls = 0
+
+    class StopAgent(InertSolveAgent):
+        async def _run_finder(self, finder):
+            nonlocal finder_runs
+            finder_runs += 1
+
+        async def _review(self, current_portfolio_state):
+            nonlocal review_calls
+            review_calls += 1
+            return agent_module.Review(
+                on_target=True,
+                guidance="portfolio exhausted",
+                stop=True,
+                reasoning="no distinct path remains",
+            )
+
+    agent = StopAgent(llm=FakeLLMClient())
+    result = await agent.solve("inert")
+
+    assert finder_runs == 1
+    assert review_calls == 1
+    assert portfolio.stop is True
+    assert "Final PoC:" in result
+
+
+@pytest.mark.asyncio
 async def test_new_family_during_recovery_resumes_normal_orchestration(monkeypatch, tmp_path):
     config = _config()
     portfolio, InertSolveAgent = _patch_inert_solve(monkeypatch, tmp_path, config)

@@ -471,18 +471,14 @@ def test_cybergym_agent_disables_default_state_context():
 
 
 @pytest.mark.asyncio
-async def test_reviewer_prompt_uses_the_effective_minimum_exploration_window():
+async def test_reviewer_prompt_makes_stop_decisive():
     agent = nooa_cybergym_agent.CyberGymAgent(llm=FakeLLMClient())
     prompt_template = inspect.getdoc(nooa_cybergym_agent.CyberGymAgent._review)
     prompt = await build_prompt_data(agent._review, "empty portfolio")
 
-    assert agent._minimum_exploration_sec == nooa_cybergym_agent.MIN_EXPLORATION_SEC
-    assert "{self._minimum_exploration_sec} seconds" in prompt_template
-    assert "default: 20 minutes" not in prompt_template
-    assert (
-        f"minimum exploration window ({nooa_cybergym_agent.MIN_EXPLORATION_SEC} seconds)"
-        in prompt.task_prompt
-    )
+    assert "minimum exploration" not in prompt_template
+    assert "minimum exploration" not in prompt.task_prompt
+    assert "treats stop=True as decisive" in prompt.task_prompt
 
 
 @pytest.mark.asyncio

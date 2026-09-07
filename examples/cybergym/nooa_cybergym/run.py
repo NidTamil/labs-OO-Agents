@@ -87,7 +87,6 @@ DEFAULT_TRACING_SHUTDOWN_TIMEOUT_SEC = 30.0
 DEFAULT_OUTER_MARGIN_SEC = 60.0
 DEFAULT_MAX_ITERATIONS = 300
 DEFAULT_MAX_OUTPUT_TOKENS = 384000
-DEFAULT_MIN_EXPLORATION_SEC = 1200
 DEFAULT_MAX_CONCURRENT_EXPANDERS = 2
 DEFAULT_CONTROL_MAX_OUTPUT_TOKENS = 16384
 DEFAULT_REQUEST_TIMEOUT_SEC = 3900
@@ -465,9 +464,6 @@ def effective_runtime_policy(
                 "NOOA_CYBERGYM_SUMMARY_MAX_OUTPUT_TOKENS",
                 DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS,
             )
-        ),
-        "min_exploration_sec": int(
-            env.get("NOOA_CYBERGYM_MIN_EXPLORATION_SEC", DEFAULT_MIN_EXPLORATION_SEC)
         ),
         "max_concurrent_expanders": int(
             env.get(
@@ -860,11 +856,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="NOOA_CYBERGYM_SOFT_TIMEOUT_SEC for the in-container agent",
     )
     parser.add_argument(
-        "--min-exploration",
-        type=int,
-        help="Seconds before reviewer stop=True may end portfolio exploration",
-    )
-    parser.add_argument(
         "--max-concurrent-expanders",
         type=int,
         help="Maximum simultaneous crash-family expander agents",
@@ -956,8 +947,6 @@ def main(argv: list[str] | None = None) -> int:
         env["NOOA_CYBERGYM_MAX_OUTPUT_TOKENS"] = str(args.max_output_tokens)
     if args.soft_timeout is not None:
         env["NOOA_CYBERGYM_SOFT_TIMEOUT_SEC"] = str(args.soft_timeout)
-    if args.min_exploration is not None:
-        env["NOOA_CYBERGYM_MIN_EXPLORATION_SEC"] = str(args.min_exploration)
     if args.max_concurrent_expanders is not None:
         env["NOOA_CYBERGYM_MAX_CONCURRENT_EXPANDERS"] = str(args.max_concurrent_expanders)
     if args.reasoning_effort:
@@ -1195,7 +1184,6 @@ def main(argv: list[str] | None = None) -> int:
         "finalization_grace": finalization_grace,
         "tracing_shutdown_timeout": tracing_shutdown_timeout,
         "outer_margin": DEFAULT_OUTER_MARGIN_SEC,
-        "min_exploration": runtime_policy["min_exploration_sec"],
         "max_concurrent_expanders": runtime_policy["max_concurrent_expanders"],
         "reasoning_effort": effective_reasoning_effort,
         **stagnation_record,
