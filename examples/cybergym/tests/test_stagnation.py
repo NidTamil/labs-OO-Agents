@@ -11,6 +11,8 @@ from examples.cybergym.nooa_cybergym.stagnation import (
     MAX_RECENT_HYPOTHESES,
     MAX_RECENT_HYPOTHESIS_CHARS,
     OTHER_AGGREGATE_LABEL,
+    ReviewEvent,
+    ReviewSnapshot,
     StagnationConfig,
     StagnationState,
     build_stagnation_snapshot,
@@ -42,6 +44,7 @@ def test_stagnation_config_defaults_are_disabled_and_behavior_preserving():
         reviewer_timeout_sec=900,
         reviewer_max_output_tokens=32768,
         recovery_window_sec=3600,
+        consecutive_no_growth_reviews=3,
     )
     assert config.enabled is False
 
@@ -67,6 +70,7 @@ def test_stagnation_config_reads_all_opt_in_environment_values():
         reviewer_timeout_sec=901,
         reviewer_max_output_tokens=32769,
         recovery_window_sec=3601,
+        consecutive_no_growth_reviews=3,
     )
     assert config.enabled is True
 
@@ -193,6 +197,126 @@ def test_disabled_configuration_never_claims_escalation():
 
     assert state.claim_escalation(now=20_000, config=StagnationConfig.from_environment({})) is False
     assert state.escalation_attempted is False
+
+
+def test_first_valid_review_establishes_a_zero_count_baseline():
+    state = StagnationState(started_at=0)
+    state.observe(now=10, submission_count=2, family_count=1)
+
+    snapshot = state.begin_review()
+
+    assert snapshot == ReviewSnapshot(review_id=1, submission_count=2, family_count=1)
+    assert state.complete_review(snapshot, parsed=True) == ReviewEvent(
+        snapshot=snapshot,
+        outcome="completed",
+        consecutive_no_growth_reviews=0,
+    )
+    assert state.consecutive_no_growth_reviews == 0
+
+
+def test_valid_unchanged_family_reviews_count_at_the_exact_plateau_threshold():
+    state = StagnationState(started_at=0)
+    config = _config(minimum_submissions=4, consecutive_no_growth_reviews=2)
+    state.observe(now=10, submission_count=3, family_count=1)
+    state.complete_review(state.begin_review(), parsed=True)
+
+    state.observe(now=20, submission_count=4, family_count=1)
+    first_no_growth = state.complete_review(state.begin_review(), parsed=True)
+    assert first_no_growth.consecutive_no_growth_reviews == 1
+    assert state.plateau_eligible(config=config) is False
+
+    second_no_growth = state.complete_review(state.begin_review(), parsed=True)
+    assert second_no_growth.consecutive_no_growth_reviews == 2
+    assert state.plateau_eligible(config=config) is True
+
+
+def test_family_growth_resets_no_growth_reviews_even_when_observed_between_reviews():
+    state = StagnationState(started_at=0)
+    state.observe(now=10, submission_count=2, family_count=1)
+    state.complete_review(state.begin_review(), parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+    assert state.consecutive_no_growth_reviews == 1
+
+    state.observe(now=20, submission_count=3, family_count=2)
+    assert state.consecutive_no_growth_reviews == 0
+
+    event = state.complete_review(state.begin_review(), parsed=True)
+    assert event.consecutive_no_growth_reviews == 0
+
+
+def test_duplicate_stale_failed_and_cancelled_reviews_never_count():
+    state = StagnationState(started_at=0)
+    state.observe(now=10, submission_count=3, family_count=1)
+    baseline = state.begin_review()
+    state.complete_review(baseline, parsed=True)
+
+    duplicate = state.complete_review(baseline, parsed=True)
+    assert duplicate.outcome == "duplicate"
+
+    failed = state.begin_review()
+    assert state.complete_review(failed, parsed=False).outcome == "failed"
+
+    cancelled = state.begin_review()
+    assert state.complete_review(cancelled, parsed=True, cancelled=True).outcome == "cancelled"
+
+    stale = state.begin_review()
+    state.observe(now=20, submission_count=4, family_count=2)
+    assert state.complete_review(stale, parsed=True).outcome == "stale"
+    assert state.consecutive_no_growth_reviews == 0
+
+
+def test_only_the_latest_review_can_complete_and_its_snapshot_is_immutable():
+    state = StagnationState(started_at=0)
+    state.observe(now=10, submission_count=3, family_count=1)
+
+    first = state.begin_review()
+    state.observe(now=11, submission_count=4, family_count=1)
+    latest = state.begin_review()
+
+    assert first == ReviewSnapshot(review_id=1, submission_count=3, family_count=1)
+    assert latest == ReviewSnapshot(review_id=2, submission_count=4, family_count=1)
+    assert state.complete_review(first, parsed=True).outcome == "stale"
+    assert state.complete_review(latest, parsed=True).outcome == "completed"
+
+
+def test_plateau_requires_one_family_and_minimum_submissions_but_not_age_or_quiet():
+    state = StagnationState(started_at=0)
+    config = _config(
+        trigger_age_sec=10_000,
+        quiet_window_sec=10_000,
+        minimum_submissions=4,
+        consecutive_no_growth_reviews=1,
+    )
+    state.observe(now=10, submission_count=3, family_count=1)
+    state.complete_review(state.begin_review(), parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+
+    assert state.plateau_eligible(config=config) is False
+    assert state.should_escalate(now=20, config=config) is False
+
+    state.observe(now=20, submission_count=4, family_count=1)
+    assert state.plateau_eligible(config=config) is True
+    assert state.escalation_reason(now=20, config=config) == "plateau"
+    assert state.should_escalate(now=20, config=config) is True
+
+
+def test_escalation_reason_reports_combined_plateau_and_age_predicates():
+    state = StagnationState(started_at=0)
+    config = _config(
+        trigger_age_sec=100,
+        quiet_window_sec=20,
+        minimum_submissions=3,
+        consecutive_no_growth_reviews=1,
+    )
+    state.observe(now=0, submission_count=3, family_count=1)
+    state.complete_review(state.begin_review(), parsed=True)
+    state.complete_review(state.begin_review(), parsed=True)
+
+    assert state.escalation_reason(now=99, config=config) == "plateau"
+    assert state.escalation_reason(now=100, config=config) == "plateau_and_age"
+    assert state.claim_escalation(now=100, config=config) is True
+    assert state.escalation_reason(now=100, config=config) is None
+    assert state.plateau_eligible(config=config) is False
 
 
 def test_snapshot_contains_only_aggregates_and_bounded_recent_hypotheses():

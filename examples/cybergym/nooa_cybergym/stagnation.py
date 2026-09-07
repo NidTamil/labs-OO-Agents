@@ -7,8 +7,8 @@ from __future__ import annotations
 import os
 from collections import Counter, deque
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Literal, Protocol
 
 ESCALATION_MODEL_ENV = "NOOA_CYBERGYM_ESCALATION_MODEL"
 ESCALATION_TRIGGER_AGE_SEC_ENV = "NOOA_CYBERGYM_ESCALATION_TRIGGER_AGE_SEC"
@@ -25,6 +25,7 @@ DEFAULT_ESCALATION_MIN_SUBMISSIONS = 20
 DEFAULT_ESCALATION_REVIEWER_TIMEOUT_SEC = 900
 DEFAULT_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS = 32768
 DEFAULT_ESCALATION_RECOVERY_WINDOW_SEC = 3600
+DEFAULT_CONSECUTIVE_NO_GROWTH_REVIEWS = 3
 
 MAX_RECENT_HYPOTHESES = 12
 MAX_RECENT_HYPOTHESIS_CHARS = 512
@@ -45,6 +46,7 @@ class StagnationConfig:
     reviewer_timeout_sec: int
     reviewer_max_output_tokens: int
     recovery_window_sec: int
+    consecutive_no_growth_reviews: int = DEFAULT_CONSECUTIVE_NO_GROWTH_REVIEWS
 
     @property
     def enabled(self) -> bool:
@@ -96,6 +98,27 @@ class StagnationConfig:
         )
 
 
+ReviewOutcome = Literal["completed", "failed", "cancelled", "duplicate", "stale"]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewSnapshot:
+    """Immutable aggregate counts captured when an ordinary review begins."""
+
+    review_id: int
+    submission_count: int
+    family_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewEvent:
+    """Terminal outcome for one ordinary review invocation."""
+
+    snapshot: ReviewSnapshot
+    outcome: ReviewOutcome
+    consecutive_no_growth_reviews: int
+
+
 STAGNATION_CONFIG = StagnationConfig.from_environment()
 ESCALATION_MODEL = STAGNATION_CONFIG.model
 ESCALATION_TRIGGER_AGE_SEC = STAGNATION_CONFIG.trigger_age_sec
@@ -117,6 +140,14 @@ class StagnationState:
     escalation_attempted: bool = False
     escalation_claimed_at: float | None = None
     family_count_at_escalation: int | None = None
+    consecutive_no_growth_reviews: int = 0
+    latest_review_id: int | None = None
+    _next_review_id: int = field(default=1, init=False, repr=False)
+    _last_valid_review_family_count: int | None = field(default=None, init=False, repr=False)
+    _review_snapshots: dict[int, ReviewSnapshot] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _resolved_review_ids: set[int] = field(default_factory=set, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.last_new_family_at is None:
@@ -127,8 +158,65 @@ class StagnationState:
         assert self.last_new_family_at is not None
         if family_count > self.family_count:
             self.last_new_family_at = max(self.last_new_family_at, now)
+            self.consecutive_no_growth_reviews = 0
         self.submission_count = max(self.submission_count, submission_count)
         self.family_count = max(self.family_count, family_count)
+
+    def begin_review(self) -> ReviewSnapshot:
+        """Capture immutable counts for a new ordinary review invocation."""
+        snapshot = ReviewSnapshot(
+            review_id=self._next_review_id,
+            submission_count=self.submission_count,
+            family_count=self.family_count,
+        )
+        self._next_review_id += 1
+        self.latest_review_id = snapshot.review_id
+        self._review_snapshots[snapshot.review_id] = snapshot
+        return snapshot
+
+    def complete_review(
+        self,
+        snapshot: ReviewSnapshot,
+        *,
+        parsed: bool,
+        cancelled: bool = False,
+    ) -> ReviewEvent:
+        """Record one result without letting failed, duplicate, or stale reviews count."""
+        issued_snapshot = self._review_snapshots.get(snapshot.review_id)
+        if snapshot.review_id in self._resolved_review_ids:
+            return self._review_event(snapshot, "duplicate")
+        if issued_snapshot != snapshot:
+            return self._review_event(snapshot, "stale")
+
+        self._resolved_review_ids.add(snapshot.review_id)
+        if cancelled:
+            return self._review_event(snapshot, "cancelled")
+        if not parsed:
+            return self._review_event(snapshot, "failed")
+        if (
+            snapshot.review_id != self.latest_review_id
+            or snapshot.family_count != self.family_count
+        ):
+            return self._review_event(snapshot, "stale")
+
+        if self._last_valid_review_family_count is None:
+            self._last_valid_review_family_count = snapshot.family_count
+        elif snapshot.family_count > self._last_valid_review_family_count:
+            self._last_valid_review_family_count = snapshot.family_count
+            self.consecutive_no_growth_reviews = 0
+        elif snapshot.family_count == self._last_valid_review_family_count:
+            self.consecutive_no_growth_reviews += 1
+        else:  # Defensive: aggregate observations are monotonic, snapshots are not trusted input.
+            return self._review_event(snapshot, "stale")
+
+        return self._review_event(snapshot, "completed")
+
+    def _review_event(self, snapshot: ReviewSnapshot, outcome: ReviewOutcome) -> ReviewEvent:
+        return ReviewEvent(
+            snapshot=snapshot,
+            outcome=outcome,
+            consecutive_no_growth_reviews=self.consecutive_no_growth_reviews,
+        )
 
     def elapsed_sec(self, *, now: float) -> float:
         """Return deterministic elapsed monotonic time."""
@@ -139,15 +227,41 @@ class StagnationState:
         assert self.last_new_family_at is not None
         return now - self.last_new_family_at
 
-    def should_escalate(self, *, now: float, config: StagnationConfig) -> bool:
-        """Return whether every inclusive escalation threshold is satisfied."""
+    def plateau_eligible(self, *, config: StagnationConfig) -> bool:
+        """Return whether completed reviews prove the configured no-growth plateau."""
         return (
-            config.enabled
-            and not self.escalation_attempted
-            and self.elapsed_sec(now=now) >= config.trigger_age_sec
-            and self.quiet_sec(now=now) >= config.quiet_window_sec
+            not self.escalation_attempted
+            and self._last_valid_review_family_count is not None
+            and self.family_count == 1
             and self.submission_count >= config.minimum_submissions
+            and self.consecutive_no_growth_reviews >= config.consecutive_no_growth_reviews
         )
+
+    def escalation_reason(self, *, now: float, config: StagnationConfig) -> str | None:
+        """Return the deterministic trigger predicate that makes escalation eligible."""
+        if (
+            not config.enabled
+            or self.escalation_attempted
+            or self.submission_count < config.minimum_submissions
+        ):
+            return None
+
+        age_eligible = (
+            self.elapsed_sec(now=now) >= config.trigger_age_sec
+            and self.quiet_sec(now=now) >= config.quiet_window_sec
+        )
+        plateau_eligible = self.plateau_eligible(config=config)
+        if plateau_eligible and age_eligible:
+            return "plateau_and_age"
+        if plateau_eligible:
+            return "plateau"
+        if age_eligible:
+            return "age"
+        return None
+
+    def should_escalate(self, *, now: float, config: StagnationConfig) -> bool:
+        """Return whether either the independent age or plateau trigger is eligible."""
+        return self.escalation_reason(now=now, config=config) is not None
 
     def claim_escalation(self, *, now: float, config: StagnationConfig) -> bool:
         """Atomically mark a single eligible attempt before later dispatch."""
