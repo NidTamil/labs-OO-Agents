@@ -12,10 +12,12 @@ Portfolio-centric design:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel
 
@@ -36,13 +38,35 @@ with hidden:
 
     from nooa.errors import GenerationError
     from nooa.runtime.sandbox.config import SandboxConfig
+    from nooa.unifiedllm.retry_config import RetryConfig
 
     try:
         from .util import install_summarizer, make_llm
     except ImportError:  # pragma: no cover
         from util import install_summarizer, make_llm  # type: ignore[no-redef]
 
+    try:
+        from .stagnation import (
+            STAGNATION_CONFIG,
+            StagnationConfig,
+            StagnationState,
+            build_stagnation_snapshot,
+        )
+        from .stagnation_reviewer import StagnationReviewer, build_stagnation_review_input
+    except ImportError:  # pragma: no cover
+        from stagnation import (  # type: ignore[no-redef]
+            STAGNATION_CONFIG,
+            StagnationConfig,
+            StagnationState,
+            build_stagnation_snapshot,
+        )
+        from stagnation_reviewer import (  # type: ignore[no-redef]
+            StagnationReviewer,
+            build_stagnation_review_input,
+        )
+
     WORKER_CELL_TIMEOUT_SEC = 60
+    REVIEWER_CLEANUP_TIMEOUT_SEC = 1.0
     WORKER_SANDBOX = SandboxConfig(
         filesystem=False,
         network=True,
@@ -120,6 +144,24 @@ class FinalSelection(BaseModel):
 
     submission_number: int
     reasoning: str
+
+
+@dataclass(frozen=True, slots=True)
+class StagnationReviewAudit:
+    """Structured, redacted status for one alternate-model attempt."""
+
+    model: str
+    outcome: Literal["success", "timeout", "failure", "cancelled"]
+    trigger_elapsed_sec: float
+    trigger_quiet_sec: float
+    review_elapsed_sec: float
+    submission_count: int
+    family_count: int
+    failure_type: str | None = None
+    cleanup_status: Literal[
+        "pending", "not_needed", "success", "timeout", "failure", "cancelled"
+    ] = "pending"
+    cleanup_failure_type: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +518,7 @@ class CyberGymAgent(Agent, context={"state": None}):
     _stop_event: Annotated[asyncio.Event, hidden]
     _shutdown_complete: Annotated[bool, hidden]
     _minimum_exploration_sec: Annotated[int, hidden]
+    _stagnation_review_audit: Annotated[StagnationReviewAudit | None, hidden]
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -485,6 +528,7 @@ class CyberGymAgent(Agent, context={"state": None}):
         self._stop_event = asyncio.Event()
         self._shutdown_complete = False
         self._minimum_exploration_sec = MIN_EXPLORATION_SEC
+        self._stagnation_review_audit = None
 
     async def solve(self, instruction: str) -> str:
         """Main solve loop."""
@@ -569,9 +613,7 @@ class CyberGymAgent(Agent, context={"state": None}):
                     finder.record_portfolio_context_if_changed("review")
 
                 # Honor stop only after the minimum exploration window has elapsed.
-                if review.stop and (
-                    time.monotonic() - started_at
-                ) >= self._minimum_exploration_sec:
+                if review.stop and (time.monotonic() - started_at) >= self._minimum_exploration_sec:
                     break
 
             # Respawn finished finders (persistent instance, new call)
@@ -714,6 +756,177 @@ class CyberGymAgent(Agent, context={"state": None}):
                 continue
             seen.add(id(resource))
             await cls._close_resource(resource)
+
+    @staticmethod
+    def _bounded_error_type(error: BaseException) -> str:
+        """Return a bounded non-message error classification for exported audits."""
+        return (type(error).__name__ or "Exception")[:128]
+
+    @staticmethod
+    def _drain_task_result(task: asyncio.Task) -> None:
+        """Consume a detached task result without logging provider-controlled text."""
+        try:
+            task.result()
+        except BaseException:
+            pass
+
+    @classmethod
+    def _cancel_and_drain_task(cls, task: asyncio.Task | None) -> None:
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        task.add_done_callback(cls._drain_task_result)
+
+    def _record_stagnation_audit(self, audit: StagnationReviewAudit) -> None:
+        self._stagnation_review_audit = audit
+        log = logger.info if audit.outcome == "success" else logger.warning
+        log("stagnation_review %s", json.dumps(asdict(audit), sort_keys=True))
+
+    async def _bounded_reviewer_cleanup(
+        self, reviewer_llm
+    ) -> tuple[Literal["not_needed", "success", "timeout", "failure"], str | None]:
+        if reviewer_llm is None:
+            return "not_needed", None
+        cleanup_task = asyncio.create_task(self._close_resource(reviewer_llm))
+        try:
+            done, _ = await asyncio.wait(
+                {cleanup_task},
+                timeout=REVIEWER_CLEANUP_TIMEOUT_SEC,
+            )
+        except asyncio.CancelledError:
+            self._cancel_and_drain_task(cleanup_task)
+            raise
+        if cleanup_task not in done:
+            self._cancel_and_drain_task(cleanup_task)
+            return "timeout", "TimeoutError"
+        try:
+            cleanup_task.result()
+        except BaseException as exc:
+            return "failure", self._bounded_error_type(exc)
+        return "success", None
+
+    @hidden
+    async def _attempt_stagnation_review(
+        self,
+        *,
+        state: StagnationState,
+        now: float,
+        config: StagnationConfig = STAGNATION_CONFIG,
+    ) -> StagnationReviewAudit | None:
+        """Claim and run the optional alternate-model review exactly once."""
+        portfolio = self._portfolio
+        if portfolio is None or not state.claim_escalation(now=now, config=config):
+            return None
+
+        attempt_started_at = time.monotonic()
+        reviewer_llm = None
+        review_task: asyncio.Task | None = None
+        pending_cancellation: asyncio.CancelledError | None = None
+        audit: StagnationReviewAudit | None = None
+        submission_count = state.submission_count
+        family_count = state.family_count
+
+        def make_audit(
+            outcome: Literal["success", "timeout", "failure", "cancelled"],
+            failure: BaseException | None = None,
+        ) -> StagnationReviewAudit:
+            return StagnationReviewAudit(
+                model=config.model,
+                outcome=outcome,
+                trigger_elapsed_sec=state.elapsed_sec(now=now),
+                trigger_quiet_sec=state.quiet_sec(now=now),
+                review_elapsed_sec=time.monotonic() - attempt_started_at,
+                submission_count=submission_count,
+                family_count=family_count,
+                failure_type=(self._bounded_error_type(failure) if failure is not None else None),
+            )
+
+        try:
+            snapshot = build_stagnation_snapshot(
+                portfolio.submissions,
+                family_count=portfolio.distinct_families,
+            )
+            submission_count = snapshot.submission_count
+            family_count = snapshot.family_count
+            review_input = build_stagnation_review_input(
+                snapshot=snapshot,
+                task_description=self.description,
+            )
+            reviewer_llm = make_llm(
+                config.model,
+                max_tokens=config.reviewer_max_output_tokens,
+                retry_config=RetryConfig(max_retries=0, rate_limit_extra_retries=0),
+            )
+            reviewer = StagnationReviewer(llm=reviewer_llm)
+            deadline = time.monotonic() + config.reviewer_timeout_sec
+            review_task = asyncio.create_task(reviewer.review(review_input))
+            try:
+                done, _ = await asyncio.wait(
+                    {review_task},
+                    timeout=max(0.0, deadline - time.monotonic()),
+                )
+            except asyncio.CancelledError as exc:
+                pending_cancellation = exc
+                audit = make_audit("cancelled", exc)
+                self._record_stagnation_audit(audit)
+                self._cancel_and_drain_task(review_task)
+            else:
+                if review_task not in done or time.monotonic() >= deadline:
+                    audit = make_audit("timeout", TimeoutError())
+                    self._record_stagnation_audit(audit)
+                    self._cancel_and_drain_task(review_task)
+                elif review_task.cancelled():
+                    audit = make_audit("failure", asyncio.CancelledError())
+                    self._record_stagnation_audit(audit)
+                else:
+                    advice = review_task.result()
+                    if time.monotonic() >= deadline:
+                        audit = make_audit("timeout", TimeoutError())
+                    else:
+                        portfolio.apply_review(
+                            Review(
+                                on_target=True,
+                                guidance=advice.guidance,
+                                stop=False,
+                                reasoning=advice.reasoning,
+                            )
+                        )
+                        audit = make_audit("success")
+                    self._record_stagnation_audit(audit)
+        except asyncio.CancelledError as exc:
+            pending_cancellation = exc
+            if audit is None:
+                audit = make_audit("cancelled", exc)
+                self._record_stagnation_audit(audit)
+            self._cancel_and_drain_task(review_task)
+        except (Exception, SystemExit) as exc:
+            audit = make_audit("failure", exc)
+            self._record_stagnation_audit(audit)
+
+        assert audit is not None
+        try:
+            cleanup_status, cleanup_failure_type = await self._bounded_reviewer_cleanup(
+                reviewer_llm
+            )
+        except asyncio.CancelledError as exc:
+            audit = replace(
+                audit,
+                cleanup_status="cancelled",
+                cleanup_failure_type=self._bounded_error_type(exc),
+            )
+            self._record_stagnation_audit(audit)
+            self._cancel_and_drain_task(review_task)
+            raise
+        audit = replace(
+            audit,
+            cleanup_status=cleanup_status,
+            cleanup_failure_type=cleanup_failure_type,
+        )
+        self._record_stagnation_audit(audit)
+        if pending_cancellation is not None:
+            raise pending_cancellation
+        return audit
 
     @hidden
     async def _review(self, current_portfolio_state: str) -> Review:

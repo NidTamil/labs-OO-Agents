@@ -51,13 +51,19 @@ SUMMARY_MAX_OUTPUT_TOKENS = int(os.environ.get("NOOA_CYBERGYM_SUMMARY_MAX_OUTPUT
 
 
 @hidden
-def make_llm(model_name: str, *, max_tokens: int = 32768, reasoning_effort: str | None = None):
+def make_llm(
+    model_name: str,
+    *,
+    max_tokens: int = 32768,
+    reasoning_effort: str | None = None,
+    retry_config: RetryConfig | None = None,
+):
     """Create an LLM client for the given model, optionally with reasoning effort."""
     if reasoning_effort is None:
         reasoning_effort = os.environ.get("NOOA_CYBERGYM_REASONING_EFFORT")
     llm = get_llm_client(
         model_name,
-        retry_config=RetryConfig(max_retries=3),
+        retry_config=retry_config or RetryConfig(max_retries=3),
         **_llm_client_kwargs(max_tokens),
     )
     if reasoning_effort:
