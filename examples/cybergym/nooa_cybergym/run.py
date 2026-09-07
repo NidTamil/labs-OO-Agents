@@ -618,7 +618,7 @@ def recover_timeout_final(log_dir: Path) -> dict[str, object] | None:
     if not log_path.is_file():
         return None
 
-    candidates: list[tuple[int, int, bytes, dict[str, object]]] = []
+    candidates: list[tuple[int, int, bytes, str, dict[str, object]]] = []
     for line in log_path.read_text(errors="replace").splitlines():
         try:
             record = json.loads(line)
@@ -631,15 +631,36 @@ def recover_timeout_final(log_dir: Path) -> dict[str, object] | None:
         except (KeyError, TypeError, ValueError):
             continue
         candidate_path = artifacts_dir / "candidates" / f"submission_{number}.poc"
-        if not candidate_path.is_file():
+        # The audit is written in-container; recovery reads the same bind mount on the host.
+        recorded_candidate_path = f"/logs/artifacts/candidates/submission_{number}.poc"
+        submitted_path = record.get("submitted_path")
+        expected_sha256 = record.get("sha256")
+        expected_byte_length = record.get("byte_length")
+        if (
+            not isinstance(submitted_path, str)
+            or not submitted_path
+            or not isinstance(expected_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+            or type(expected_byte_length) is not int
+            or expected_byte_length < 0
+        ):
             continue
-        data = candidate_path.read_bytes()
-        candidates.append((len(data), number, data, record))
+        try:
+            if submitted_path != recorded_candidate_path:
+                continue
+            if not candidate_path.is_file():
+                continue
+            data = candidate_path.read_bytes()
+        except OSError:
+            continue
+        if len(data) != expected_byte_length or hashlib.sha256(data).hexdigest() != expected_sha256:
+            continue
+        candidates.append((expected_byte_length, number, data, expected_sha256, record))
 
     if not candidates:
         return None
 
-    _, number, data, record = min(candidates, key=lambda item: (item[0], item[1]))
+    byte_length, number, data, sha256, record = min(candidates, key=lambda item: (item[0], item[1]))
     final_dir = artifacts_dir / "final_submission"
     final_dir.parent.mkdir(parents=True, exist_ok=True)
     stage = Path(tempfile.mkdtemp(prefix=".final_submission-", dir=final_dir.parent))
@@ -649,8 +670,8 @@ def recover_timeout_final(log_dir: Path) -> dict[str, object] | None:
         "grounds_status": "unavailable",
         "submission_number": number,
         "poc_path": "/logs/artifacts/final_submission/poc",
-        "sha256": hashlib.sha256(data).hexdigest(),
-        "byte_length": len(data),
+        "sha256": sha256,
+        "byte_length": byte_length,
         "selection_reason": (
             "Outer hard timeout recovery selected the smallest persisted verified crash candidate."
         ),

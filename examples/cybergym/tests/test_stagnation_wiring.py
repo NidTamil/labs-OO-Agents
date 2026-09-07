@@ -35,6 +35,16 @@ class FakeFinder:
         pass
 
 
+class TerminalStorageManager:
+    def __init__(self) -> None:
+        self.failure = agent_module.SubmissionStorageError("latched storage failure")
+        self.failed = asyncio.Event()
+
+    async def wait_for_storage_failure(self):
+        await self.failed.wait()
+        return self.failure
+
+
 def _config(**overrides) -> StagnationConfig:
     values = {
         "model": "alternate-reviewer",
@@ -740,6 +750,190 @@ async def test_callback_failure_at_recovery_expiry_preserves_terminal_claim(
     assert should_stop is False
     assert state.escalation_claimed_at == 10
     assert state.recovery_expired_without_progress(now=30, config=config) is True
+
+
+@pytest.mark.asyncio
+async def test_coincident_recovery_and_soft_expiry_fails_before_finalize_or_respawn(
+    monkeypatch, tmp_path
+):
+    config = _config(
+        trigger_age_sec=1_000,
+        consecutive_no_growth_reviews=1,
+        recovery_window_sec=20,
+    )
+    portfolio, InertSolveAgent = _patch_inert_solve(monkeypatch, tmp_path, config, fake_final=False)
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    portfolio.mark_expanded(1)
+    monkeypatch.setattr(agent_module, "SOFT_TIMEOUT_SEC", 30)
+    clock = FakeClock()
+    finder_runs = 0
+    finalize_calls = 0
+
+    class CoincidentExpiryAgent(InertSolveAgent):
+        @staticmethod
+        def _monotonic() -> float:
+            return clock.monotonic()
+
+        async def _run_finder(self, finder):
+            nonlocal finder_runs
+            finder_runs += 1
+
+        async def _wait_until(self, active, *, deadline):
+            clock.now = 10
+            done, _ = await asyncio.wait(active)
+            return done
+
+        async def _run_portfolio_review(self, state, *, config):
+            state.complete_review(state.begin_review(), parsed=True)
+            state.complete_review(state.begin_review(), parsed=True)
+            return (
+                agent_module.Review(
+                    on_target=True,
+                    guidance="defer this stop to the stronger callback",
+                    stop=True,
+                    reasoning="synthetic plateau",
+                ),
+                None,
+            )
+
+        async def _attempt_stagnation_review(self, *, state, now, config):
+            assert state.claim_escalation(now=now, config=config) is True
+            clock.now = 30
+            return SimpleNamespace(outcome="failure", cleanup_status="success")
+
+        async def _finalize_portfolio(self):
+            nonlocal finalize_calls
+            finalize_calls += 1
+            raise AssertionError("recovery expiry must prevent finalization")
+
+    agent = CoincidentExpiryAgent(llm=FakeLLMClient())
+    with pytest.raises(RuntimeError, match="stagnation recovery window ended"):
+        await agent.solve("inert")
+
+    assert finder_runs == 1
+    assert finalize_calls == 0
+    assert agent._active_tasks == set()
+
+
+@pytest.mark.asyncio
+async def test_terminal_storage_interrupts_ordinary_review_and_propagates_original_error():
+    manager = TerminalStorageManager()
+    portfolio = agent_module.Portfolio(manager)
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    review_started = asyncio.Event()
+    review_cancelled = asyncio.Event()
+
+    class HangingReviewAgent(agent_module.CyberGymAgent):
+        async def _review(self, current_portfolio_state):
+            review_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                review_cancelled.set()
+                raise
+
+    agent = HangingReviewAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+    pending = asyncio.create_task(agent._run_portfolio_review(state))
+    await review_started.wait()
+    manager.failed.set()
+
+    with pytest.raises(agent_module.SubmissionStorageError) as raised:
+        await asyncio.wait_for(pending, timeout=0.2)
+
+    assert raised.value is manager.failure
+    assert review_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_terminal_storage_interrupts_stronger_callback_and_propagates_original_error(
+    monkeypatch,
+):
+    manager = TerminalStorageManager()
+    portfolio = agent_module.Portfolio(manager)
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    review_started = asyncio.Event()
+    review_cancelled = asyncio.Event()
+
+    class HangingReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def review(self, review_input):
+            review_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                review_cancelled.set()
+                raise
+
+    agent = agent_module.CyberGymAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    agent.description = "bounded synthetic description"
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+    monkeypatch.setattr(agent_module, "make_llm", lambda *args, **kwargs: FakeLLMClient())
+    monkeypatch.setattr(agent_module, "StagnationReviewer", HangingReviewer)
+    pending = asyncio.create_task(
+        agent._attempt_stagnation_review(state=state, now=10, config=_config())
+    )
+    await review_started.wait()
+    manager.failed.set()
+
+    with pytest.raises(agent_module.SubmissionStorageError) as raised:
+        await asyncio.wait_for(pending, timeout=0.2)
+
+    assert raised.value is manager.failure
+    assert review_cancelled.is_set()
+
+
+@pytest.mark.asyncio
+async def test_terminal_storage_interrupts_callback_cleanup_and_propagates_original_error(
+    monkeypatch,
+):
+    manager = TerminalStorageManager()
+    portfolio = agent_module.Portfolio(manager)
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+    cleanup_started = asyncio.Event()
+    cleanup_cancelled = asyncio.Event()
+
+    class HangingCleanupLLM(FakeLLMClient):
+        async def aclose(self):
+            cleanup_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cleanup_cancelled.set()
+                raise
+
+    class ImmediateReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def review(self, review_input):
+            return StagnationAdvice(guidance="bounded", reasoning="bounded")
+
+    reviewer_llm = HangingCleanupLLM()
+    agent = agent_module.CyberGymAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+    agent.description = "bounded synthetic description"
+    state = agent_module.StagnationState(started_at=0)
+    state.observe(now=0, submission_count=1, family_count=1)
+    monkeypatch.setattr(agent_module, "make_llm", lambda *args, **kwargs: reviewer_llm)
+    monkeypatch.setattr(agent_module, "StagnationReviewer", ImmediateReviewer)
+    pending = asyncio.create_task(
+        agent._attempt_stagnation_review(state=state, now=10, config=_config())
+    )
+    await cleanup_started.wait()
+    manager.failed.set()
+
+    with pytest.raises(agent_module.SubmissionStorageError) as raised:
+        await asyncio.wait_for(pending, timeout=0.2)
+
+    assert raised.value is manager.failure
+    assert cleanup_cancelled.is_set()
 
 
 @pytest.mark.asyncio

@@ -841,8 +841,10 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
     artifacts = tmp_path / "artifacts"
     candidates = artifacts / "candidates"
     candidates.mkdir(parents=True)
-    (candidates / "submission_1.poc").write_bytes(b"larger-crash")
-    (candidates / "submission_2.poc").write_bytes(b"tiny")
+    first_path = candidates / "submission_1.poc"
+    second_path = candidates / "submission_2.poc"
+    first_path.write_bytes(b"larger-crash")
+    second_path.write_bytes(b"tiny")
     (candidates / "submission_3.poc").write_bytes(b"safe")
     records = [
         {
@@ -853,6 +855,9 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
             "hypothesis": "first crash",
             "kind": "crash",
             "cluster_key": "asan:a",
+            "submitted_path": "/logs/artifacts/candidates/submission_1.poc",
+            "sha256": hashlib.sha256(b"larger-crash").hexdigest(),
+            "byte_length": len(b"larger-crash"),
         },
         {
             "submission_number": 2,
@@ -862,6 +867,9 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
             "hypothesis": "small deterministic crash",
             "kind": "crash",
             "cluster_key": "asan:b",
+            "submitted_path": "/logs/artifacts/candidates/submission_2.poc",
+            "sha256": hashlib.sha256(b"tiny").hexdigest(),
+            "byte_length": len(b"tiny"),
         },
         {
             "submission_number": 3,
@@ -895,6 +903,108 @@ def test_hard_timeout_recovers_smallest_persisted_verified_crash(tmp_path):
     assert selection["cluster_key"] == "asan:b"
     assert "outer hard timeout" in selection["selection_reason"].lower()
     assert (artifacts / "output.txt").is_file()
+
+
+@pytest.mark.parametrize("missing_field", ["submitted_path", "sha256", "byte_length"])
+def test_hard_timeout_recovery_rejects_missing_persisted_identity(tmp_path, missing_field):
+    artifacts = tmp_path / "artifacts"
+    candidate = artifacts / "candidates" / "submission_1.poc"
+    candidate.parent.mkdir(parents=True)
+    data = b"verified-crash"
+    candidate.write_bytes(data)
+    record = {
+        "submission_number": 1,
+        "status": "crashed",
+        "kind": "crash",
+        "cluster_key": "asan:verified",
+        "submitted_path": "/logs/artifacts/candidates/submission_1.poc",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
+    }
+    record.pop(missing_field)
+    (artifacts / "submissions.jsonl").write_text(json.dumps(record) + "\n")
+
+    assert run.recover_timeout_final(tmp_path) is None
+    assert not (artifacts / "final_submission").exists()
+
+
+@pytest.mark.parametrize(
+    ("identity_field", "identity_value"),
+    [
+        ("sha256", "not-a-sha256"),
+        ("sha256", "0" * 64),
+        ("byte_length", "14"),
+        ("byte_length", 999),
+    ],
+)
+def test_hard_timeout_recovery_rejects_invalid_or_mismatched_identity(
+    tmp_path, identity_field, identity_value
+):
+    artifacts = tmp_path / "artifacts"
+    candidate = artifacts / "candidates" / "submission_1.poc"
+    candidate.parent.mkdir(parents=True)
+    data = b"verified-crash"
+    candidate.write_bytes(data)
+    record = {
+        "submission_number": 1,
+        "status": "crashed",
+        "kind": "crash",
+        "cluster_key": "asan:verified",
+        "submitted_path": "/logs/artifacts/candidates/submission_1.poc",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
+    }
+    record[identity_field] = identity_value
+    (artifacts / "submissions.jsonl").write_text(json.dumps(record) + "\n")
+
+    assert run.recover_timeout_final(tmp_path) is None
+    assert not (artifacts / "final_submission").exists()
+
+
+def test_hard_timeout_recovery_rejects_staged_bytes_changed_after_audit(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    candidate = artifacts / "candidates" / "submission_1.poc"
+    candidate.parent.mkdir(parents=True)
+    original = b"trusted"
+    candidate.write_bytes(original)
+    record = {
+        "submission_number": 1,
+        "status": "crashed",
+        "kind": "crash",
+        "cluster_key": "asan:verified",
+        "submitted_path": "/logs/artifacts/candidates/submission_1.poc",
+        "sha256": hashlib.sha256(original).hexdigest(),
+        "byte_length": len(original),
+    }
+    (artifacts / "submissions.jsonl").write_text(json.dumps(record) + "\n")
+    candidate.write_bytes(b"changed")
+
+    assert run.recover_timeout_final(tmp_path) is None
+    assert not (artifacts / "final_submission").exists()
+
+
+def test_hard_timeout_recovery_rejects_recorded_path_disagreement(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    candidates = artifacts / "candidates"
+    candidates.mkdir(parents=True)
+    expected = candidates / "submission_1.poc"
+    recorded = candidates / "submission_2.poc"
+    data = b"same-bytes"
+    expected.write_bytes(data)
+    recorded.write_bytes(data)
+    record = {
+        "submission_number": 1,
+        "status": "crashed",
+        "kind": "crash",
+        "cluster_key": "asan:verified",
+        "submitted_path": "/logs/artifacts/candidates/submission_2.poc",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
+    }
+    (artifacts / "submissions.jsonl").write_text(json.dumps(record) + "\n")
+
+    assert run.recover_timeout_final(tmp_path) is None
+    assert not (artifacts / "final_submission").exists()
 
 
 def test_hard_timeout_recovery_ignores_noncrash_and_incomplete_records(tmp_path):

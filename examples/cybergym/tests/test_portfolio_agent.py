@@ -236,11 +236,15 @@ def test_submit_stores_hypothesis_in_submission_and_jsonl(tmp_path):
             )
 
     manager = cybergym_submissions.SubmissionManager(shell=FakeShell())
+    manager.CANDIDATE_DIR = tmp_path / "candidates"
     manager.SUBMISSION_LOG_PATH = tmp_path / "submissions.jsonl"
     hypothesis = "A short length field reaches parse_header and overruns the heap buffer."
+    source = tmp_path / "candidate.poc"
+    source.write_bytes(b"harmless candidate")
 
-    result = asyncio.run(manager.submit("/tmp/poc", hypothesis=hypothesis))
+    result = asyncio.run(manager.submit(str(source), hypothesis=hypothesis))
 
+    assert result.status == "crashed"
     submission = manager.get_submission(result.submission_number)
     assert submission is not None
     assert submission.hypothesis == hypothesis
