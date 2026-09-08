@@ -78,6 +78,7 @@ ENV_PREFIXES = (
     "ANTHROPIC_",
     "GOOGLE_",
     "GEMINI_",
+    "KIMI_",
     "TOGETHER_",
     "NVIDIA_",
 )

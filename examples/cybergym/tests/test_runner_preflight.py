@@ -330,6 +330,12 @@ def test_firewall_domain_and_mask_map_policy_inputs_are_sanitized_and_hashed(tmp
     assert run.file_sha256(mask_map) == hashlib.sha256(b"mask-map-v1").hexdigest()
 
 
+def test_kimi_credential_is_forwarded_to_the_agent_container(monkeypatch):
+    monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
+
+    assert run.forwarded_env()["KIMI_API_KEY"] == "kimi-test-key"
+
+
 def test_firewall_start_reconciles_stale_live_domain_allowlist():
     class FakeContainer:
         def __init__(self):

@@ -26,6 +26,18 @@ def test_glm_reviewer_uses_coding_plan_endpoint_with_deep_thinking():
     assert model["extra_body"] == {"thinking": {"type": "enabled", "clear_thinking": True}}
 
 
+def test_kimi_k3_reviewer_uses_moonshot_endpoint_and_own_credential():
+    config_path = Path(__file__).parents[1] / "nooa_cybergym" / "llm_config.yaml"
+    model = yaml.safe_load(config_path.read_text())["models"]["kimi-k3"]
+
+    assert model["model_name"] == "openai/kimi-k3"
+    assert model["api_base"] == "https://api.moonshot.ai/v1"
+    assert model["api_key_env"] == "KIMI_API_KEY"
+    assert model["context_window"] == 1_000_000
+    assert model["reasoning_effort"] == "max"
+    assert model["allowed_openai_params"] == ["reasoning_effort"]
+
+
 def test_cli_default_comes_from_agent_default(monkeypatch):
     monkeypatch.setattr("sys.argv", ["main.py", "--prompt", "test"])
 
@@ -212,6 +224,7 @@ def test_orchestrator_uses_bounded_control_plane_output_cap(monkeypatch):
             {
                 "max_tokens": nooa_cybergym_main.CONTROL_MAX_OUTPUT_TOKENS,
                 "reasoning_effort": "max",
+                "provider_scoped": True,
             },
         )
     ]
