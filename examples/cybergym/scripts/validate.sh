@@ -106,9 +106,10 @@ echo "==> Validating runs under $RUN_DIR"
 for args in "${args_files[@]}"; do
   agent_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["agent_id"])' "$args")
   echo "==> verifying agent_id=$agent_id"
-  # verify_agent_result.py POSTs to /verify-agent-pocs (using $CYBERGYM_API_KEY)
-  # to run the fixed-build check, then prints each PoC record from the DB.
-  python3 "$CYBERGYM_REPO/scripts/verify_agent_result.py" \
+  # The local wrapper requires both HTTP success and a fixed-build result for
+  # every vulnerable-build crash before it prints the database records.
+  PYTHONPATH="$CYBERGYM_REPO/src${PYTHONPATH:+:$PYTHONPATH}" \
+  python3 "$AGENT_REPO/scripts/verify_agent_result_strict.py" \
     --server "$CYBERGYM_SERVER" \
     --pocdb_path "$POC_DB" \
     --agent_id "$agent_id"

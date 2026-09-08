@@ -1191,6 +1191,17 @@ class UnifiedLLM(ABC):
         if not isinstance(configured, int) or not isinstance(context_window, int):
             return
         available = context_window - self._last_prompt_tokens_actual - self._output_token_margin
+        if self._reasoning_output_floor and available < self._reasoning_output_floor:
+            stale_prompt_tokens = self._last_prompt_tokens_actual
+            # The runtime handles this signal by archiving events and rebuilding
+            # the request. Do not apply the pre-archive measurement to that retry.
+            self._last_prompt_tokens_actual = None
+            raise ValueError(
+                "context length exceeded: request has "
+                f"{stale_prompt_tokens} input tokens; context window of this model "
+                f"is {context_window} tokens and reserved output room {available} is below "
+                f"reasoning floor {self._reasoning_output_floor}"
+            )
         api_params[parameter] = max(1, min(configured, available))
 
     def _record_prompt_usage(

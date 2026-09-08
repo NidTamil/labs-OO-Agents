@@ -23,9 +23,11 @@ from examples.cybergym.nooa_cybergym.stagnation import (  # noqa: E402
 from examples.cybergym.nooa_cybergym.stagnation_reviewer import (  # noqa: E402
     MAX_ADVICE_CHARS,
     MAX_TASK_DESCRIPTION_CHARS,
+    FinalCandidateVerdict,
     StagnationAdvice,
     StagnationReviewer,
     StagnationReviewInput,
+    build_final_candidate_review_input,
     build_stagnation_review_input,
 )
 from nooa.agentdoc import doc  # noqa: E402
@@ -113,6 +115,14 @@ def _review_log_payloads(caplog) -> list[dict[str, object]]:
     ]
 
 
+def _final_review_log_payloads(caplog) -> list[dict[str, object]]:
+    return [
+        json.loads(record.message.removeprefix("final_candidate_adjudication "))
+        for record in caplog.records
+        if record.message.startswith("final_candidate_adjudication ")
+    ]
+
+
 def test_stagnation_reviewer_is_predict_only_and_has_no_worker_tools():
     strategy = StagnationReviewer.review._plan_strategy
     reviewer = StagnationReviewer(llm=FakeLLMClient())
@@ -133,6 +143,147 @@ def test_stagnation_reviewer_is_predict_only_and_has_no_worker_tools():
         StagnationAdvice(guidance="x" * (MAX_ADVICE_CHARS + 1), reasoning="bounded")
     with pytest.raises(ValueError):
         StagnationAdvice(guidance="bounded", reasoning="x" * (MAX_ADVICE_CHARS + 1))
+
+
+def test_final_candidate_approval_requires_specific_unambiguous_evidence():
+    fields = {
+        "decision": "approve",
+        "target_specificity": "specific",
+        "unresolved_ambiguity": False,
+        "target_path": "parser.c:parse_header",
+        "unsafe_operation": "length-controlled memcpy",
+        "input_structure": "header length exceeds remaining record bytes",
+        "description_alignment": "matches the described header-length disagreement",
+        "remaining_ambiguity": "none identified from current-run evidence",
+        "guidance": "freeze the strongest stable candidate",
+        "reasoning": "the stack, operation, and input structure agree",
+    }
+
+    verdict = FinalCandidateVerdict(**fields)
+
+    assert verdict.approved is True
+    with pytest.raises(ValueError, match="specific and unambiguous"):
+        FinalCandidateVerdict(**{**fields, "target_specificity": "ambiguous"})
+    with pytest.raises(ValueError, match="specific and unambiguous"):
+        FinalCandidateVerdict(**{**fields, "unresolved_ambiguity": True})
+
+
+def test_ambiguous_final_candidate_is_a_continue_decision():
+    verdict = FinalCandidateVerdict(
+        decision="continue",
+        target_specificity="ambiguous",
+        unresolved_ambiguity=True,
+        target_path="PE export parsing family",
+        unsafe_operation="invalid read",
+        input_structure="several malformed export layouts remain plausible",
+        description_alignment="generic PE parsing overlap only",
+        remaining_ambiguity="stack evidence does not isolate the described defect",
+        guidance="target the described field transition and seek a distinct stack",
+        reasoning="a vulnerable crash alone does not prove patch-specific alignment",
+    )
+
+    assert verdict.approved is False
+
+
+def test_final_candidate_input_contains_bounded_crash_evidence_without_private_fields():
+    fingerprint = SimpleNamespace(
+        kind="crash",
+        sanitizer="AddressSanitizer",
+        error_type="heap-buffer-overflow",
+        cluster_key="family-one",
+        summary="invalid read in parse_header",
+        top_frames=["parse_header parser.c:42", "load_record loader.c:18"],
+    )
+    submission = SimpleNamespace(
+        submission_number=7,
+        status="crashed",
+        source_model="finder-model",
+        hypothesis="header length exceeds remaining record bytes",
+        fingerprint=fingerprint,
+        original_path="/secret/original.poc",
+        submitted_path="/secret/submitted.poc",
+        candidate_bytes=b"private candidate bytes",
+        output_excerpt="private verifier output",
+    )
+
+    review_input = build_final_candidate_review_input(
+        submissions=[submission],
+        family_count=1,
+        task_description="header length disagreement",
+        primary_on_target=True,
+        primary_reasoning="stack appears aligned",
+    )
+
+    assert review_input.family_count == 1
+    assert review_input.families[0].top_frames == (
+        "parse_header parser.c:42",
+        "load_record loader.c:18",
+    )
+    serialized = repr(review_input.model_dump())
+    assert "/secret/" not in serialized
+    assert "private candidate bytes" not in serialized
+    assert "private verifier output" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_final_candidate_timeout_does_not_wait_for_cancellation_suppressing_reviewer(
+    monkeypatch, caplog
+):
+    agent = _agent_with_portfolio()
+    reviewer_llm = CloseableLLM()
+    reviewer_started = asyncio.Event()
+    cancellation_seen = asyncio.Event()
+    release_late_result = asyncio.Event()
+
+    class FakeReviewer:
+        def __init__(self, *, llm):
+            self.llm = llm
+
+        async def adjudicate_final(self, review_input):
+            reviewer_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancellation_seen.set()
+                await release_late_result.wait()
+                return FinalCandidateVerdict(
+                    decision="approve",
+                    target_specificity="specific",
+                    unresolved_ambiguity=False,
+                    target_path="late path",
+                    unsafe_operation="late operation",
+                    input_structure="late structure",
+                    description_alignment="late alignment",
+                    remaining_ambiguity="none",
+                    guidance="late guidance",
+                    reasoning="late result must be ignored",
+                )
+
+    monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
+    monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
+    review = nooa_cybergym_agent.Review(
+        on_target=True,
+        guidance="primary stop",
+        stop=True,
+        reasoning="candidate",
+    )
+
+    with caplog.at_level("WARNING", logger="nooa_cybergym"):
+        attempt = asyncio.create_task(
+            agent._attempt_final_candidate_review(
+                review, config=_config(reviewer_timeout_sec=0.001)
+            )
+        )
+        await asyncio.wait_for(reviewer_started.wait(), timeout=1)
+        await asyncio.wait_for(cancellation_seen.wait(), timeout=1)
+        verdict = await asyncio.wait_for(attempt, timeout=0.1)
+
+    assert verdict is None
+    assert reviewer_llm.closed == 1
+    payloads = _final_review_log_payloads(caplog)
+    assert len(payloads) == 1
+    assert payloads[0]["outcome"] == "timeout"
+    release_late_result.set()
 
 
 def test_stagnation_review_input_is_structurally_bounded_and_excludes_sensitive_fields():

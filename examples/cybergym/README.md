@@ -194,6 +194,7 @@ the single-task command above:
 --escalation-trigger-age 7200 \
 --escalation-quiet-window 1800 \
 --escalation-min-submissions 20 \
+--escalation-submission-trigger 100 \
 --escalation-reviewer-timeout 900 \
 --escalation-reviewer-max-output-tokens 32768 \
 --escalation-recovery-window 3600 \
@@ -206,18 +207,20 @@ the single-task command above:
 --cohort-authority-keys /secure/cohort-authority-keys.json
 ```
 
-`--escalation-consecutive-no-growth-reviews` overrides
+`--escalation-submission-trigger` and
+`--escalation-consecutive-no-growth-reviews` override
+`NOOA_CYBERGYM_ESCALATION_SUBMISSION_TRIGGER` and
 `NOOA_CYBERGYM_ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS` when both are set.
 
-The numeric values shown are the defaults. Escalation has two independent
+The numeric values shown are the defaults. Escalation has three independent
 triggers after the minimum submission count: the configured age plus quiet
-window, or exactly one verified family followed by the configured number of
-completed no-growth reviews. The first valid review establishes a baseline;
-family growth resets the count, and stale, failed, cancelled, or duplicate
-reviews never count. If both predicates hold, the audit reason is
-`plateau_and_age`; otherwise it is `age` or `plateau`. Reviewer timeout must be
-strictly shorter than the recovery window, and the age plus recovery window
-must fit within the soft timeout.
+window, 100 submissions, or exactly one verified family followed by the
+configured number of completed no-growth reviews. The submission-volume trigger
+does not wait for the age clock. The first valid review establishes the plateau
+baseline; family growth resets the count, and stale, failed, cancelled, or
+duplicate reviews never count. Reviewer timeout must be strictly shorter than
+the recovery window, and the age plus recovery window must fit within the soft
+timeout.
 
 An eligible local stop is deferred and discarded while the one-shot reviewer
 claim runs. Valid guidance enters the existing recovery window with `stop=False`;
@@ -228,6 +231,18 @@ without progress fails the run. Reviewer or cleanup failure consumes the
 in-process one-shot invocation and cannot approve the pending stop; a later
 distinct ordinary review may stop. Provider telemetry may still show its
 separately bounded internal retries.
+
+Every otherwise eligible primary stop is independently adjudicated against a
+bounded snapshot of current-run crash families. Approval requires a specific
+target path, unsafe operation, triggering input structure, and no unresolved
+ambiguity. Rejection, timeout, parse failure, or provider failure keeps the run
+open and supplies continued-search guidance. Fixed-build data and prior-run
+artifacts are never available to this adjudicator.
+
+The main client also reserves a 16,384-token reasoning floor using the
+provider-reported prompt count. If the next request would fall below that floor,
+the client raises the normal context-window signal so the runtime archives old
+events and rebuilds the request before calling the provider.
 
 The effective trigger settings are recorded in `args.json` and the immutable
 pre-run policy hash. Append-only `portfolio_review_event`, `stagnation_review`,

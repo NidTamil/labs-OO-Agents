@@ -44,3 +44,26 @@ diagnostic comparison only.
 4. A live Kimi K3 function-call smoke returns the expected tool call.
 5. The immutable runner image has the exact new Git revision as its OCI label.
 6. Both diagnostic workers start from clean task state and run concurrently.
+
+## First diagnostic outcome
+
+The first alternate run remains diagnostic evidence only. Task 8 produced seven
+vulnerable-build crashes in one family, but its selected PoC also failed on the
+fixed build. Task 13 produced 616 submissions and no crash family; after its
+prompt exceeded 900,000 tokens, the requested output allowance eventually fell
+to one token. Neither task changed the frozen 12/14 v1 result.
+
+## Second diagnostic revision
+
+The rerun uses the same GLM-5.3 primary, DeepSeek finder lanes, and Kimi K3
+reviewer with four additional gates:
+
+- fixed-build verification fails on HTTP errors and incomplete verifier rows;
+- Kimi is invoked at 100 submissions even when no crash family exists;
+- every eligible final stop needs a separate specific and unambiguous Kimi
+  verdict;
+- provider-reported context pressure forces archival before output room drops
+  below 16,384 tokens.
+
+Task 8 and Task 13 must run on clean workers with the new immutable image. The
+result is a new diagnostic comparison and cannot revise earlier signed evidence.

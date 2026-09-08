@@ -27,6 +27,7 @@ def _config(**overrides) -> StagnationConfig:
         "trigger_age_sec": 100,
         "quiet_window_sec": 20,
         "minimum_submissions": 3,
+        "submission_trigger_count": 100,
         "reviewer_timeout_sec": 900,
         "reviewer_max_output_tokens": 32768,
         "recovery_window_sec": 3600,
@@ -43,6 +44,7 @@ def test_stagnation_config_defaults_are_disabled_and_behavior_preserving():
         trigger_age_sec=7200,
         quiet_window_sec=1800,
         minimum_submissions=20,
+        submission_trigger_count=100,
         reviewer_timeout_sec=900,
         reviewer_max_output_tokens=32768,
         recovery_window_sec=3600,
@@ -58,6 +60,7 @@ def test_stagnation_config_reads_all_opt_in_environment_values():
             "NOOA_CYBERGYM_ESCALATION_TRIGGER_AGE_SEC": "101",
             "NOOA_CYBERGYM_ESCALATION_QUIET_WINDOW_SEC": "21",
             "NOOA_CYBERGYM_ESCALATION_MIN_SUBMISSIONS": "4",
+            "NOOA_CYBERGYM_ESCALATION_SUBMISSION_TRIGGER": "101",
             "NOOA_CYBERGYM_ESCALATION_REVIEWER_TIMEOUT_SEC": "901",
             "NOOA_CYBERGYM_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS": "32769",
             "NOOA_CYBERGYM_ESCALATION_RECOVERY_WINDOW_SEC": "3601",
@@ -70,12 +73,35 @@ def test_stagnation_config_reads_all_opt_in_environment_values():
         trigger_age_sec=101,
         quiet_window_sec=21,
         minimum_submissions=4,
+        submission_trigger_count=101,
         reviewer_timeout_sec=901,
         reviewer_max_output_tokens=32769,
         recovery_window_sec=3601,
         consecutive_no_growth_reviews=5,
     )
     assert config.enabled is True
+
+
+def test_submission_volume_triggers_at_exact_boundary_with_zero_families():
+    state = StagnationState(started_at=0)
+    config = _config(trigger_age_sec=10_000, submission_trigger_count=100)
+    state.observe(now=10, submission_count=99, family_count=0)
+
+    assert state.escalation_reason(now=10, config=config) is None
+
+    state.observe(now=11, submission_count=100, family_count=0)
+
+    assert state.escalation_reason(now=11, config=config) == "submission_volume"
+    assert state.claim_escalation(now=11, config=config) is True
+    assert state.escalation_reason(now=12, config=config) is None
+
+
+def test_submission_volume_trigger_needs_no_clock_wakeup():
+    state = StagnationState(started_at=0)
+    config = _config(trigger_age_sec=10_000, submission_trigger_count=100)
+    state.observe(now=10, submission_count=100, family_count=0)
+
+    assert state.next_wakeup_at(config=config) == 10
 
 
 def test_stagnation_config_rejects_non_integer_no_growth_environment_value():

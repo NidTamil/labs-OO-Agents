@@ -59,7 +59,7 @@ def test_llm_client_kwargs_uses_gateway_env(monkeypatch):
     assert kwargs["api_base"] == nooa_cybergym_main.DEFAULT_API_BASE
     assert kwargs["max_tokens"] == 32768
     assert kwargs["output_token_margin"] == 64000
-    assert kwargs["reasoning_output_floor"] == 8192
+    assert kwargs["reasoning_output_floor"] == 16384
     assert kwargs["usage_log_path"] == "/logs/artifacts/llm_usage.jsonl"
     assert "reasoning" not in kwargs
     assert "reasoning_effort" not in kwargs
@@ -101,7 +101,7 @@ def test_summarizer_has_independent_llm_with_thinking_disabled(monkeypatch):
     config = installed["install_kwargs"]["config"]
     assert config.context_window == 1_000_000
     assert config.output_margin == 64_000
-    assert config.reasoning_output_floor == 8_192
+    assert config.reasoning_output_floor == 16_384
 
 
 def test_reasoning_effort_uses_responses_shape_from_registry_config():

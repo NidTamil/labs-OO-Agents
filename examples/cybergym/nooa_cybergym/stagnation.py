@@ -14,6 +14,7 @@ ESCALATION_MODEL_ENV = "NOOA_CYBERGYM_ESCALATION_MODEL"
 ESCALATION_TRIGGER_AGE_SEC_ENV = "NOOA_CYBERGYM_ESCALATION_TRIGGER_AGE_SEC"
 ESCALATION_QUIET_WINDOW_SEC_ENV = "NOOA_CYBERGYM_ESCALATION_QUIET_WINDOW_SEC"
 ESCALATION_MIN_SUBMISSIONS_ENV = "NOOA_CYBERGYM_ESCALATION_MIN_SUBMISSIONS"
+ESCALATION_SUBMISSION_TRIGGER_ENV = "NOOA_CYBERGYM_ESCALATION_SUBMISSION_TRIGGER"
 ESCALATION_REVIEWER_TIMEOUT_SEC_ENV = "NOOA_CYBERGYM_ESCALATION_REVIEWER_TIMEOUT_SEC"
 ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV = "NOOA_CYBERGYM_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS"
 ESCALATION_RECOVERY_WINDOW_SEC_ENV = "NOOA_CYBERGYM_ESCALATION_RECOVERY_WINDOW_SEC"
@@ -25,6 +26,7 @@ DEFAULT_ESCALATION_MODEL = ""
 DEFAULT_ESCALATION_TRIGGER_AGE_SEC = 7200
 DEFAULT_ESCALATION_QUIET_WINDOW_SEC = 1800
 DEFAULT_ESCALATION_MIN_SUBMISSIONS = 20
+DEFAULT_ESCALATION_SUBMISSION_TRIGGER = 100
 DEFAULT_ESCALATION_REVIEWER_TIMEOUT_SEC = 900
 DEFAULT_ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS = 32768
 DEFAULT_ESCALATION_RECOVERY_WINDOW_SEC = 3600
@@ -49,6 +51,7 @@ class StagnationConfig:
     reviewer_timeout_sec: int
     reviewer_max_output_tokens: int
     recovery_window_sec: int
+    submission_trigger_count: int = DEFAULT_ESCALATION_SUBMISSION_TRIGGER
     consecutive_no_growth_reviews: int = DEFAULT_CONSECUTIVE_NO_GROWTH_REVIEWS
 
     @property
@@ -98,6 +101,12 @@ class StagnationConfig:
                     str(DEFAULT_ESCALATION_RECOVERY_WINDOW_SEC),
                 )
             ),
+            submission_trigger_count=int(
+                source.get(
+                    ESCALATION_SUBMISSION_TRIGGER_ENV,
+                    str(DEFAULT_ESCALATION_SUBMISSION_TRIGGER),
+                )
+            ),
             consecutive_no_growth_reviews=int(
                 source.get(
                     ESCALATION_CONSECUTIVE_NO_GROWTH_REVIEWS_ENV,
@@ -145,6 +154,7 @@ class StagnationState:
 
     started_at: float
     last_new_family_at: float | None = None
+    last_observed_at: float | None = None
     submission_count: int = 0
     family_count: int = 0
     escalation_attempted: bool = False
@@ -164,10 +174,14 @@ class StagnationState:
     def __post_init__(self) -> None:
         if self.last_new_family_at is None:
             self.last_new_family_at = self.started_at
+        if self.last_observed_at is None:
+            self.last_observed_at = self.started_at
 
     def observe(self, *, now: float, submission_count: int, family_count: int) -> None:
         """Record aggregate progress and reset quiet time only for a new family."""
         assert self.last_new_family_at is not None
+        assert self.last_observed_at is not None
+        self.last_observed_at = max(self.last_observed_at, now)
         if family_count > self.family_count:
             self.last_new_family_at = max(self.last_new_family_at, now)
             self.consecutive_no_growth_reviews = 0
@@ -263,7 +277,10 @@ class StagnationState:
             self.elapsed_sec(now=now) >= config.trigger_age_sec
             and self.quiet_sec(now=now) >= config.quiet_window_sec
         )
+        submission_volume_eligible = self.submission_count >= config.submission_trigger_count
         plateau_eligible = self.plateau_eligible(config=config)
+        if submission_volume_eligible:
+            return "submission_volume"
         if plateau_eligible and age_eligible:
             return "plateau_and_age"
         if plateau_eligible:
@@ -366,6 +383,9 @@ class StagnationState:
         assert self.last_new_family_at is not None
         if self.submission_count < config.minimum_submissions:
             return None
+        if self.submission_count >= config.submission_trigger_count:
+            assert self.last_observed_at is not None
+            return self.last_observed_at
         return max(
             self.started_at + config.trigger_age_sec,
             self.last_new_family_at + config.quiet_window_sec,

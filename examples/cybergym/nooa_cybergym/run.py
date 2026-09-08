@@ -51,6 +51,7 @@ try:
         ESCALATION_RECOVERY_WINDOW_SEC_ENV,
         ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV,
         ESCALATION_REVIEWER_TIMEOUT_SEC_ENV,
+        ESCALATION_SUBMISSION_TRIGGER_ENV,
         ESCALATION_TRIGGER_AGE_SEC_ENV,
         StagnationConfig,
     )
@@ -63,6 +64,7 @@ except ImportError:  # pragma: no cover - script mode
         ESCALATION_RECOVERY_WINDOW_SEC_ENV,
         ESCALATION_REVIEWER_MAX_OUTPUT_TOKENS_ENV,
         ESCALATION_REVIEWER_TIMEOUT_SEC_ENV,
+        ESCALATION_SUBMISSION_TRIGGER_ENV,
         ESCALATION_TRIGGER_AGE_SEC_ENV,
         StagnationConfig,
     )
@@ -100,7 +102,7 @@ DEFAULT_MAX_CONCURRENT_EXPANDERS = 2
 DEFAULT_CONTROL_MAX_OUTPUT_TOKENS = 16384
 DEFAULT_REQUEST_TIMEOUT_SEC = 3900
 DEFAULT_OUTPUT_TOKEN_MARGIN = 64000
-DEFAULT_REASONING_OUTPUT_FLOOR = 8192
+DEFAULT_REASONING_OUTPUT_FLOOR = 16384
 DEFAULT_SUMMARY_MAX_OUTPUT_TOKENS = 16384
 DEFAULT_SUBMISSION_TIMEOUT_SEC = 300.0
 DEFAULT_SUBMISSION_RATE_LIMIT = 15
@@ -113,6 +115,7 @@ ESCALATION_ARG_ENV = (
     ("escalation_trigger_age", ESCALATION_TRIGGER_AGE_SEC_ENV),
     ("escalation_quiet_window", ESCALATION_QUIET_WINDOW_SEC_ENV),
     ("escalation_min_submissions", ESCALATION_MIN_SUBMISSIONS_ENV),
+    ("escalation_submission_trigger", ESCALATION_SUBMISSION_TRIGGER_ENV),
     ("escalation_reviewer_timeout", ESCALATION_REVIEWER_TIMEOUT_SEC_ENV),
     (
         "escalation_reviewer_max_output_tokens",
@@ -129,7 +132,7 @@ ESCALATION_ARG_ENV = (
 def resolve_stagnation_config(args: argparse.Namespace, env: dict[str, str]) -> StagnationConfig:
     """Apply explicit CLI overrides and return the effective container config."""
     for argument, environment_name in ESCALATION_ARG_ENV:
-        value = getattr(args, argument)
+        value = getattr(args, argument, None)
         if value is not None:
             env[environment_name] = str(value)
     return StagnationConfig.from_environment(env)
@@ -143,6 +146,7 @@ def stagnation_args_record(config: StagnationConfig) -> dict[str, object]:
         "escalation_trigger_age_sec": config.trigger_age_sec,
         "escalation_quiet_window_sec": config.quiet_window_sec,
         "escalation_min_submissions": config.minimum_submissions,
+        "escalation_submission_trigger_count": config.submission_trigger_count,
         "escalation_reviewer_timeout_sec": config.reviewer_timeout_sec,
         "escalation_reviewer_max_output_tokens": config.reviewer_max_output_tokens,
         "escalation_recovery_window_sec": config.recovery_window_sec,
@@ -542,6 +546,7 @@ def validate_stagnation_preflight(
         "trigger_age_sec": config.trigger_age_sec,
         "quiet_window_sec": config.quiet_window_sec,
         "minimum_submissions": config.minimum_submissions,
+        "submission_trigger_count": config.submission_trigger_count,
         "reviewer_timeout_sec": config.reviewer_timeout_sec,
         "reviewer_max_output_tokens": config.reviewer_max_output_tokens,
         "recovery_window_sec": config.recovery_window_sec,
@@ -950,6 +955,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--escalation-min-submissions",
         type=int,
         help="Minimum submissions before v2 escalation",
+    )
+    parser.add_argument(
+        "--escalation-submission-trigger",
+        type=int,
+        help="Submission count that triggers an early alternate review",
     )
     parser.add_argument(
         "--escalation-reviewer-timeout",

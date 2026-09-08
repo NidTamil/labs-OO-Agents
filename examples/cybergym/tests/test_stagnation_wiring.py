@@ -108,6 +108,21 @@ def _patch_inert_solve(monkeypatch, tmp_path, config: StagnationConfig, *, fake_
         async def shutdown(self):
             self._shutdown_complete = True
 
+        async def _attempt_final_candidate_review(self, review, *, config):
+            """Make legacy orchestration fixtures explicit about final approval."""
+            return agent_module.FinalCandidateVerdict(
+                decision="approve",
+                target_specificity="specific",
+                unresolved_ambiguity=False,
+                target_path="parser.c:parse_header",
+                unsafe_operation="length-controlled memcpy",
+                input_structure="header length exceeds remaining record bytes",
+                description_alignment="exact described header-length disagreement",
+                remaining_ambiguity="none identified from fixture evidence",
+                guidance=review.guidance,
+                reasoning="fixture explicitly approves the synthetic candidate",
+            )
+
     if fake_final:
 
         class InertSolveAgentWithFinal(InertSolveAgent):
@@ -823,6 +838,111 @@ async def test_callback_failure_at_recovery_expiry_preserves_terminal_claim(
     assert should_stop is False
     assert state.escalation_claimed_at == 10
     assert state.recovery_expired_without_progress(now=30, config=config) is True
+
+
+@pytest.mark.asyncio
+async def test_final_candidate_rejection_suppresses_primary_stop_and_applies_guidance():
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+
+    class RejectingAgent(agent_module.CyberGymAgent):
+        async def _attempt_final_candidate_review(self, review, *, config):
+            return agent_module.FinalCandidateVerdict(
+                decision="continue",
+                target_specificity="ambiguous",
+                unresolved_ambiguity=True,
+                target_path="broad parser path",
+                unsafe_operation="generic invalid read",
+                input_structure="several malformed layouts",
+                description_alignment="only broad overlap",
+                remaining_ambiguity="the described field transition is not isolated",
+                guidance="seek a stack tied to the described field transition",
+                reasoning="the current crash family is insufficiently specific",
+            )
+
+    agent = RejectingAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+
+    should_stop = await agent._apply_review_with_arbitration(
+        agent_module.Review(
+            on_target=True,
+            guidance="primary says stop",
+            stop=True,
+            reasoning="one broad family exists",
+        ),
+        state=agent_module.StagnationState(started_at=0),
+        config=_config(),
+    )
+
+    assert should_stop is False
+    assert portfolio.stop is False
+    assert portfolio.guidance == "seek a stack tied to the described field transition"
+
+
+@pytest.mark.asyncio
+async def test_final_candidate_reviewer_failure_fails_closed():
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+
+    class FailingAgent(agent_module.CyberGymAgent):
+        async def _attempt_final_candidate_review(self, review, *, config):
+            return None
+
+    agent = FailingAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+
+    should_stop = await agent._apply_review_with_arbitration(
+        agent_module.Review(
+            on_target=True,
+            guidance="primary says stop",
+            stop=True,
+            reasoning="candidate exists",
+        ),
+        state=agent_module.StagnationState(started_at=0),
+        config=_config(),
+    )
+
+    assert should_stop is False
+    assert portfolio.stop is False
+    assert "independently confirmed" in portfolio.guidance
+
+
+@pytest.mark.asyncio
+async def test_specific_unambiguous_final_candidate_allows_stop():
+    portfolio = agent_module.Portfolio(SimpleNamespace())
+    portfolio.submissions = [_crash_submission(1, "family-one")]
+
+    class ApprovingAgent(agent_module.CyberGymAgent):
+        async def _attempt_final_candidate_review(self, review, *, config):
+            return agent_module.FinalCandidateVerdict(
+                decision="approve",
+                target_specificity="specific",
+                unresolved_ambiguity=False,
+                target_path="parser.c:parse_header",
+                unsafe_operation="length-controlled memcpy",
+                input_structure="header length exceeds remaining record bytes",
+                description_alignment="exact described header-length disagreement",
+                remaining_ambiguity="none identified from current-run evidence",
+                guidance="freeze the strongest stable candidate",
+                reasoning="stack, operation, and input structure agree",
+            )
+
+    agent = ApprovingAgent(llm=FakeLLMClient())
+    agent._portfolio = portfolio
+
+    should_stop = await agent._apply_review_with_arbitration(
+        agent_module.Review(
+            on_target=True,
+            guidance="primary says stop",
+            stop=True,
+            reasoning="specific candidate exists",
+        ),
+        state=agent_module.StagnationState(started_at=0),
+        config=_config(),
+    )
+
+    assert should_stop is True
+    assert portfolio.stop is True
 
 
 @pytest.mark.asyncio

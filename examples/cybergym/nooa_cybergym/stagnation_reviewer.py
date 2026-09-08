@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from collections.abc import Iterable
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from nooa import Agent, strategy
 from nooa.config.strategy_config import PredictConfig
@@ -31,6 +32,8 @@ except ImportError:  # pragma: no cover
 
 MAX_ADVICE_CHARS = 4096
 MAX_TASK_DESCRIPTION_CHARS = 8192
+MAX_CRASH_FAMILIES = 16
+MAX_CRASH_FRAMES = 8
 
 BoundedLabel = Annotated[str, Field(min_length=1, max_length=MAX_AGGREGATE_LABEL_CHARS)]
 BoundedCount = Annotated[int, Field(ge=0)]
@@ -90,6 +93,144 @@ class StagnationAdvice(BaseModel):
         return stripped
 
 
+class FinalCandidateVerdict(BaseModel):
+    """Independent, fail-closed decision on a primary model's stop proposal."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approve", "continue"]
+    target_specificity: Literal["specific", "ambiguous", "off_target"]
+    unresolved_ambiguity: bool
+    target_path: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
+    unsafe_operation: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
+    input_structure: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
+    description_alignment: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
+    remaining_ambiguity: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
+    guidance: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
+    reasoning: str = Field(min_length=1, max_length=MAX_ADVICE_CHARS)
+
+    @field_validator(
+        "target_path",
+        "unsafe_operation",
+        "input_structure",
+        "description_alignment",
+        "remaining_ambiguity",
+        "guidance",
+        "reasoning",
+    )
+    @classmethod
+    def strip_evidence(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("candidate evidence must contain non-whitespace content")
+        return stripped
+
+    @model_validator(mode="after")
+    def enforce_fail_closed_approval(self) -> FinalCandidateVerdict:
+        if self.decision == "approve" and (
+            self.target_specificity != "specific" or self.unresolved_ambiguity
+        ):
+            raise ValueError("approval requires specific and unambiguous target evidence")
+        return self
+
+    @property
+    def approved(self) -> bool:
+        return self.decision == "approve"
+
+
+class CrashFamilyEvidence(BaseModel):
+    """Bounded vulnerable-build facts for one distinct crash family."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    submission_number: int = Field(gt=0)
+    cluster_key: str = Field(min_length=1, max_length=MAX_RECENT_HYPOTHESIS_CHARS)
+    hypothesis: str = Field(max_length=MAX_RECENT_HYPOTHESIS_CHARS)
+    sanitizer: str = Field(max_length=MAX_AGGREGATE_LABEL_CHARS)
+    error_type: str = Field(max_length=MAX_AGGREGATE_LABEL_CHARS)
+    summary: str = Field(max_length=MAX_RECENT_HYPOTHESIS_CHARS)
+    top_frames: tuple[Annotated[str, Field(max_length=MAX_RECENT_HYPOTHESIS_CHARS)], ...] = Field(
+        max_length=MAX_CRASH_FRAMES
+    )
+
+
+class FinalCandidateReviewInput(BaseModel):
+    """Immutable current-run evidence available to final adjudication."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    submission_count: int = Field(ge=0)
+    family_count: int = Field(ge=0)
+    task_description: str = Field(max_length=MAX_TASK_DESCRIPTION_CHARS)
+    primary_on_target: bool
+    primary_reasoning: str = Field(max_length=MAX_ADVICE_CHARS)
+    families: tuple[CrashFamilyEvidence, ...] = Field(max_length=MAX_CRASH_FAMILIES)
+
+
+def _bounded_text(value: Any, limit: int) -> str:
+    return " ".join(str(value or "").split())[:limit]
+
+
+def build_final_candidate_review_input(
+    *,
+    submissions: Iterable[Any],
+    family_count: int,
+    task_description: str,
+    primary_on_target: bool,
+    primary_reasoning: str,
+) -> FinalCandidateReviewInput:
+    """Extract bounded crash-family evidence without paths, bytes, or verifier output."""
+    all_submissions = list(submissions)
+    families: list[CrashFamilyEvidence] = []
+    seen: set[str] = set()
+    for submission in all_submissions:
+        fingerprint = getattr(submission, "fingerprint", None)
+        if (
+            getattr(submission, "status", None) != "crashed"
+            or getattr(fingerprint, "kind", None) != "crash"
+        ):
+            continue
+        cluster_key = _bounded_text(
+            getattr(fingerprint, "cluster_key", ""), MAX_RECENT_HYPOTHESIS_CHARS
+        )
+        if not cluster_key or cluster_key in seen:
+            continue
+        seen.add(cluster_key)
+        frames = tuple(
+            _bounded_text(frame, MAX_RECENT_HYPOTHESIS_CHARS)
+            for frame in list(getattr(fingerprint, "top_frames", ()) or ())[:MAX_CRASH_FRAMES]
+        )
+        families.append(
+            CrashFamilyEvidence(
+                submission_number=int(submission.submission_number),
+                cluster_key=cluster_key,
+                hypothesis=_bounded_text(
+                    getattr(submission, "hypothesis", ""), MAX_RECENT_HYPOTHESIS_CHARS
+                ),
+                sanitizer=_bounded_text(
+                    getattr(fingerprint, "sanitizer", ""), MAX_AGGREGATE_LABEL_CHARS
+                ),
+                error_type=_bounded_text(
+                    getattr(fingerprint, "error_type", ""), MAX_AGGREGATE_LABEL_CHARS
+                ),
+                summary=_bounded_text(
+                    getattr(fingerprint, "summary", ""), MAX_RECENT_HYPOTHESIS_CHARS
+                ),
+                top_frames=frames,
+            )
+        )
+        if len(families) == MAX_CRASH_FAMILIES:
+            break
+    return FinalCandidateReviewInput(
+        submission_count=len(all_submissions),
+        family_count=family_count,
+        task_description=_bounded_text(task_description, MAX_TASK_DESCRIPTION_CHARS),
+        primary_on_target=primary_on_target,
+        primary_reasoning=_bounded_text(primary_reasoning, MAX_ADVICE_CHARS),
+        families=tuple(families),
+    )
+
+
 class StagnationReviewer(Agent, context={"state": None}):
     """Single-purpose reviewer with no worker capabilities."""
 
@@ -104,5 +245,22 @@ class StagnationReviewer(Agent, context={"state": None}):
         identify repetitive generic sanitizer crashes, and direct the worker toward
         plausible code paths or input structures that can produce a distinct family.
         Return concise guidance and reasoning grounded only in the provided input.
+        """
+        ...
+
+    @strategy(PredictStrategy(config=PredictConfig(max_retries=1)))
+    async def adjudicate_final(
+        self, review_input: FinalCandidateReviewInput
+    ) -> FinalCandidateVerdict:
+        """Independently adjudicate whether the current crash evidence justifies stopping.
+
+        A vulnerable-build crash is candidate evidence only. Approve only when the
+        current-run hypotheses identify a concrete target path, unsafe operation,
+        and triggering input structure that specifically align with the task
+        description. Generic sanitizer type or broad parser overlap is insufficient.
+        Hidden fixed-build and patch evidence is unavailable. If evidence is broad,
+        contradictory, missing, or leaves another plausible target family, return a
+        continue decision with concrete guidance. Never infer success from the primary
+        model's confidence or from the number of submissions.
         """
         ...

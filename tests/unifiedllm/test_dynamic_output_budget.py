@@ -5,6 +5,7 @@ import json
 from unittest.mock import patch
 
 import litellm
+import pytest
 
 from nooa.unifiedllm import CompletionClient
 
@@ -48,6 +49,52 @@ def test_output_budget_uses_previous_provider_prompt_usage(tmp_path) -> None:
         records = [json.loads(line) for line in usage_log.read_text().splitlines()]
         assert [record["prompt_tokens"] for record in records] == [700_000, 710_000]
         assert [record["requested_max_tokens"] for record in records] == [384_000, 236_000]
+    finally:
+        client.close()
+
+
+def test_output_budget_refuses_request_below_reasoning_floor_before_provider_call(
+    tmp_path,
+) -> None:
+    client = CompletionClient(
+        model="test-model",
+        context_window=1_000_000,
+        max_tokens=384_000,
+        output_token_margin=64_000,
+        reasoning_output_floor=16_384,
+        usage_log_path=str(tmp_path / "usage.jsonl"),
+    )
+    try:
+        with patch("litellm.completion", return_value=_response(925_000)) as completion:
+            client.call([{"role": "user", "content": "first"}])
+            with pytest.raises(ValueError, match="context length exceeded"):
+                client.call([{"role": "user", "content": "second"}])
+
+        assert completion.call_count == 1
+    finally:
+        client.close()
+
+
+def test_output_budget_guard_releases_stale_measurement_for_archived_retry(tmp_path) -> None:
+    client = CompletionClient(
+        model="test-model",
+        context_window=1_000_000,
+        max_tokens=384_000,
+        output_token_margin=64_000,
+        reasoning_output_floor=16_384,
+        usage_log_path=str(tmp_path / "usage.jsonl"),
+    )
+    try:
+        with patch(
+            "litellm.completion", side_effect=[_response(925_000), _response(400_000)]
+        ) as completion:
+            client.call([{"role": "user", "content": "first"}])
+            with pytest.raises(ValueError, match="context length exceeded"):
+                client.call([{"role": "user", "content": "stale oversized history"}])
+            client.call([{"role": "user", "content": "archived history"}], max_tokens=55_000)
+
+        assert completion.call_count == 2
+        assert completion.call_args_list[1].kwargs["max_tokens"] == 55_000
     finally:
         client.close()
 

@@ -53,7 +53,12 @@ with hidden:
             StagnationState,
             build_stagnation_snapshot,
         )
-        from .stagnation_reviewer import StagnationReviewer, build_stagnation_review_input
+        from .stagnation_reviewer import (
+            FinalCandidateVerdict,
+            StagnationReviewer,
+            build_final_candidate_review_input,
+            build_stagnation_review_input,
+        )
     except ImportError:  # pragma: no cover
         from stagnation import (  # type: ignore[no-redef]
             STAGNATION_CONFIG,
@@ -63,7 +68,9 @@ with hidden:
             build_stagnation_snapshot,
         )
         from stagnation_reviewer import (  # type: ignore[no-redef]
+            FinalCandidateVerdict,
             StagnationReviewer,
+            build_final_candidate_review_input,
             build_stagnation_review_input,
         )
 
@@ -197,7 +204,7 @@ class StagnationReviewAudit:
     review_elapsed_sec: float
     submission_count: int
     family_count: int
-    trigger_reason: Literal["age", "plateau", "plateau_and_age"]
+    trigger_reason: Literal["age", "plateau", "plateau_and_age", "submission_volume"]
     review_id: int | None
     consecutive_no_growth_reviews: int
     one_shot_claimed: bool
@@ -1031,31 +1038,66 @@ class CyberGymAgent(Agent, context={"state": None}):
         """Apply completed guidance while preserving stop and callback authority."""
         assert self._portfolio is not None
         if state is None:
-            self._portfolio.apply_review(review)
-            return review.stop
-
-        now = self._monotonic()
-        recovery_active = state.recovery_active(now=now, config=config)
-        trigger_reason = state.escalation_reason(now=now, config=config)
-        defer_stop = review.stop and (recovery_active or trigger_reason is not None)
-        effective_review = review.model_copy(update={"stop": False}) if defer_stop else review
-        self._portfolio.apply_review(effective_review)
-
-        attempted_now = False
-        if trigger_reason is not None:
-            audit = await self._attempt_stagnation_review(state=state, now=now, config=config)
-            attempted_now = audit is not None
-            now = self._monotonic()
-            state.observe(
-                now=now,
-                submission_count=len(self._portfolio.submissions),
-                family_count=self._portfolio.distinct_families,
+            stop_is_eligible = review.stop
+            effective_review = (
+                review.model_copy(update={"stop": False})
+                if review.stop and config.enabled
+                else review
             )
-            self._record_recovery_result_if_needed(state=state, now=now, config=config)
+            self._portfolio.apply_review(effective_review)
+        else:
+            now = self._monotonic()
+            recovery_active = state.recovery_active(now=now, config=config)
+            trigger_reason = state.escalation_reason(now=now, config=config)
+            defer_stop = review.stop and (recovery_active or trigger_reason is not None)
+            final_review_pending = review.stop and config.enabled and not defer_stop
+            effective_review = (
+                review.model_copy(update={"stop": False})
+                if defer_stop or final_review_pending
+                else review
+            )
+            self._portfolio.apply_review(effective_review)
 
-        if defer_stop or (review.stop and attempted_now):
-            return False
-        return review.stop
+            attempted_now = False
+            if trigger_reason is not None:
+                audit = await self._attempt_stagnation_review(state=state, now=now, config=config)
+                attempted_now = audit is not None
+                now = self._monotonic()
+                state.observe(
+                    now=now,
+                    submission_count=len(self._portfolio.submissions),
+                    family_count=self._portfolio.distinct_families,
+                )
+                self._record_recovery_result_if_needed(state=state, now=now, config=config)
+
+            stop_is_eligible = review.stop and not defer_stop and not attempted_now
+
+        if not stop_is_eligible or not config.enabled:
+            return stop_is_eligible
+
+        verdict = await self._attempt_final_candidate_review(review, config=config)
+        if verdict is not None and verdict.approved:
+            self._portfolio.apply_review(review)
+            return True
+        guidance = (
+            verdict.guidance
+            if verdict is not None
+            else "Final candidate was not independently confirmed; continue targeted exploration."
+        )
+        reasoning = (
+            verdict.reasoning
+            if verdict is not None
+            else "The independent final-candidate review failed or timed out."
+        )
+        self._portfolio.apply_review(
+            Review(
+                on_target=bool(verdict and verdict.target_specificity == "specific"),
+                guidance=guidance,
+                stop=False,
+                reasoning=reasoning,
+            )
+        )
+        return False
 
     async def _wait(self, active: set[asyncio.Task]) -> set[asyncio.Task]:
         """Wait for worker, portfolio, stop, or terminal storage activity."""
@@ -1333,6 +1375,140 @@ class CyberGymAgent(Agent, context={"state": None}):
         except BaseException as exc:
             return "failure", self._bounded_error_type(exc)
         return "success", None
+
+    @hidden
+    async def _attempt_final_candidate_review(
+        self,
+        review: Review,
+        *,
+        config: StagnationConfig = STAGNATION_CONFIG,
+    ) -> FinalCandidateVerdict | None:
+        """Independently approve or reject a primary model's stop proposal."""
+        portfolio = self._portfolio
+        if portfolio is None or not config.enabled:
+            return None
+
+        reviewer_llm = None
+        review_task: asyncio.Task | None = None
+        stop_task: asyncio.Task | None = None
+        storage_task: asyncio.Task | None = None
+        pending_storage_error: SubmissionStorageError | None = None
+        pending_cancellation: asyncio.CancelledError | None = None
+        outcome = "failure"
+        failure_type: str | None = None
+        verdict: FinalCandidateVerdict | None = None
+        started_at = self._monotonic()
+        deadline = started_at + config.reviewer_timeout_sec
+        try:
+            review_input = build_final_candidate_review_input(
+                submissions=portfolio.submissions,
+                family_count=portfolio.distinct_families,
+                task_description=self.description,
+                primary_on_target=review.on_target,
+                primary_reasoning=review.reasoning,
+            )
+            reviewer_llm = make_llm(
+                config.model,
+                max_tokens=config.reviewer_max_output_tokens,
+                retry_config=RetryConfig(
+                    max_retries=5,
+                    base_delay=3.0,
+                    max_delay=30.0,
+                    rate_limit_extra_retries=3,
+                ),
+                provider_scoped=True,
+                inherit_reasoning_effort=False,
+            )
+            reviewer = StagnationReviewer(llm=reviewer_llm)
+            review_task = asyncio.create_task(reviewer.adjudicate_final(review_input))
+            stop_task = asyncio.create_task(self._stop_event.wait())
+            storage_task = self._storage_failure_task()
+            authority_tasks = {stop_task}
+            if storage_task is not None:
+                authority_tasks.add(storage_task)
+            while True:
+                if self._stop_event.is_set():
+                    outcome = "cancelled"
+                    failure_type = "CancelledError"
+                    self._cancel_and_drain_task(review_task)
+                    break
+                if _get_rss_mb() > MEMORY_LIMIT_MB:
+                    outcome = "failure"
+                    failure_type = "MemoryError"
+                    self._cancel_and_drain_task(review_task)
+                    break
+                remaining = deadline - self._monotonic()
+                if remaining <= 0:
+                    outcome = "timeout"
+                    failure_type = "TimeoutError"
+                    self._cancel_and_drain_task(review_task)
+                    break
+                done, _ = await asyncio.wait(
+                    {review_task} | authority_tasks,
+                    timeout=min(0.1, remaining),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if storage_task is not None and storage_task in done:
+                    raise storage_task.result()
+                if stop_task in done:
+                    outcome = "cancelled"
+                    failure_type = "CancelledError"
+                    self._cancel_and_drain_task(review_task)
+                    break
+                if review_task in done:
+                    if self._monotonic() >= deadline:
+                        outcome = "timeout"
+                        failure_type = "TimeoutError"
+                        self._cancel_and_drain_task(review_task)
+                    else:
+                        verdict = review_task.result()
+                        outcome = "approved" if verdict.approved else "continued"
+                    break
+        except SubmissionStorageError as exc:
+            pending_storage_error = exc
+            self._cancel_and_drain_task(review_task)
+        except asyncio.CancelledError as exc:
+            pending_cancellation = exc
+            outcome = "cancelled"
+            failure_type = self._bounded_error_type(exc)
+            self._cancel_and_drain_task(review_task)
+        except (Exception, SystemExit) as exc:
+            outcome = "failure"
+            failure_type = self._bounded_error_type(exc)
+            self._cancel_and_drain_task(review_task)
+        finally:
+            authority_tasks = {task for task in (stop_task, storage_task) if task is not None}
+            for task in authority_tasks:
+                if not task.done():
+                    task.cancel()
+            if authority_tasks:
+                await asyncio.gather(*authority_tasks, return_exceptions=True)
+
+        cleanup_status, cleanup_failure_type = await self._bounded_reviewer_cleanup(reviewer_llm)
+        if cleanup_status not in ("not_needed", "success"):
+            verdict = None
+            outcome = "failure" if cleanup_status == "failure" else cleanup_status
+            failure_type = cleanup_failure_type
+
+        payload = {
+            "model": config.model,
+            "outcome": outcome,
+            "submission_count": len(portfolio.submissions),
+            "family_count": portfolio.distinct_families,
+            "decision": verdict.decision if verdict is not None else None,
+            "target_specificity": verdict.target_specificity if verdict is not None else None,
+            "unresolved_ambiguity": verdict.unresolved_ambiguity if verdict is not None else None,
+            "elapsed_sec": self._monotonic() - started_at,
+            "cleanup_status": cleanup_status,
+            "failure_type": failure_type,
+        }
+        log = logger.info if verdict is not None else logger.warning
+        log("final_candidate_adjudication %s", json.dumps(payload, sort_keys=True))
+        if pending_storage_error is not None:
+            raise pending_storage_error
+        if pending_cancellation is not None:
+            raise pending_cancellation
+        return verdict
 
     @hidden
     async def _attempt_stagnation_review(
