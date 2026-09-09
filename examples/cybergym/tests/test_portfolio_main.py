@@ -38,6 +38,21 @@ def test_kimi_k3_reviewer_uses_moonshot_endpoint_and_own_credential():
     assert model["allowed_openai_params"] == ["reasoning_effort"]
 
 
+def test_deepseek_v4_pro_diagnostic_alias_is_provider_scoped_and_not_flash():
+    config_path = Path(__file__).parents[1] / "nooa_cybergym" / "llm_config.yaml"
+    models = yaml.safe_load(config_path.read_text())["models"]
+    model = models["deepseek-v4-pro"]
+
+    assert model["model_name"] == "openai/deepseek-v4-pro"
+    assert model["model_name"] != models["deepseek-v4-flash"]["model_name"]
+    assert model["api_base"] == "https://api.deepseek.com/v1"
+    assert model["api_key_env"] == "OPENAI_API_KEY"
+    assert model["context_window"] == 1_000_000
+    assert model["max_tokens"] == 384_000
+    assert model["reasoning_effort"] == "max"
+    assert model["allowed_openai_params"] == ["reasoning_effort"]
+
+
 def test_cli_default_comes_from_agent_default(monkeypatch):
     monkeypatch.setattr("sys.argv", ["main.py", "--prompt", "test"])
 

@@ -22,6 +22,18 @@ models:
     context_window: 1000000
     max_tokens: 384000
 
+  # Task 13 diagnostic route. Keep this alias separate from Flash so the
+  # diagnostic can assert the exact official DeepSeek model it selected.
+  deepseek-v4-pro:
+    model_name: openai/deepseek-v4-pro
+    api_base: https://api.deepseek.com/v1
+    api_key_env: OPENAI_API_KEY
+    context_window: 1000000
+    max_tokens: 384000
+    reasoning_effort: max
+    allowed_openai_params:
+      - reasoning_effort
+
   # Alternate SunChaser v2 reviewer. This is the GLM Coding Plan endpoint,
   # separate from the pay-as-you-go general API. Z.AI exposes deep thinking as
   # enabled/disabled rather than an effort tier; enabled is the maximum mode.
