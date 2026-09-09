@@ -2,7 +2,7 @@
 
 The qualified source revision is
 `258476ba883345d5346023e6397adbf82103855d` on
-`feat/sunchaser-v2-2-task13-debug`. Later documentation-only commits record
+`feat/sunchaser-v2-multiprovider`. Later documentation-only commits record
 this qualification; they do not represent a new runtime test or diagnostic run.
 Use this immutable source revision as the operations pin. A subsequent source
 change needs its own qualification record before this pin can be replaced.
