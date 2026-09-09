@@ -1334,10 +1334,44 @@ def test_glm52_is_the_agent_default_with_three_finder_lanes():
     ]
 
 
+def test_selected_worker_model_replaces_static_finder_lanes():
+    agent = nooa_cybergym_agent.CyberGymAgent(llm=FakeLLMClient(), worker_model="glm-5.3")
+
+    assert agent._finder_lanes() == [
+        nooa_cybergym_agent.Lane(label="glm-5.3", model_name="glm-5.3")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_finder_receives_operator_instruction_with_vulnerability_description():
+    received = []
+
+    class RecordingFinder:
+        async def find(self, description):
+            received.append(description)
+
+    agent = nooa_cybergym_agent.CyberGymAgent(llm=FakeLLMClient())
+    agent.description = "Exact vulnerability description."
+    agent._operator_instruction = "Decode and submit the locked candidate."
+
+    await agent._run_finder(RecordingFinder())
+
+    assert received == [
+        "Exact vulnerability description.\n\n"
+        "Operator instruction:\nDecode and submit the locked candidate."
+    ]
+
+
 def test_finder_provenance_uses_resolved_provider_model(monkeypatch):
+    calls = []
     resolved_llm = FakeLLMClient()
     resolved_llm.model = "openai/deepseek-v4-flash"
-    monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: resolved_llm)
+
+    def capture_make_llm(*args, **kwargs):
+        calls.append((args, kwargs))
+        return resolved_llm
+
+    monkeypatch.setattr(nooa_cybergym_agent, "make_llm", capture_make_llm)
     monkeypatch.setattr(nooa_cybergym_agent, "install_summarizer", lambda *args: None)
 
     agent = nooa_cybergym_agent.CyberGymAgent(llm=FakeLLMClient())
@@ -1349,6 +1383,16 @@ def test_finder_provenance_uses_resolved_provider_model(monkeypatch):
 
     assert finder._model_name == "openai/deepseek-v4-flash"
     assert expander._model_name == "openai/deepseek-v4-flash"
+    assert calls == [
+        (
+            ("glm-5.2",),
+            {"max_tokens": nooa_cybergym_agent.MAX_OUTPUT_TOKENS, "provider_scoped": True},
+        ),
+        (
+            (nooa_cybergym_agent.DEFAULT_MODEL_NAME,),
+            {"max_tokens": nooa_cybergym_agent.MAX_OUTPUT_TOKENS, "provider_scoped": True},
+        ),
+    ]
 
 
 @pytest.mark.parametrize(

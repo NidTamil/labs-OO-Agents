@@ -580,25 +580,30 @@ class CyberGymAgent(Agent, context={"state": None}):
     _worker_agents: Annotated[list[Agent], hidden]
     _stop_event: Annotated[asyncio.Event, hidden]
     _shutdown_complete: Annotated[bool, hidden]
+    _worker_model: Annotated[str | None, hidden]
+    _operator_instruction: Annotated[str, hidden]
     _stagnation_review_audit: Annotated[StagnationReviewAudit | None, hidden]
     _stagnation_recovery_result: Annotated[
         Literal["new_family", "expired_without_progress", "exhausted_without_progress"] | None,
         hidden,
     ]
 
-    def __init__(self, **kwargs):
+    def __init__(self, *, worker_model: str | None = None, **kwargs):
         super().__init__(**kwargs)
         self.shell = ShellTools(cwd="/workspace")
         self._active_tasks = set()
         self._worker_agents = []
         self._stop_event = asyncio.Event()
         self._shutdown_complete = False
+        self._worker_model = worker_model.strip() if worker_model else None
+        self._operator_instruction = ""
         self._stagnation_review_audit = None
         self._stagnation_recovery_result = None
 
     async def solve(self, instruction: str) -> str:
         """Main solve loop."""
         self.description = DESCRIPTION_PATH.read_text()
+        self._operator_instruction = instruction.strip()
 
         # Extract source archive once before spawning finders (shared filesystem)
         tar_path = DESCRIPTION_PATH.parent / "repo-vul.tar.gz"
@@ -623,7 +628,7 @@ class CyberGymAgent(Agent, context={"state": None}):
         task_to_finder: dict[asyncio.Task, Finder] = {}
         active = self._active_tasks
 
-        for lane in LANES:
+        for lane in self._finder_lanes():
             finder = self._make_finder(lane)
             finders.append(finder)
             self._worker_agents.append(finder)
@@ -854,7 +859,10 @@ class CyberGymAgent(Agent, context={"state": None}):
     async def _run_finder(self, finder: Finder) -> None:
         """Run a finder with error handling — log and return on failure."""
         try:
-            await finder.find(self.description)
+            task_context = self.description
+            if self._operator_instruction:
+                task_context += f"\n\nOperator instruction:\n{self._operator_instruction}"
+            await finder.find(task_context)
         except SubmissionStorageError:
             raise
         except (GenerationError, Exception) as exc:
@@ -1746,13 +1754,27 @@ class CyberGymAgent(Agent, context={"state": None}):
         ...
 
     def _make_finder(self, lane: Lane) -> Finder:
-        llm = make_llm(lane.model_name, max_tokens=MAX_OUTPUT_TOKENS)
+        llm = make_llm(
+            lane.model_name,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            provider_scoped=True,
+        )
         finder = Finder(llm=llm, portfolio=self._portfolio, model_name=llm.model)
         install_summarizer(finder, llm)
         return finder
 
+    def _finder_lanes(self) -> list[Lane]:
+        """Use the selected primary model for workers when one was provided."""
+        if self._worker_model:
+            return [Lane(label=self._worker_model, model_name=self._worker_model)]
+        return list(LANES)
+
     def _make_expander(self, seed: PocSubmission) -> tuple[Expander, PocSubmission]:
-        llm = make_llm(DEFAULT_MODEL_NAME, max_tokens=MAX_OUTPUT_TOKENS)
+        llm = make_llm(
+            self._worker_model or DEFAULT_MODEL_NAME,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            provider_scoped=True,
+        )
         expander = Expander(llm=llm, portfolio=self._portfolio, model_name=llm.model)
         install_summarizer(expander, llm)
         return expander, seed

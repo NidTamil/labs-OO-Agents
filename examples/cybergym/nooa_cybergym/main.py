@@ -146,7 +146,7 @@ async def amain(prompt: str, model: str, reasoning_effort: str | None) -> str:
             model,
         )
 
-    agent = CyberGymAgent(llm=llm)
+    agent = CyberGymAgent(llm=llm, worker_model=model)
     configure_tracing(agent, model)
     install_summarizer(agent, llm)
     solve_task = asyncio.create_task(agent.solve(prompt))

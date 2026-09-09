@@ -174,7 +174,7 @@ def test_soft_timeout_requests_clean_finalization_without_forced_exit(monkeypatc
         context_window = 100_000
 
     class FakeAgent:
-        def __init__(self, llm):
+        def __init__(self, llm, **kwargs):
             self.llm = llm
             self.stop = asyncio.Event()
 
@@ -209,13 +209,15 @@ def test_orchestrator_uses_bounded_control_plane_output_cap(monkeypatch):
     import asyncio
 
     calls = []
+    agent_calls = []
 
     class FakeLLM:
         context_window = 1_000_000
 
     class FakeAgent:
-        def __init__(self, llm):
+        def __init__(self, llm, **kwargs):
             self.llm = llm
+            agent_calls.append(kwargs)
 
         async def solve(self, prompt):
             return "done"
@@ -243,4 +245,5 @@ def test_orchestrator_uses_bounded_control_plane_output_cap(monkeypatch):
             },
         )
     ]
+    assert agent_calls == [{"worker_model": "model"}]
     assert nooa_cybergym_main.CONTROL_MAX_OUTPUT_TOKENS == 16_384
