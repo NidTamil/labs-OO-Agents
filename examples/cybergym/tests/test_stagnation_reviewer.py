@@ -734,10 +734,11 @@ def test_provider_scoped_llm_uses_alias_endpoint_and_credential(monkeypatch):
             "model_name": "openai/glm-5.3",
             "api_base": "https://api.z.ai/api/coding/paas/v4",
             "api_key_env": "ANTHROPIC_AUTH_TOKEN",
+            "max_tokens": 32768,
         },
     )
 
-    kwargs = nooa_cybergym_util._provider_scoped_llm_client_kwargs("glm-5.3", 32768)
+    kwargs = nooa_cybergym_util._provider_scoped_llm_client_kwargs("glm-5.3", 384000)
 
     assert kwargs["api_base"] == "https://api.z.ai/api/coding/paas/v4"
     assert kwargs["api_key"] == "glm-plan-key"

@@ -143,6 +143,9 @@ def _provider_scoped_llm_client_kwargs(
             f"provider-scoped model {model_name!r} requires credential env {api_key_env!r}"
         )
 
+    configured_max_tokens = config.get("max_tokens")
+    if isinstance(configured_max_tokens, int) and configured_max_tokens > 0:
+        max_output_tokens = min(max_output_tokens, configured_max_tokens)
     kwargs = _common_llm_client_kwargs(max_output_tokens)
     kwargs.update({"api_base": api_base, "api_key": api_key})
     return kwargs
