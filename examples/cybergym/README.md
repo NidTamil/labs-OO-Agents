@@ -198,14 +198,14 @@ is an evaluator-only step after candidate selection.
 | Evidence | Recorded value |
 | --- | --- |
 | Historical evidence-producing revision | `b7ab22b8807855b07a95f977fbe9a4ac8e3308c5` |
-| Subsequently qualified v2.2 revision | Pending Task 3 qualification; this documentation does not relabel the historical evidence as a v2.2 rerun |
+| Subsequently qualified v2.2 revision | `258476ba883345d5346023e6397adbf82103855d`; see [qualification and timings](qualification-v2.2.md). This does not relabel the historical evidence as a v2.2 rerun |
 | UTC lifecycle timestamps | debugger start `2026-09-09T01:34:59Z`; trigger materialized `2026-09-09T01:42:01Z`; vulnerable submission `2026-09-09T01:46:31Z`; initial fixed check `2026-09-09T01:47:38Z`–`01:47:39Z`; fixed-image pull `2026-09-09T01:49:45Z`–`01:50:16Z`; strict validation `2026-09-09T01:50:59Z`–`01:51:00Z` |
 | Selected model route | `deepseek-v4-pro` → `openai/deepseek-v4-pro` at `https://api.deepseek.com/v1`; `reasoning_effort=max` |
 | Vulnerable image | `n132/arvo:62886-vul` (`sha256:dc08f42f0cba58372c1f26667227eac42a0b384903eb7950346df40c1cde5ca5`) |
 | Fixed image | `n132/arvo:62886-fix` (`sha256:be7a8be9a13a74a26860e1f03bbc6edc6c5cc17b07b9799aa5abc2e8139144bd`) |
 | Candidate | 33 bytes; SHA-256 `3c85e0497dcae758aa4ae5682d1b88f5ca87aacd81caef30b3dc33452b2c0889`; XML `<r/>` with `str:tokenize("a"," ")` |
 | Vulnerable local replays | 132 ms, 155 ms, and 134 ms; each reproduced the same vulnerable `xmlDictFindEntry` ASan stack |
-| Boundary result | vulnerable verifier: 437 ms, exit 1; strict validation: 1504 ms, vulnerable exit 1 and fixed exit 0 (`512f2a815a734080aca78751c04b29a5`) |
+| Boundary result | vulnerable verifier: 437 ms, exit 1; strict validation: 1504 ms, vulnerable exit 1 and fixed exit 0; PoC ID `512f2a815a734080aca78751c04b29a5` |
 | Workflow timings | discovery: 422381 ms; task generation: 196 ms; fixed-image pull: 30563 ms |
 
 The initial fixed check took 428 ms and failed with evaluator HTTP 500 because

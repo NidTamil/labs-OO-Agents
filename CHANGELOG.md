@@ -8,6 +8,8 @@ to follow semantic versioning.
 
 - Docs: record the SunChaser v2.2 Task 13 targeted vulnerable-only diagnostic,
   its evidence limits, and the required preflight and provenance workflow.
+- Tests: isolate the final-review timeout test from setup latency and await its
+  late result; record the v2.2 Linux qualification pin and 285 passing tests.
 - Breaking: custom CodeAct error formatters must implement
   `format(error, code=None, *, line_offset=0, max_error=None, tail_chars=None)`.
   Reduced legacy signatures are no longer supported.
