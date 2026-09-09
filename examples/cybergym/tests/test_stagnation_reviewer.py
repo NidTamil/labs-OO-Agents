@@ -234,6 +234,8 @@ async def test_final_candidate_timeout_does_not_wait_for_cancellation_suppressin
     reviewer_started = asyncio.Event()
     cancellation_seen = asyncio.Event()
     release_late_result = asyncio.Event()
+    late_result = asyncio.Event()
+    clock = SimpleNamespace(now=0.0)
 
     class FakeReviewer:
         def __init__(self, *, llm):
@@ -246,6 +248,7 @@ async def test_final_candidate_timeout_does_not_wait_for_cancellation_suppressin
             except asyncio.CancelledError:
                 cancellation_seen.set()
                 await release_late_result.wait()
+                late_result.set()
                 return FinalCandidateVerdict(
                     decision="approve",
                     target_specificity="specific",
@@ -261,6 +264,9 @@ async def test_final_candidate_timeout_does_not_wait_for_cancellation_suppressin
 
     monkeypatch.setattr(nooa_cybergym_agent, "make_llm", lambda *args, **kwargs: reviewer_llm)
     monkeypatch.setattr(nooa_cybergym_agent, "StagnationReviewer", FakeReviewer)
+    # Expire only after startup; real setup can exhaust the 1 ms budget before
+    # the reviewer gets its first event-loop turn when the whole suite runs.
+    monkeypatch.setattr(agent, "_monotonic", lambda: clock.now)
     review = nooa_cybergym_agent.Review(
         on_target=True,
         guidance="primary stop",
@@ -275,6 +281,7 @@ async def test_final_candidate_timeout_does_not_wait_for_cancellation_suppressin
             )
         )
         await asyncio.wait_for(reviewer_started.wait(), timeout=1)
+        clock.now = 1.0
         await asyncio.wait_for(cancellation_seen.wait(), timeout=1)
         verdict = await asyncio.wait_for(attempt, timeout=0.1)
 
@@ -283,7 +290,10 @@ async def test_final_candidate_timeout_does_not_wait_for_cancellation_suppressin
     payloads = _final_review_log_payloads(caplog)
     assert len(payloads) == 1
     assert payloads[0]["outcome"] == "timeout"
+    assert late_result.is_set() is False
     release_late_result.set()
+    await asyncio.wait_for(late_result.wait(), timeout=1)
+    assert len(_final_review_log_payloads(caplog)) == 1
 
 
 def test_stagnation_review_input_is_structurally_bounded_and_excludes_sensitive_fields():
