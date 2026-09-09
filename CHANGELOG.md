@@ -6,6 +6,8 @@ to follow semantic versioning.
 
 ## [Unreleased]
 
+- Docs: record the SunChaser v2.2 Task 13 targeted vulnerable-only diagnostic,
+  its evidence limits, and the required preflight and provenance workflow.
 - Breaking: custom CodeAct error formatters must implement
   `format(error, code=None, *, line_offset=0, max_error=None, tail_chars=None)`.
   Reduced legacy signatures are no longer supported.
