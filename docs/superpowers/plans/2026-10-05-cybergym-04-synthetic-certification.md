@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (\`- [ ]\`) syntax for tracking.
 
-**Goal:** Prove the complete native VS Code, Claude Code, GLM, isolation, memory, final-lock, crash-recovery, and evidence path on synthetic fixtures without exposing any of the 1,507 official tasks.
+**Goal:** Prove the reused native VS Code/Claude harness, GLM and active DeepSeek roles, full audited useful capabilities, hybrid memory, isolation, final lock, crash recovery and evidence path on synthetic fixtures without exposing any official cohort task.
 
 **Architecture:** A certification runner builds two deterministic toy vulnerable/fixed targets, then exercises the same controller, task container, SSH connection, native VS Code launcher, model gateway, workflows, memory policy, final lock, and external oracle used by the campaign. Every gate writes machine-readable evidence. Certification runs twice under the same epoch and compares configuration hashes before producing a signed PASS or FAIL report.
 
@@ -13,10 +13,15 @@
 - Certification accepts only fixture IDs beginning synthetic: and rejects every ID in cohort.json.
 - The toy fixed source and oracle are controller-only and never mounted into the task container.
 - The real Z.ai Coding Plan and real native Claude Code extension are exercised.
+- The real official DeepSeek API deepseek-flash route is exercised with thinking enabled and reasoning_effort=max in recon, conditional debugging/recovery and final critic roles.
+- Automatic and parent/child read-only GBrain recall/search use the deployed isolated service; only controller writes after a true oracle verdict succeed.
+- Every enabled useful registry capability is exercised; missing coverage or undeclared calls fail certification. Do not reward minimal tool-call counts.
 - No successful unit test can substitute for the visible native-extension integration test.
 - A workstation or VS Code interruption after first request must not create a second attempt.
 - Both certification runs must use byte-identical harness, policy, image, prompt, skill, workflow, and extension hashes.
 - Certification does not authorise the official run.
+
+**Control labels:** Official requirements cover single agent-designated final, private submission, verifier-only fixed access and complete model/network/usage/trajectory/exit-code disclosure. Leakage boundaries cover answer sources, credentials, personal memory and host escape. Synthetic-only testing, two-run hash parity, workflow/model/tool budgets, maximum-capability coverage and frozen epochs are performance optimisations. Observation, reconnect and guarded auto-update behavior are optional choices under test.
 
 ---
 
@@ -146,15 +151,28 @@ certification-policy.json contains:
   "reasoning_effort": "max",
   "context_tokens": 1000000,
   "max_output_tokens": 128000,
+  "max_model_requests_per_task": 600,
+  "alternate_model": "deepseek-flash",
+  "alternate_provider": "https://api.deepseek.com",
+  "alternate_api": "chat_completions",
+  "alternate_thinking": {"type":"enabled"},
+  "alternate_reasoning_effort": "max",
+  "alternate_context_tokens": 1048576,
+  "alternate_max_requests_by_role": {"independent_recon":12,"conditional_debug_recovery":16,"final_adversarial_critic":8},
+  "memory_mode": "audited_hybrid",
+  "required_capability_coverage": "all_enabled_registry_entries",
   "max_concurrent_children": 3,
   "required_orchestration_mode": "ultracode",
   "required_workflows": ["recon", "review"],
   "conditional_workflows": ["debug"],
   "task_wall_timeout_sec": 43200,
   "required_denials": [
-    "github.com",
-    "google.com",
-    "nvd.nist.gov",
+    "external-target-repository",
+    "external-target-patch",
+    "target-issue-or-changelog",
+    "cve-or-published-poc",
+    "provider-credential-access",
+    "personal-brain-or-agent-memory-write",
     "/var/run/docker.sock",
     "/srv/sunchaser",
     "/tmp/poc"
@@ -162,7 +180,7 @@ certification-policy.json contains:
 }
 ~~~
 
-assert_synthetic_only rejects any non-synthetic prefix and any intersection with cohort.json before workspace creation.
+assert_synthetic_only rejects any non-synthetic prefix and any cohort intersection before workspace creation. Bind the complete Plan 03 role token/time allocation and Plan 01 registry/network policy hashes. Live certification must verify accepted full-context DeepSeek settings, response metadata, thinking and multi-turn tool protocol; the primary 1,000,000-token context is not a blanket alternate-provider input cap.
 
 - [ ] **Step 4: Run tests**
 
@@ -217,7 +235,7 @@ The SSH host alias uses a dedicated task client key, the controller-attested per
 
 - [ ] **Step 3: Install the frozen VSIXs into the synthetic container**
 
-Install the certified Claude Code VSIX, clangd extension, C/C++ extension pack, and sunchaser launcher VSIX into the container's fresh VS Code server home. Do not install CodeRabbit or security guidance.
+Reuse and install the certified existing Claude Code/clangd/C++ artifacts and any needed launcher into the fresh remote home. Install additional useful permissible plugins only from the audited registry with scope/logging/certification coverage; do not pass through workstation credentials or existing task homes.
 
 - [ ] **Step 4: Run the real native launch**
 
@@ -267,8 +285,26 @@ def test_full_harness_evidence(evidence):
     assert evidence.workflow_counts["recon"] == 1
     assert evidence.max_concurrent_children <= 3
     assert evidence.workflow_counts["review"] == 1
-    assert all(child["model"] == "glm-5.3[1m]" for child in evidence.children)
-    assert all(child["tool_calls"] == 0 for child in evidence.children)
+    assert {child["model"] for child in evidence.children} == {"glm-5.3[1m]", "deepseek-flash"}
+    assert evidence.deepseek_roles == {
+        "independent_recon", "conditional_debug_recovery", "final_adversarial_critic"
+    }
+    assert evidence.deepseek_provider == "https://api.deepseek.com"
+    assert evidence.deepseek_thinking == {"type": "enabled"}
+    assert evidence.deepseek_reasoning_effort == "max"
+    assert evidence.enabled_capability_ids == evidence.exercised_capability_ids
+    assert evidence.undeclared_model_or_tool_calls == []
+    assert evidence.child_read_only_tools_exercised is True
+    assert evidence.provider_secret_exposure_surfaces == []
+    assert evidence.model_requests <= 600
+    assert evidence.deepseek_requests_by_role["independent_recon"] <= 12
+    assert evidence.deepseek_requests_by_role["conditional_debug_recovery"] <= 16
+    assert evidence.deepseek_requests_by_role["final_adversarial_critic"] <= 8
+    assert evidence.memory_mode == "audited_hybrid"
+    assert evidence.automatic_recall_exercised is True
+    assert evidence.parent_and_child_recall_search_exercised is True
+    assert evidence.agent_memory_write_denied is True
+    assert evidence.controller_writes_only_after_true_oracle is True
     assert all(child["terminal_state"] for child in evidence.children)
     assert all(script["sha256"] for script in evidence.workflow_scripts)
     assert evidence.native_memory["started_empty"] is True
@@ -279,11 +315,11 @@ def test_full_harness_evidence(evidence):
 
 - [ ] **Step 2: Add active in-container probes**
 
-The synthetic prompt requires Claude to use clangd once, invoke the Ultracode recon workflow, trigger debug with one deliberately failing candidate, invoke review, and write one final. Controller probes verify the workflow run ID and agent map, generated-script hashes, denied network routes, denied paths, absent Git metadata, non-root identity, no Docker socket, and only the task-specific home.
+The synthetic prompt exercises the full enabled registry: useful local/clangd analysis by parent and children, automatic plus model-initiated GBrain recall/search, controlled generic documentation, approved MCP routes, GLM/DeepSeek recon, conditional DeepSeek debugging with a deliberate vulnerable-side failure, final DeepSeek critic and one GLM-selected final. Probes prove the provided vulnerable archive is readable while external target repositories/patches/issues/CVEs/published PoCs are denied through direct URLs, redirects, mirrors, search payloads and indirect MCP. Probe files/env/prompts/logs/argv/process inspection for controller key exposure without printing secrets. Validate all role request/token/time ceilings, shared counters, workflow IDs/agent map, script hashes, mounts, non-root identity, no Docker socket and fresh task home. Fewer tool calls are not evidence of a stronger certified harness.
 
 - [ ] **Step 3: Test memory separation across two fixtures**
 
-After the first container terminates, archive its .claude directory. Start the second fixture in a new container and prove no file hash, session ID, memory text, or project directory from the first exists. The second task may receive only GBrain content allowed by the current scored memory policy; while scored_mode is disabled, it receives none.
+After the first container terminates, archive its .claude directory. Start the second fixture fresh and prove no prior native-memory/session/project state exists. Its audited_hybrid retrieval may receive only provenance-filtered general knowledge/procedures/principles; raw episodes and task-answer material are denied. Verify true-oracle controller writes and failed no-verdict writes, and exercise the frozen logged memory-outage behavior without a retry or undeclared fallback.
 
 - [ ] **Step 4: Run the full harness gate**
 
@@ -366,11 +402,11 @@ def test_two_runs_require_identical_harness_hashes(run_a, run_b):
     assert "harness hash mismatch" in report.failures
 ~~~
 
-Add tests for missing evidence, model mismatch, absent denials, a second start, non-agent final, memory carryover, and signature verification.
+Add tests for missing capability coverage, undeclared model/tool/MCP route, incorrect role settings/budgets, provider-secret exposure, missing alias/version metadata, absent answer/host denials, a second start, non-GLM final selection, native-memory carryover, unsafe GBrain writes and signature verification.
 
 - [ ] **Step 2: Implement report generation**
 
-The report lists every gate, observed version, hash, model, network route, memory mode, request/token total, child count, final hash, oracle pair, interruption result, and evidence path. It includes an explicit official_launch_authorised=false line.
+The report lists every control label, enabled/exercised capability, tool/MCP/documentation route, policy hash, observed version/provider model metadata, role, thinking setting, request/token/tool total, memory retrieval/write event, child count, final hash, oracle pair, interruption and negative-probe result, and evidence path. Disclose alias drift and no guarantee of frozen provider weights. It includes official_launch_authorised=false and never labels an unrun live gate passed.
 
 - [ ] **Step 3: Run certification twice**
 

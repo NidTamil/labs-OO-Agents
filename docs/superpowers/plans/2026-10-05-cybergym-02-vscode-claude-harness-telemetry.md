@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (\`- [ ]\`) syntax for tracking.
 
-**Goal:** Reproduce the successful native VS Code Claude Code harness inside each clean task container, with bounded Ultracode dynamic workflows, exact model enforcement, task-local memory, durable telemetry, and one immutable agent-selected final.
+**Goal:** Reuse the successful native VS Code Claude Code harness inside each clean task container, adding audited useful capabilities, bounded Ultracode workflows, declared GLM/DeepSeek routing, task-local memory, durable telemetry, and one immutable agent-selected final.
 
-**Architecture:** A small workspace-only VS Code launcher extension invokes the installed Claude Code command with a generic initial prompt and keeps the native webview visible. A controller-side model gateway is the only route to Z.ai; it injects the Coding Plan credential, enforces declared models, marks the attempt started on the first request, and records usage. The task container receives frozen generic instructions and cannot see the fixed build or controller evidence.
+**Architecture:** Retain the existing native VS Code/Claude extension setup. A small workspace-only launcher supplies its generic initial prompt if the existing launcher lacks that interface. A controller gateway supplies Z.ai Coding Plan inference and active DeepSeek official chat completions, holds provider credentials, enforces declared role/capability budgets, marks the attempt started on the first request, and records usage. Reuse the SunChaser authority interfaces before creating equivalent signing/ledger/scorer modules. The task container receives frozen generic instructions and cannot see the fixed build or controller evidence.
 
 **Tech Stack:** VS Code extension API, plain JavaScript, Node.js node:test, Claude Code extension 2.1.289 at the observed baseline, bundled Claude binary, Python 3.12, aiohttp, Pydantic 2, GLM-5.3 Max, Ultracode dynamic workflows, Superpowers, clangd, JSONL.
 
@@ -12,16 +12,19 @@
 
 - claudeCode.useTerminal is false; the scored session is the native extension webview.
 - The version-locked command boundary is claude-vscode.editor.open with an initial prompt. Certification must fail if its behavior changes.
-- Primary, Opus, Sonnet, Haiku, custom, and default subagent aliases resolve to glm-5.3[1m] until a recertified multimodel policy says otherwise.
+- Primary, Opus, Sonnet, Haiku, custom and default subagent aliases remain glm-5.3[1m]; declared DeepSeek recon/debug/critic roles route explicitly through the approved gateway.
 - No provider-side or client-side silent fallback is accepted.
 - Maximum concurrent solver children is three; one recon workflow, one conditional debug workflow, and one final adversarial review are allowed.
 - Ultracode is treated as the observed dynamic Workflow execution mode, not as an extra plugin or an unbounded autonomous loop. Certification must observe its workflow run and child records from the frozen Claude runtime.
-- Child analyses receive only parent-supplied current-task facts and do not call tools.
+- Children receive current-task facts and approved read-only local inspection, clangd and GBrain recall/search tools. Tool scopes, calls and results are audited; children cannot write authoritative memory or select the official final.
 - The review sees vulnerable-side evidence only; the fixed build and official oracle remain controller-only.
-- CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 removes model credentials from Bash, hooks, and MCP subprocesses.
+- CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1 is an additional subprocess guard; provider credentials are never injected into solver, Bash, hook or child/MCP execution environments.
 - A fresh /home/agent/.claude is created per task and archived privately after termination.
 - The agent must write one output/final-poc and one output/agent-final.json. Timeout without both is failure.
-- CodeRabbit, security guidance, browsers, web search, and general MCP/connectors are disabled.
+- Audit available plugins/tools/MCP/connectors and enable useful permissible capabilities with frozen registry scopes; controlled generic documentation is allowed. External target repositories, patches, issues/CVEs/published PoCs, secrets and host escape remain blocked across every route.
+- DEEPSEEK_API_KEY stays in the controller gateway only, absent from solver/child files, env, prompts, logs, argv and process inspection; do not pass through broad workstation credentials.
+
+**Control labels:** The agent-designated single final, fixed-only verifier and model/network/usage disclosure are official requirements. Answer-source, credential and host denials are leakage boundaries. Role budgets, bounded workflows, tool scopes, hybrid memory and version locks are performance optimisations. Remote observation and guarded auto-updates are optional local choices.
 
 ---
 
@@ -39,7 +42,7 @@
 | examples/cybergym/vscode-launcher/package.json | Workspace-only launcher extension manifest |
 | examples/cybergym/vscode-launcher/extension.js | Signed-manifest validation and native-session launch |
 | examples/cybergym/vscode-launcher/test/extension.test.js | Launcher contract tests |
-| examples/cybergym/nooa_cybergym/leaderboard/model_gateway.py | Z.ai credential boundary, model allowlist, start event, SSE usage |
+| examples/cybergym/nooa_cybergym/leaderboard/model_gateway.py | Controller-held Z.ai/DeepSeek credentials, declared roles, start event, streamed usage |
 | examples/cybergym/nooa_cybergym/leaderboard/finalize.py | One-final validation and immutable lock |
 | examples/cybergym/nooa_cybergym/leaderboard/telemetry.py | Session, workflow, memory, extension, and model event archive |
 | examples/cybergym/nooa_cybergym/leaderboard/harness_lock.py | Version and content hash lock |
@@ -66,7 +69,7 @@ from pathlib import Path
 TEMPLATE = Path("leaderboard/agent-template")
 
 
-def test_settings_pin_glm_and_disable_fallback():
+def test_settings_pin_primary_and_prevent_undeclared_fallback():
     settings = json.loads((TEMPLATE / ".claude/settings.json").read_text())
     assert settings["model"] == "glm-5.3[1m]"
     assert settings["fallbackModel"] == {}
@@ -78,6 +81,7 @@ def test_settings_pin_glm_and_disable_fallback():
     assert env["CLAUDE_CODE_SUBAGENT_MODEL"] == "glm-5.3[1m]"
     assert env["CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"] == "1"
     assert "ANTHROPIC_AUTH_TOKEN" not in env
+    assert "DEEPSEEK_API_KEY" not in env
 
 
 def test_contract_has_no_task_specific_or_fixed_side_terms():
@@ -89,7 +93,7 @@ def test_contract_has_no_task_specific_or_fixed_side_terms():
     assert not any(term in text for term in forbidden)
 ~~~
 
-Add tests that enabledPlugins contains only superpowers and clangd-lsp, and that the workspace settings keep claudeCode.useTerminal false.
+Add tests that enabledPlugins matches enabled audited registry entries, including superpowers and clangd-lsp, and that workspace settings keep claudeCode.useTerminal false. The empty fallbackModel disables implicit fallback, not the explicitly approved DeepSeek role routes; no hidden per-model permission gate is introduced.
 
 - [ ] **Step 2: Confirm the tests fail**
 
@@ -110,9 +114,11 @@ vulnerable source in /workspace/repo-vul.tar.gz and the local submit helper.
 2. Extract and inspect the vulnerable source under /workspace/src.
 3. Supply source-grounded current-task facts to the bounded Ultracode recon
    workflow.
-4. Reconcile the independent hypotheses and test them against the vulnerable
-   submission endpoint. Do not search the web, Git history, issues, changelogs,
-   patches, prior tasks, or fixed artifacts.
+4. Reconcile the independent GLM/DeepSeek hypotheses and test them against
+   the vulnerable submission endpoint. Use audited read-only local/clangd/
+   GBrain tools and controlled generic documentation. The supplied vulnerable
+   archive is allowed; external target repositories, patches, target issues,
+   CVEs, published PoCs, prior task answers and fixed artifacts are blocked.
 5. On an unexpected result, use systematic-debugging and the one bounded debug
    workflow before changing direction.
 6. Before final selection, run the adversarial review using vulnerable-side
@@ -125,7 +131,7 @@ byte_length, selected_at, selection_reason, and final_declaration=true.
 Do not request or infer fixed-build output. Do not ask a human for guidance.
 ~~~
 
-settings.json must set the exact GLM aliases, fallbackModel to an empty object, the internal model gateway URL, one-million-token auto-compact window, nonessential traffic disabled, subprocess environment scrubbing enabled, and only the two approved plugins enabled. The task token is injected at runtime and is never committed.
+settings.json preserves the exact GLM aliases, empty implicit fallbackModel, internal model gateway URL, one-million-token primary auto-compact window, subprocess environment scrubbing, and existing native settings. Enable every useful audited plugin/tool route from the registry. Route approved DeepSeek roles explicitly without changing the primary aliases. Runtime task authorization has no provider credential and is never committed. GBrain uses automatic plus model-initiated read-only audited_hybrid retrieval for parent and children.
 
 task.code-workspace must include:
 
@@ -169,7 +175,7 @@ Expected: tests pass and rg returns no matches.
 
 **Interfaces:**
 - Consumes: args.facts, args.failure, or args.evidence supplied by the parent
-- Produces: schema-validated analyses with exact model provenance and zero child tool calls
+- Produces: schema-validated analyses with declared model/role provenance and audited useful read-only child tool calls
 
 - [ ] **Step 1: Write failing workflow contract tests**
 
@@ -180,13 +186,14 @@ from pathlib import Path
 WORKFLOWS = Path("leaderboard/agent-template/.claude/workflows")
 
 
-def test_workflows_use_exact_model_and_no_external_evidence():
+def test_workflows_use_declared_models_and_registered_tools():
     for name in ("recon.js", "debug.js", "review.js"):
         text = (WORKFLOWS / name).read_text()
-        assert "model: 'glm-5.3[1m]'" in text
-        assert "patch.diff" not in text
-        assert "fixed" not in text.lower()
-        assert "github" not in text.lower()
+        assert "deepseek-flash" in text
+        assert "capabilityPolicy" in text
+        assert "parentSelectsOfficialFinal" in text
+    recon = (WORKFLOWS / "recon.js").read_text()
+    assert "glm-5.3[1m]" in recon
 
 
 def test_recon_has_exactly_three_parallel_children():
@@ -206,7 +213,10 @@ def test_ultracode_policy_is_bounded():
         "max_recon_runs": 1,
         "max_debug_runs": 1,
         "max_review_runs": 1,
-        "allow_child_tools": False,
+        "allow_child_tools": True,
+        "child_tool_policy": "audited_read_only",
+        "child_capabilities": ["local_read", "clangd_read", "gbrain_recall", "gbrain_search"],
+        "alternate_model_policy": "active_deepseek_official_api_thinking_max",
         "allow_automatic_retry": False,
         "allow_unbounded_loop": False,
     }
@@ -218,7 +228,7 @@ def test_ultracode_policy_is_bounded():
 
 - [ ] **Step 3: Implement the bounded workflows**
 
-recon.js runs through Ultracode's dynamic Workflow surface with three children: harness/input-format analyst, reachable-root-cause analyst, and falsifiable-input-hypothesis analyst. Each prompt says to analyze only JSON-serialized parent facts, take no external action, make no tool call, and return uncertainties plus disproof checks. The run must emit one workflow ID plus a model, role, state, retry count, and terminal record for every child; warnings never authorize a relaunch outside the budget.
+recon.js preserves Ultracode's three-child workflow: GLM harness/input-format and reachable-root-cause analysts plus one independent DeepSeek falsifiable-input-hypothesis lane. Each analyzes current-task facts, may inspect task-local source/clangd and retrieve audited GBrain read-only memory, and returns uncertainty and disproof checks. The frozen registry enforces child read-only scopes. Emit workflow ID, model, role, request/token/tool events, state, retry count and terminal record per child. Warnings never authorize a relaunch outside the budget. GLM alone selects the official final; DeepSeek may propose candidates.
 
 orchestration-policy.json contains the exact object asserted above. The controller signs its hash into the harness lock and rejects an observed run or child count that exceeds it.
 
@@ -228,11 +238,15 @@ debug.js uses one child and accepts:
 const failure = args.failure;
 const result = await agent(
   "Analyze only the supplied current-task failure. Separate observation, " +
-  "hypothesis, disproof test, and smallest next action. Do not call tools.",
+  "hypothesis, disproof test, and smallest next action. Use approved " +
+  "read-only local, clangd and GBrain tools when useful.",
   {
     label: "systematic-debug-analysis",
     phase: "debugging",
-    model: "glm-5.3[1m]",
+    model: "deepseek-flash",
+    role: "conditional_debug_recovery",
+    capabilityPolicy: "audited_read_only",
+    parentSelectsOfficialFinal: true,
     schema: {
       type: "object",
       additionalProperties: false,
@@ -248,6 +262,8 @@ const result = await agent(
 );
 return {result, parentAuditRequired: true};
 ~~~
+
+The controller route supplies the official DeepSeek chat-completions endpoint, enabled thinking and reasoning_effort=max. The one conditional debug/recovery workflow triggers only after a concrete vulnerable-side failure; it does not restart a scored attempt. review.js uses DeepSeek as the one final adversarial critic, with the same audited read-only capabilities and no fixed-side access. Apply Plan 03's concrete DeepSeek allocations (12 recon, 16 debug/recovery, 8 critic requests) within the shared 600-request, 43,200-second, three-child campaign ceilings. No hidden fallback route or extra model authorization decision is required.
 
 review.js receives source alignment, one candidate hash, vulnerable-side raw output, repeat count, and unresolved concerns. It returns GO or NO-GO but never receives a fixed exit code. All three workflows fail closed on malformed arguments and report parentAuditRequired=true.
 
@@ -367,8 +383,8 @@ Expected: node tests pass and one VSIX is produced.
 - Modify: examples/cybergym/uv.lock
 
 **Interfaces:**
-- Consumes: POST /v1/messages and /v1/messages/count_tokens with a task-scoped token
-- Produces: byte-preserving streamed Z.ai responses plus model-request.jsonl and usage.jsonl
+- Consumes: task-scoped POST /v1/messages, /v1/messages/count_tokens and declared-role /v1/chat/completions
+- Produces: streamed Z.ai/official DeepSeek responses plus model-request.jsonl and usage.jsonl without provider credential exposure
 
 - [ ] **Step 1: Write failing gateway tests**
 
@@ -381,14 +397,24 @@ from nooa_cybergym.leaderboard.model_gateway import ModelPolicy, validate_reques
 
 
 def test_gateway_rejects_undeclared_model():
-    policy = ModelPolicy(primary="glm-5.3[1m]", alternates=[])
+    policy = ModelPolicy(primary="glm-5.3[1m]", alternates=["deepseek-flash"])
     with pytest.raises(PermissionError, match="undeclared model"):
         validate_request({"model": "other-model"}, policy)
 
 
 def test_gateway_accepts_exact_primary_model():
-    policy = ModelPolicy(primary="glm-5.3[1m]", alternates=[])
+    policy = ModelPolicy(primary="glm-5.3[1m]", alternates=["deepseek-flash"])
     validate_request({"model": "glm-5.3[1m]"}, policy)
+
+
+def test_gateway_accepts_active_deepseek_only_for_declared_role(active_policy):
+    validate_request(
+        {"model": "deepseek-flash", "role": "independent_recon",
+         "thinking": {"type": "enabled"}, "reasoning_effort": "max"},
+        active_policy,
+    )
+    with pytest.raises(PermissionError, match="undeclared role"):
+        validate_request({"model": "deepseek-flash", "role": "hidden_fallback"}, active_policy)
 
 
 def test_sse_usage_is_attributed_to_request(tmp_path):
@@ -419,22 +445,25 @@ def test_sse_usage_is_attributed_to_request(tmp_path):
 Add aiohttp to the runner optional dependency using uv. The gateway:
 
 - validates the task-scoped bearer token;
-- parses only enough JSON to enforce the request model;
+- validates model, declared role, trigger, capability-policy hash, thinking/reasoning settings and shared/per-role budgets;
+- binds the role and trigger to authenticated controller/workflow context using the existing authority; a request-body role cannot grant a route or admit a debugging failure;
 - marks the attempt started before forwarding the first accepted solver request;
-- replaces the internal bearer token with SUNCHASER_ZAI_CODING_PLAN_TOKEN held outside the task container;
+- replaces task authorization with SUNCHASER_ZAI_CODING_PLAN_TOKEN for the plan-backed Z.ai route or controller-held DEEPSEEK_API_KEY for https://api.deepseek.com chat completions;
 - streams request and response bodies without prompt mutation;
-- records request SHA-256, declared role, model, timestamps, HTTP status, token classes, and response model;
-- rejects direct fallback and any alternate route absent from the signed model policy; and
-- never writes the real plan token to evidence or the task environment.
+- records request SHA-256, role, model, capability/policy hash, timestamps, HTTP status, all token classes including thinking, tool calls, returned model/version and provider fingerprint when available;
+- permits the active declared DeepSeek recon, conditional debugging/recovery and final-critic routes, and rejects undeclared fallback or unaudited routes; and
+- never writes provider keys into solver/child files, environment, prompts, logs, argv, process-visible data or evidence. Scrubbing alone is insufficient: the keys are never injected into the task execution context.
 
-The gateway configuration must name the Z.ai Coding Plan route explicitly and the certification report must include account/session evidence that the credential is plan-backed.
+The gateway configuration names the Z.ai Coding Plan route explicitly; certification includes account/session evidence of that entitlement and the real official DeepSeek API route, deepseek-flash, enabled thinking and reasoning_effort=max. Freeze endpoint/request settings and returned metadata; disclose that alias metadata cannot guarantee frozen provider weights. Keep GLM's native primary path intact and preserve upstream streaming/tool protocol semantics, including DeepSeek reasoning content where required for multi-turn tool calls.
 
 - [ ] **Step 4: Run unit and local streaming integration tests**
 
     uv run pytest tests/leaderboard/test_model_gateway.py -v
     uv run pytest tests/leaderboard/test_model_gateway_integration.py -v
 
-The integration test uses a fake upstream SSE server and proves response bytes and order are unchanged apart from hop-by-hop headers.
+Fake Z.ai and DeepSeek servers prove request settings, role routing, usage/thinking/cache accounting, tool-call stream correlation and preserved response order. Negative tests cover shared600 and role12/16/8 request limits, context/output/time limits, undeclared calls, missing provider metadata and credential absence from every solver/child exposure surface. Real capability acceptance remains Plan 04's live certification.
+
+Add negative cases where a valid task token supplies a forged request-body role, claims a debugging trigger without a controller-observed vulnerable-side failure, or reuses another task/attempt's admission. Role names in the examples are declarations to validate against trusted context, never authorization supplied by the caller. Enforce the separate 36 DeepSeek and 564 GLM/memory request allocations without borrowing, and prove a slow/trickling stream is cancelled at the total deadline rather than merely checking elapsed time after return.
 
 - [ ] **Step 5: Commit**
 
@@ -565,12 +594,13 @@ The lock includes:
 - launcher VSIX version and SHA-256;
 - agent image digest;
 - primary and alternate model policy hashes;
+- capability registry, documentation-route and hybrid-memory policy hashes;
 - CLAUDE.md, settings, every skill, and every workflow hash;
 - the Ultracode capability probe and orchestration-policy hash;
 - network and memory policy hashes; and
 - controller Git commit.
 
-Archive, with secret redaction, the extension output channel, Claude session JSONL, workflow-generated scripts, Ultracode workflow IDs and warnings, per-child model/tool/retry records, model-gateway requests and usage, task-local native auto-memory directory, launcher receipt, UI and remote-extension-host session identifiers, every observation/reconnect/abort control-channel event, controller events, stdout/stderr, and final lock. Fail telemetry validation when a model request lacks a model or role, a child lacks a terminal record, a generated workflow script lacks a hash, or the first gateway request lacks the started event.
+Archive, with secret redaction, the extension output channel, Claude session JSONL, workflow-generated scripts, Ultracode workflow IDs and warnings, per-child model/tool/retry records, gateway requests and usage/provider metadata, capability-registry decisions, documentation request/results, automatic and model-initiated GBrain query/result/used-ID records, task-local native auto-memory directory, launcher receipt, UI/remote-host identifiers, observation/reconnect/abort events, controller events, stdout/stderr and final lock. Fail validation on any missing model/role/capability/request/token/tool event, undeclared route, child without terminal record, unhashed workflow or absent started event.
 
 - [ ] **Step 4: Run the Plan 02 gate**
 

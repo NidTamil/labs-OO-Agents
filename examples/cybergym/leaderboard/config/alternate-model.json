@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "status": "active",
+  "models": [{
+    "model": "deepseek-flash",
+    "provider": "deepseek-official-api",
+    "base_url": "https://api.deepseek.com",
+    "api": "chat_completions",
+    "thinking": {"type": "enabled"},
+    "reasoning_effort": "max",
+    "context_tokens": 1048576,
+    "max_output_tokens": 128000,
+    "credential_ref": "controller:DEEPSEEK_API_KEY",
+    "metadata_policy": "record_returned_model_version_fingerprint_when_available",
+    "provider_weights_frozen_guarantee": false
+  }],
+  "routes": [
+    {"role": "independent_recon", "model": "deepseek-flash", "trigger": "one_recon_lane", "max_calls": 12, "max_tokens": 12582912, "max_seconds": 3600},
+    {"role": "conditional_debug_recovery", "model": "deepseek-flash", "trigger": "observable_vulnerable_side_failure", "max_calls": 16, "max_tokens": 16777216, "max_seconds": 3600},
+    {"role": "final_adversarial_critic", "model": "deepseek-flash", "trigger": "before_glm_parent_final_selection", "max_calls": 8, "max_tokens": 8388608, "max_seconds": 1800}
+  ],
+  "child_capabilities": ["local_read", "clangd_read", "gbrain_recall", "gbrain_search"],
+  "may_propose_poc": true,
+  "official_final_selector": "glm_parent",
+  "shared_task_max_requests": 600,
+  "deepseek_max_requests": 36,
+  "glm_and_memory_auxiliary_max_requests": 564,
+  "shared_task_wall_timeout_sec": 43200,
+  "max_concurrent_children": 3,
+  "counted_tokens": "input_plus_output_including_thinking_and_cached_input_once"
+}

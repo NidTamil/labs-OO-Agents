@@ -14,7 +14,7 @@
 - The cohort order is the exact tasks.json order and contains 1,507 tasks.
 - Default task-level concurrency is one. Raising it requires a new certification and pre-go-live record.
 - The frozen task wall ceiling is 43,200 seconds (12 hours). Any change creates a new harness epoch.
-- Each task has at most 600 model requests, 128,000 maximum output tokens per request, one-million-token context, and at most three concurrent children.
+- Each task has at most 600 total model requests (including every auxiliary memory model), 128,000 maximum output tokens per request, 1,000,000 primary-context tokens and at most three children. DeepSeek may use its certified 1,048,576 total context; its role ceilings are 12 recon, 16 conditional debug/recovery and 8 final critic requests, with 564 shared requests remaining for GLM and memory auxiliaries.
 - CyberGym's published GLM-5.3 comparison used unlimited task timeout; disclose this campaign's finite crash-safety ceiling.
 - Human interaction after first request is observation, abort for safety, or UI reconnection only.
 - No started task is omitted, retried, or replaced.
@@ -22,6 +22,8 @@
 - The agent never sees fixed-side output.
 - All 1,507 final vul_exit_code and fix_exit_code values are reported, including missing or failed finals.
 - Primary aggregation and independent audit must agree before submission.
+
+**Control labels:** Agent-designated single final/final-submission metric, private submission, fixed-only verifier and full disclosure are official requirements. Answer-source, credential/personal-memory and host isolation are leakage boundaries. Cohort size/order, no retries, finite timeout, request/token/workflow budgets, audited registry and epoch are performance optimisations. Observation, reconnect and guarded updates are optional local choices. Do not describe the finite local timeout or numerical ceilings as benchmark mandates.
 
 ---
 
@@ -95,6 +97,14 @@ campaign-policy.json:
   "max_model_requests_per_task": 600,
   "max_output_tokens_per_request": 128000,
   "context_tokens": 1000000,
+  "deepseek_context_tokens": 1048576,
+  "deepseek_max_requests": 36,
+  "glm_and_memory_auxiliary_max_requests": 564,
+  "deepseek_max_counted_tokens": 37748736,
+  "deepseek_max_role_seconds": 9000,
+  "model_role_budget_source": "alternate-model.json",
+  "memory_mode": "audited_hybrid",
+  "capability_policy_source": "capability-policy.json",
   "max_concurrent_children": 3,
   "cohort_order": "tasks_json",
   "started_attempt_retry": "forbidden",
@@ -102,7 +112,7 @@ campaign-policy.json:
 }
 ~~~
 
-check_go_live verifies Ed25519 signatures, exact content hashes, accepted certification, explicit launch approval, exact epoch, memory decision, alternate-model decision, 1,507-task cohort, and policy equality. It writes campaign-created once with run_id and refuses a second run ID in the same evidence root.
+check_go_live reuses existing authority signing/ledger interfaces after inspection and verifies signatures, hashes, accepted live certification, explicit launch approval, exact epoch, approved audited_hybrid memory/controller-write policy, active DeepSeek roles/settings/budgets, complete enabled/exercised capability registry, 1,507-task cohort and policy equality. No new model-choice/strict-hook approval gate is added. It writes campaign-created once and refuses a second run ID in the same evidence root.
 
 - [ ] **Step 4: Run campaign tests**
 
@@ -288,7 +298,7 @@ def test_aggregation_rejects_duplicate_or_missing_task(full_cohort, duplicate_ro
         aggregate(full_cohort, duplicate_rows)
 ~~~
 
-Add tests for final-hash mismatch, absent exit code pair, per-model role separation, cache token classes, null unpriced cost, and exact YAML field names from SUBMISSION.md.
+Add tests for final-hash mismatch, absent exit-code pair, role separation, DeepSeek thinking/cache tokens, auxiliary-model shared-request accounting, capability/tool/route totals, missing provider metadata, null unpriced cost, and exact YAML field names from SUBMISSION.md.
 
 - [ ] **Step 2: Confirm the tests fail**
 
@@ -348,7 +358,7 @@ audit.py must not import aggregate.py. It reads canonical cohort order, verifies
 
     uv run pytest tests/leaderboard/test_audit.py -v
 
-Include parameterized mutations for deleted task, duplicate start, changed final, changed exit code, undeclared model, missing child, forbidden network success, and altered harness epoch.
+Include mutations for deleted task, duplicate start, changed final/exit code, undeclared model/tool/MCP route, missing child, unlogged retrieval, agent memory write, controller write without true oracle, key exposure, answer-source network success, budget breach and altered epoch. Verify full approved capability use is accounted for, rather than treating zero tool calls as compliance.
 
 - [ ] **Step 5: Commit**
 
@@ -376,6 +386,7 @@ def test_public_package_removes_credentials_and_personal_paths(sample_evidence):
     text = public.read_all_text()
     assert "ANTHROPIC_AUTH_TOKEN" not in text
     assert "SUNCHASER_ZAI_CODING_PLAN_TOKEN" not in text
+    assert "DEEPSEEK_API_KEY" not in text
     assert "C:\\Users\\nidhi" not in text
 
 
@@ -392,7 +403,7 @@ def test_backup_verifies_manifest_before_marking_complete(fake_remote, task_evid
 
 - [ ] **Step 3: Implement append-only backup**
 
-After every terminal task, create a sorted SHA-256 manifest, copy to a remote storage root that is not mounted into later tasks, verify every copied hash, and append backup_complete. Never rewrite a prior terminal task. The public builder removes secrets, private OAuth handoffs, database DSNs, SSH private material, personal paths, and unrelated user data while retaining model IDs, tools, prompts, trajectories, final PoCs, exit codes, and audit hashes required for review.
+After every terminal task, create a sorted SHA-256 manifest, copy to storage not mounted into later tasks, verify every copied hash and append backup_complete. Never rewrite a terminal task. The public builder removes secret values, OAuth handoffs, database DSNs, SSH private material, personal paths and unrelated data while retaining model IDs/roles, capability scopes, route decisions, tools, prompts, trajectories, final PoCs, exit codes and audit hashes. Controller-held DeepSeek credentials must already be absent from solver/child raw evidence; publication redaction is a second check, not the credential-isolation mechanism.
 
 - [ ] **Step 4: Run tests**
 
@@ -444,7 +455,7 @@ Document preflight, starting and stopping the controller, starting the determini
 
 - [ ] **Step 3: Write WRITEUP.md**
 
-Include the agent scaffold, native VS Code/Claude versions, GLM-5.3 Max Coding Plan route, every model role, Superpowers, bounded workflows, clangd, task-local auto memory, GBrain mode and preseed provenance, network allowlist, dynamic vulnerable environment, exact finite task ceiling, fixed cohort order, human non-intervention, development-history exclusions, final-submission rule, usage/cost method, limitations, and links to at least ten public trajectories.
+Include the reused agent scaffold/native VS Code/Claude versions, GLM-5.3 Max Coding Plan route, active official-API DeepSeek flash thinking/max recon/debug/critic roles, exact request settings/returned provider metadata and alias drift/no frozen-weight guarantee, every auxiliary model, audited enabled capability registry/tool/MCP/documentation routes, Superpowers/workflows, clangd, task-local memory, automatic and parent/child initiated audited_hybrid GBrain recall/search, controller-only true-oracle writes, provenance and answer/credential/host boundaries, dynamic vulnerable environment, finite budgets/cohort/no-retry controls with labels, human non-intervention, development exclusions, one official final, usage/cost method and at least ten public trajectories.
 
 - [ ] **Step 4: Run the complete pre-launch gate without starting the cohort**
 

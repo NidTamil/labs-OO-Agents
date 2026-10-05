@@ -4,7 +4,7 @@
 
 **Goal:** Build, certify, and operate a clean 1,507-task CyberGym Level 1 leaderboard campaign around the native VS Code Claude Code extension and GLM-5.3 Max.
 
-**Architecture:** SunChaser is the trusted controller and evidence authority. Each scored task runs in a new SSH-accessible container whose only writable task surface is /workspace, while the Windows VS Code client displays the native Claude Code session and a version-locked launcher supplies the initial generic prompt. Memory, model routing, certification, campaign scheduling, aggregation, and independent audit remain separate review gates.
+**Architecture:** SunChaser is the trusted controller and evidence authority. Reuse the existing remote authority at /srv/sunchaser/xeus-cybergym, the successful native VS Code/Claude harness and the deployed isolated GBrain service. Inspect its existing signing, ledger and legacy scorer contracts before adding missing interfaces; do not recreate working equivalents. Each scored task runs in a new SSH-accessible container with task-owned source/output/home surfaces, while the Windows VS Code client displays the native Claude Code session and a version-locked launcher supplies the initial generic prompt. Capability audit, active DeepSeek routing, hybrid memory, certification, campaign scheduling, aggregation, and independent audit remain reviewable implementation stages.
 
 **Tech Stack:** Python 3.12, uv, Pydantic 2, Docker, CyberGym, VS Code 1.140.0 or the recertified launch version, Claude Code extension 2.1.289 or the recertified launch version, Node.js built-in test runner, GLM-5.3 Max through Z.ai Coding Plan, GBrain MCP, JSON/JSONL, Ed25519, SHA-256.
 
@@ -17,12 +17,16 @@
 - A started task receives one terminal result and is never rerun in the same official cohort.
 - The agent selects exactly one final PoC; the controller never substitutes a timeout candidate.
 - GLM-5.3 Max uses the Z.ai Coding Plan entitlement, not pay-as-you-go model billing.
-- Alternate-model routes remain disabled until the separate pre-go-live decision selects an exact model and role or explicitly selects none.
+- Active DeepSeek official-API deepseek-flash thinking/max roles are one independent recon lane, conditional debugging/recovery, and the final adversarial critic; GLM chooses the single official final.
 - Claude native auto memory is enabled only inside one fresh task home and is archived without crossing tasks.
-- The dedicated Xeus-CyberGym GBrain is the only candidate MCP. Strict recall/remember enforcement remains off until explicit approval.
-- Web search, browsers, GitHub, issue trackers, changelogs, CodeRabbit, security guidance, general MCP servers, connectors, and human steering are unavailable during a scored attempt.
+- The deployed dedicated Xeus-CyberGym GBrain uses audited_hybrid scored mode: automatic and parent/child initiated read-only recall/search; controller-only writes after a true oracle verdict.
+- Enable useful permissible tools, plugins, MCP/connectors and controlled generic documentation routes after capability audit. Deny external target repositories/patches/issues/CVEs/published PoCs, credentials and host interfaces across every route; the provided vulnerable archive remains permitted evidence. Human steering after start remains prohibited.
+- DEEPSEEK_API_KEY stays controller-only and absent from solver/child files, environment, prompts, logs, command lines and process inspection; no broad workstation credential pass-through.
+- Freeze and disclose capability/model/role policies, every request/token/tool event, provider metadata and alias drift limitations. Certification exercises enabled capabilities and checks no undeclared calls.
 - Auto-updates remain enabled, but one 1,507-task headline cohort uses one certified harness epoch. A detected activation pauses scheduling.
 - The official launch requires a separate approval after certification; executing these plans does not authorise it.
+
+**Control labels:** Official requirements cover the agent-designated single final/final-submission metric, private submission host, fixed-only verifier, and complete settings/model/network/usage/trajectory/exit-code disclosure. Leakage boundaries cover answer-bearing artifacts, secrets and host access. The 1,507-task locked cohort, no retries, frozen epoch, registry, memory routing and numeric budgets are performance optimisations chosen for this campaign. Remote observation, guarded auto-updates and future GEPA are optional local choices. Unlabelled implementation mechanics inherit their applicable category; do not call local optimisations official requirements.
 
 ---
 
@@ -32,7 +36,7 @@
 |---|---|---|
 | 1 | 2026-10-05-cybergym-01-control-isolation.md | Locked cohort, clean workspaces, isolated task containers, network boundary, and one-attempt state machine |
 | 2 | 2026-10-05-cybergym-02-vscode-claude-harness-telemetry.md | Native VS Code launch path, generic Claude harness, bounded workflows, model gateway, and immutable final-selection telemetry |
-| 3 | 2026-10-05-cybergym-03-memory-multimodel.md | Task-local native memory, audited GBrain integration, preseed controls, failure-safe promotion, and disabled-by-default alternate-model gate |
+| 3 | 2026-10-05-cybergym-03-memory-multimodel.md | Task-local native memory, audited_hybrid GBrain, preseed controls, oracle writes, and active declared DeepSeek roles |
 | 4 | 2026-10-05-cybergym-04-synthetic-certification.md | Synthetic-only end-to-end certification with crash, reconnect, isolation, model, memory, and version-drift evidence |
 | 5 | 2026-10-05-cybergym-05-campaign-audit-submission.md | Crash-safe scheduler, 1,507-task ledger, official oracle path, aggregation, independent audit, and leaderboard package |
 
@@ -68,16 +72,9 @@ No plan may skip its predecessor. Plan 5 may build and test its scheduler before
 - Consumes: this master plan and the approved campaign design
 - Produces: a single branch name, baseline commit, and checkbox ledger used by all five plans
 
-- [ ] **Step 1: Create an isolated implementation worktree**
+- [x] **Step 1: Recover and select the existing approved baseline**
 
-Use the using-git-worktrees skill. Start from chore/sunchaser-official-preflight and create a codex-prefixed implementation branch.
-
-    git fetch fork chore/sunchaser-official-preflight
-    git worktree add ../labs-OO-Agents-cybergym-leaderboard \
-      -b codex/cybergym-leaderboard-campaign \
-      fork/chore/sunchaser-official-preflight
-
-Expected: the new worktree starts at the pushed plan-suite commit on chore/sunchaser-official-preflight, and commit 5b9dbe37cae7abbd28b521db75a6d10f267d978e remains an ancestor as the approved-design commit.
+The approved plan-suite baseline was recovered at 55d63ff3317ef6102354ba413b6ee32cf66f5ae5 on NidTamil/labs-OO-Agents, with approved-design ancestor 5b9dbe37cae7abbd28b521db75a6d10f267d978e. Continue on codex/audited-maximum-capability. Trusted Tailscale SSH reached the remote authority at /srv/sunchaser/xeus-cybergym, clean HEAD e28f33d45390c64f338d5520e68f53f4d8b50ce8 on chore/move-sunchaser-prep, five commits ahead of its tracked source. Existing canonical_json, SqliteEventLedger, kernel state_machine and tool_broker interfaces were inspected read-only and the signed core was not recreated. The isolated build worktree is /srv/sunchaser/labs-OO-Agents-audited-build at the recovered labs baseline; the original remote labs checkout remains untouched. Preserve the native harness and GBrain deployment. Reconcile source/API changes as implementation proceeds; read-only inspection is not full integration acceptance.
 
 - [ ] **Step 2: Write the execution record**
 
@@ -87,10 +84,16 @@ Create docs/superpowers/plans/2026-10-05-cybergym-implementation-status.md with:
 # CyberGym Leaderboard Implementation Status
 
 - design_commit: 5b9dbe37cae7abbd28b521db75a6d10f267d978e
-- implementation_branch: codex/cybergym-leaderboard-campaign
+- baseline_commit: 55d63ff3317ef6102354ba413b6ee32cf66f5ae5
+- implementation_branch: codex/audited-maximum-capability
+- policy_amendment_approved: true
 - official_launch_authorised: false
-- alternate_model_policy: disabled
-- strict_gbrain_hooks_authorised: false
+- alternate_model_policy: active_deepseek_official_api_thinking_max
+- scored_memory_mode: audited_hybrid
+- implementation_verified: false
+- live_certification_verified: false
+- remote_authority_inspected: true
+- remote_authority_commit: e28f33d45390c64f338d5520e68f53f4d8b50ce8
 
 | Plan | State | Review commit | Evidence |
 |---|---|---|---|
@@ -111,7 +114,7 @@ Run:
     sha256sum docs/superpowers/specs/2026-10-05-cybergym-sunchaser-leaderboard-campaign-design.md
     find docs/superpowers/plans -maxdepth 1 -name '2026-10-05-cybergym-*.md' -print | sort
 
-Expected: HEAD equals the pushed plan-suite commit, the approved-design ancestor check exits zero, the only worktree change is the new status file, and all six plan files are listed.
+Expected at the recovered local baseline: HEAD equals 55d63ff3317ef6102354ba413b6ee32cf66f5ae5, the approved-design ancestor check exits zero, and all six approved plan files are present alongside the new honest status ledger. Policy amendments remain reviewable changes; no implementation or live certification claim follows from this check.
 
 - [ ] **Step 4: Commit the execution record**
 
@@ -142,7 +145,7 @@ Require a real VS Code extension smoke test in a synthetic workspace. A unit tes
 
 - [ ] **Step 4: Execute and review Plan 03**
 
-Keep config/alternate-model.json in disabled state and keep strict GBrain hooks false. Tests must prove disabled routes cannot be invoked.
+Implement the approved active DeepSeek policy and audited_hybrid GBrain integration. Tests must prove approved roles and parent/child read-only routes work, while undeclared calls, answer leakage, agent memory writes and credential/host access fail. No new design approval is required.
 
 - [ ] **Step 5: Commit the updated status ledger**
 
@@ -170,7 +173,7 @@ Any failure in isolation, exact model identity, native extension launch, reconne
 
 - [ ] **Step 3: Freeze the epoch**
 
-Write the accepted extension, bundled Claude binary, launcher VSIX, agent image, prompt, skill, workflow, model-policy, network-policy, and controller commit hashes into harness-lock.json.
+Write accepted extension, bundled Claude binary, launcher, image, prompt, skill, workflow, model/role, hybrid-memory, capability-registry, network-policy, provider metadata and controller source hashes into harness-lock.json. Provider alias/version metadata is a disclosure record, not a guarantee of immutable provider weights.
 
 - [ ] **Step 4: Update the status record without authorising launch**
 
@@ -189,21 +192,21 @@ Set synthetic certification to accepted and leave official_launch_authorised fal
 
 - [ ] **Step 1: Present the certification evidence to the operator**
 
-The review explicitly covers the alternate-model decision, strict GBrain hooks, exact versions, auto-update epoch behavior, network allowlist, task budget, and campaign order.
+The review covers the already approved active DeepSeek roles, hybrid GBrain retrieval/controller writes, complete capability registry, exact versions/provider metadata, auto-update epoch behavior, network boundary, task budget, and campaign order. This is a live-certification and launch review, not a repeated design decision.
 
-- [ ] **Step 2: Record one alternate-model outcome**
+- [ ] **Step 2: Bind the active DeepSeek policy to certification**
 
-The JSON must contain either:
+The JSON references the complete certified model policy from Plan 03, including:
 
 ~~~json
-{"status":"disabled","models":[],"routes":[]}
+{"status":"active","provider":"deepseek-official-api","base_url":"https://api.deepseek.com","api":"chat_completions","model":"deepseek-flash","thinking":{"type":"enabled"},"reasoning_effort":"max","roles":["independent_recon","conditional_debug_recovery","final_adversarial_critic"],"max_requests":36}
 ~~~
 
-or a fully populated model, role, trigger, budget, credential path, and telemetry policy that has passed a new synthetic certification.
+Record all route triggers, concrete token/time limits, controller-only credential reference, provider response metadata, capability-policy hash and certification hash. The alias may drift; disclose that metadata pinning does not freeze provider weights. These excerpts are not substitutes for the full Plan 03 schema.
 
-- [ ] **Step 3: Record one GBrain enforcement outcome**
+- [ ] **Step 3: Bind audited_hybrid GBrain to certification**
 
-Set strict_gbrain_hooks to false with GBrain disabled for scored tasks, or true with the exact certified prologue/epilogue hashes. An explicit-MCP middle state is not allowed for the official run.
+Record scored_mode=audited_hybrid and certified automatic-recall, parent/child read-only recall/search, filtering, failure behavior and controller-only oracle-write hashes. Both retrieval paths are approved and audited; no agent capture/promotion/database access is permitted.
 
 - [ ] **Step 4: Request separate official-launch approval**
 
