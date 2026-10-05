@@ -61,6 +61,19 @@
 
 No plan may skip its predecessor. Plan 5 may build and test its scheduler before approval, but the command that starts the official cohort must reject a missing signed go-live record.
 
+## Operational sequence from the recovered checkpoint
+
+This is the execution path through the approved plans, not another design phase. Preserve earlier live GLM/native harness and GBrain validation; keep historical development scores separate from the new campaign. The new 185-test pass verifies additive components, not end-to-end readiness.
+
+1. Complete the missing integration in Plans 01–03 and the scheduler/audit preparation in Plan 05. Reuse the native VS Code/Claude Code GLM-5.3 Max harness, deployed GBrain and signed Xeus authority. Wire actual capability dispatch and parent/child logging, controller-bound DeepSeek recon/debug/critic routes, total request cancellation, GBrain exact-source signed provenance and auxiliary accounting, true-oracle controller writes, clean task containers, immutable GLM-selected finals and durable submission/recovery records. Resolve the existing DeepSeek secret reference and native workstation access without forwarding ambiguous or broad credentials.
+2. Run both non-cohort synthetic fixtures through the real native path and repeat the complete certification suite twice with identical configuration hashes. Exercise every enabled useful capability, real GLM/DeepSeek/GBrain calls, final selection and external oracle, answer/credential/host denials, memory state separation, deadlines, quota admission, interruption/reconnect and backup recovery. Record actual provider settings, returned metadata and auxiliary usage; old successful connection probes and mocked tests remain useful evidence but do not certify new behavior.
+3. Freeze the launch manifest and sign the readiness report. Lock the 1,507-task dataset/order, sanitized inputs/images, prompts/skills/workflows, tool/MCP/route inventory, model/role/budget policy, clean memory seed and write/promotion policy, observed runtime versions and evidence schemas. Reconcile Python 3.12 plans with the tested 3.13.15 runtime. Measure actual quota, tokens/cost, disk needs and throughput to publish a realistic schedule. Default task concurrency is one; any higher setting must be chosen, tested and recorded before launch. Dynamic GBrain contents evolve only through the frozen audited policy. The finite 12-hour/600-request budgets and concurrency are our performance choices, not official benchmark limits.
+4. Present the concrete signed certification, independent synthetic 1,507-row audit, capacity estimate, backup/recovery proof and disclosure draft for the previously agreed official launch approval. No official task is a tuning or certification fixture. Implementation work continues without another design/provider-choice approval.
+5. Start the one locked official cohort and continue in its declared order. Each task has a fresh native session/container, one started attempt, iterative vulnerable-side work within the budget, one GLM-designated final and a private true-oracle result. Checkpoint and back up every terminal task; failures remain in the denominator. No separate pilot/restart is added: any early progress inspection observes the same cohort without changing settings, steering tasks or rerunning them. Quota shortage delays new starts. An activated version change pauses scheduling until the certified version is restored; adopting a new version creates a separate epoch and cannot be silently merged with the incomplete cohort.
+6. Derive results from raw signed evidence, run the independent audit, and prepare the agent-focused leaderboard package. Include all 1,507 final exit-code pairs, every invoked model and its usage/cost/time, complete scaffold/tool/network/dynamic-memory disclosure, public writeup and at least ten reviewable trajectories/logs/PoCs. Prepare the submission for review; sending an email, posting an issue or publishing artifacts still requires the user's explicit authorization for that external action.
+
+The immediate implementation work is step 1. The next demonstrated milestone is a signed complete native certification pass, not another unit-test count or a reused development score.
+
 ### Task 1: Establish the implementation branch and execution record
 
 **Files:**
@@ -76,7 +89,9 @@ No plan may skip its predecessor. Plan 5 may build and test its scheduler before
 
 The approved plan-suite baseline was recovered at 55d63ff3317ef6102354ba413b6ee32cf66f5ae5 on NidTamil/labs-OO-Agents, with approved-design ancestor 5b9dbe37cae7abbd28b521db75a6d10f267d978e. Continue on codex/audited-maximum-capability. Trusted Tailscale SSH reached the remote authority at /srv/sunchaser/xeus-cybergym, clean HEAD e28f33d45390c64f338d5520e68f53f4d8b50ce8 on chore/move-sunchaser-prep, five commits ahead of its tracked source. Existing canonical_json, SqliteEventLedger, kernel state_machine and tool_broker interfaces were inspected read-only and the signed core was not recreated. The isolated build worktree is /srv/sunchaser/labs-OO-Agents-audited-build at the recovered labs baseline; the original remote labs checkout remains untouched. Preserve the native harness and GBrain deployment. Reconcile source/API changes as implementation proceeds; read-only inspection is not full integration acceptance.
 
-- [ ] **Step 2: Write the execution record**
+- [x] **Step 2: Write the execution record**
+
+Completed in 9cc8f83 and extended with prior live validation evidence in 95a0fde. Maintain the existing tracked status record; do not overwrite it with the original starting template below.
 
 Create docs/superpowers/plans/2026-10-05-cybergym-implementation-status.md with:
 
@@ -104,7 +119,9 @@ Create docs/superpowers/plans/2026-10-05-cybergym-implementation-status.md with:
 | 05 campaign/audit/submission | blocked on certification and go-live approval | | |
 ~~~
 
-- [ ] **Step 3: Verify the baseline and plan files**
+- [x] **Step 3: Verify the baseline and plan files**
+
+The baseline and approved plans were recovered and verified. Approved-design ancestry was also checked successfully on the full SunChaser repository; the local clone is shallow. Both build checkouts now include the additive checkpoints, so HEAD is a descendant of the original baseline rather than equal to it.
 
 Run:
 
@@ -116,7 +133,9 @@ Run:
 
 Expected at the recovered local baseline: HEAD equals 55d63ff3317ef6102354ba413b6ee32cf66f5ae5, the approved-design ancestor check exits zero, and all six approved plan files are present alongside the new honest status ledger. Policy amendments remain reviewable changes; no implementation or live certification claim follows from this check.
 
-- [ ] **Step 4: Commit the execution record**
+- [x] **Step 4: Commit the execution record**
+
+Completed by the recorded checkpoints above; no duplicate initialization commit is needed.
 
     git add docs/superpowers/plans/2026-10-05-cybergym-implementation-status.md
     git commit -m "chore: start CyberGym leaderboard implementation"
