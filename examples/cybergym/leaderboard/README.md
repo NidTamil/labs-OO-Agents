@@ -24,16 +24,18 @@ is space-constrained):
 The local unit-test command requires the inspected Xeus source copy at
 `D:\GLM\tmp\xeus-cybergym-src\src`; verify that path exists before running it.
 The helper sets temporary files, package caches, and future `uv` Python/tool
-installations to `D:\GLM`:
+installations to `D:\GLM`. The supported Python 3.13.13 runtime is installed
+at `D:\GLM\python\cpython-3.13.13-windows-x86_64-none\python.exe`:
 
 ```powershell
 Set-Location 'D:\GLM\Xeus CyberBench'
 . 'D:\GLM\use-d-drive.ps1'
 $env:PYTHONPATH = 'examples/cybergym;D:\GLM\tmp\xeus-cybergym-src\src'
-uv run --no-project --with pytest --with pydantic --with httpx --with docker --with cryptography --python 3.14 python -m pytest examples/cybergym/tests/leaderboard -q -m 'not docker' --confcutdir=examples/cybergym/tests/leaderboard
+$python = 'D:\GLM\python\cpython-3.13.13-windows-x86_64-none\python.exe'
+uv run --offline --no-project --with pytest --with pydantic --with httpx --with docker --with cryptography --python $python python -m pytest examples/cybergym/tests/leaderboard -q -m 'not docker' --confcutdir=examples/cybergym/tests/leaderboard
 ```
 
-The final local Python 3.14 suite yielded **529 passed, 6 skipped, 2 Docker
+The final local Python 3.13.13 suite yielded **529 passed, 6 skipped, 2 Docker
 tests deselected**. This verifies local logic; it is not live certification.
 
 The agent-image build is development work on the isolated SunChaser worktree,
@@ -58,7 +60,7 @@ resulting image digest in the harness lock; a mutable local tag is not a frozen
 identity.
 
 The read-only native inventory is executable as
-`uv run --no-project --with pydantic --with httpx --python 3.14 python -m nooa_cybergym.leaderboard.native_readiness --repo-root <repo> --extension-dir <installed-Claude-extension>`
+`uv run --offline --no-project --with pytest --with pydantic --with httpx --with docker --with cryptography --python $python python -m nooa_cybergym.leaderboard.native_readiness --repo-root <repo> --extension-dir <installed-Claude-extension>`
 from the repository root after setting `PYTHONPATH` above. It exits nonzero while the live interfaces below are
 missing. Its local command-source observation is not a native launch test.
 
@@ -66,7 +68,7 @@ The separate scored GBrain audit can be run from the repository root after the
 Windows setup above:
 
 ```powershell
-uv run --no-project --with pydantic --python 3.14 python -m nooa_cybergym.leaderboard.memory_readiness --repo-root 'D:\GLM\Xeus CyberBench'
+uv run --offline --no-project --with pytest --with pydantic --with httpx --with docker --with cryptography --python $python python -m nooa_cybergym.leaderboard.memory_readiness --repo-root 'D:\GLM\Xeus CyberBench'
 ```
 
 This command was run read-only and reported `gate=blocked`. It remains blocked
