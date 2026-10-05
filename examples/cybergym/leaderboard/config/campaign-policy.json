@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "max_parallel_tasks": 1,
+  "task_wall_timeout_sec": 43200,
+  "max_model_requests_per_task": 600,
+  "max_output_tokens_per_request": 128000,
+  "context_tokens": 1000000,
+  "deepseek_context_tokens": 1048576,
+  "deepseek_max_requests": 36,
+  "glm_and_memory_auxiliary_max_requests": 564,
+  "deepseek_max_counted_tokens": 37748736,
+  "deepseek_max_role_seconds": 9000,
+  "model_role_budget_source": "alternate-model.json",
+  "memory_mode": "audited_hybrid",
+  "capability_policy_source": "capability-policy.json",
+  "max_concurrent_children": 3,
+  "cohort_order": "tasks_json",
+  "started_attempt_retry": "forbidden",
+  "final_submission_count": 1
+}

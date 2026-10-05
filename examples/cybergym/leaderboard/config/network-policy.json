@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "allowed_logical_endpoints": [
+    "model-gateway",
+    "cybergym-submit",
+    "gbrain-read-gateway",
+    "documentation-gateway",
+    "registered-tool-gateway"
+  ],
+  "controller_only_provider_endpoints": ["https://api.deepseek.com", "https://api.z.ai"],
+  "required_denied_routes": [
+    "external-target-repository",
+    "external-target-patch",
+    "target-issue-or-changelog",
+    "cve-or-published-poc",
+    "fixed-or-prior-task-answer",
+    "credential-or-host-access"
+  ],
+  "direct_ip_egress": false,
+  "dns_mode": "proxy-only",
+  "documentation_routes": {
+    "documentation/compiler/reference-v1": {
+      "origin": "https://clang.llvm.org",
+      "path_prefix": "/docs/"
+    },
+    "documentation/python/reference-v1": {
+      "origin": "https://docs.python.org",
+      "path_prefix": "/3/"
+    }
+  },
+  "max_document_bytes": 2097152,
+  "max_redirects": 3
+}

@@ -776,6 +776,7 @@ name = "nooa-cybergym"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpcore" },
     { name = "nooa", extra = ["tracing"] },
     { name = "pydantic" },
 ]
@@ -792,6 +793,7 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'runner'", specifier = ">=45.0.0" },
     { name = "cybergym", extras = ["server"], marker = "extra == 'runner'", git = "https://github.com/sunblaze-ucb/cybergym.git" },
     { name = "docker", marker = "extra == 'runner'", specifier = ">=7.1.0" },
+    { name = "httpcore", specifier = "==1.0.9" },
     { name = "nooa", extras = ["tracing"], git = "https://github.com/NVIDIA-NeMo/labs-OO-Agents.git?rev=8229922d7274628c9be83f745589b40852680d60" },
     { name = "pydantic", specifier = ">=2.5.0" },
 ]

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "fixture_ids": ["synthetic:length-header", "synthetic:chunk-table"],
+  "repeat_count": 2,
+  "primary_model": "glm-5.3[1m]",
+  "reasoning_effort": "max",
+  "context_tokens": 1000000,
+  "max_output_tokens": 128000,
+  "max_model_requests_per_task": 600,
+  "alternate_model": "deepseek-flash",
+  "alternate_provider": "https://api.deepseek.com",
+  "alternate_api": "chat_completions",
+  "alternate_thinking": {"type": "enabled"},
+  "alternate_reasoning_effort": "max",
+  "alternate_context_tokens": 1048576,
+  "alternate_max_requests_by_role": {
+    "independent_recon": 12,
+    "conditional_debug_recovery": 16,
+    "final_adversarial_critic": 8
+  },
+  "alternate_max_tokens_by_role": {
+    "independent_recon": 12582912,
+    "conditional_debug_recovery": 16777216,
+    "final_adversarial_critic": 8388608
+  },
+  "alternate_max_seconds_by_role": {
+    "independent_recon": 3600,
+    "conditional_debug_recovery": 3600,
+    "final_adversarial_critic": 1800
+  },
+  "memory_mode": "audited_hybrid",
+  "required_capability_coverage": "all_enabled_registry_entries",
+  "max_concurrent_children": 3,
+  "required_orchestration_mode": "ultracode",
+  "required_workflows": ["recon", "review"],
+  "conditional_workflows": ["debug"],
+  "task_wall_timeout_sec": 43200,
+  "required_denials": [
+    "external-target-repository",
+    "external-target-patch",
+    "target-issue-or-changelog",
+    "cve-or-published-poc",
+    "provider-credential-access",
+    "personal-brain-or-agent-memory-write",
+    "/var/run/docker.sock",
+    "/srv/sunchaser",
+    "/tmp/poc"
+  ]
+}

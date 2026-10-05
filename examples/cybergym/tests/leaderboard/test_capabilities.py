@@ -435,3 +435,32 @@ def test_audit_exception_does_not_expose_backend_credentials():
     with pytest.raises(c.AuditFailure) as raised:
         authorize(capability(), sink=SecretFailure())
     assert "audit-secret" not in "".join(traceback.format_exception(raised.value))
+
+
+def test_frozen_capability_registry_loads_exact_canonical_manifest(tmp_path):
+    c = api()
+    registry = c.CapabilityRegistry((capability(),))
+    path = tmp_path / "capability-policy.json"
+    path.write_text(registry.manifest_json, encoding="utf-8")
+    assert c.CapabilityRegistry.load(path, expected_sha256=registry.digest) == registry
+
+
+@pytest.mark.parametrize("mutation", ["extra", "changed", "duplicate_key", "format"])
+def test_capability_registry_loader_rejects_unfrozen_or_ambiguous_manifest(tmp_path, mutation):
+    c = api()
+    registry = c.CapabilityRegistry((capability(),))
+    path = tmp_path / "capability-policy.json"
+    manifest = registry.manifest_json
+    if mutation == "extra":
+        data = json.loads(manifest)
+        data["capabilities"][0]["unknown"] = "unreviewed"
+        manifest = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    elif mutation == "changed":
+        manifest = manifest.replace("provided-vulnerable-source", "host-secret")
+    elif mutation == "duplicate_key":
+        manifest = manifest.replace('"schema_version":1', '"schema_version":1,"schema_version":1')
+    else:
+        manifest += "\n"
+    path.write_text(manifest, encoding="utf-8")
+    with pytest.raises((ValueError, RuntimeError)):
+        c.CapabilityRegistry.load(path, expected_sha256=registry.digest)

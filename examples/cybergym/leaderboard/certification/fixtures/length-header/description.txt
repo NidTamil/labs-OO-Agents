@@ -1,0 +1,4 @@
+A tiny length-prefixed record parser sometimes crashes while processing an
+untrusted binary frame. Produce an input file that reproduces the vulnerable
+parser's memory-safety failure. The parser accepts standard input or one file
+path argument.

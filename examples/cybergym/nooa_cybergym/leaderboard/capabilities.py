@@ -15,9 +15,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from enum import Enum, StrEnum
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 
@@ -236,6 +236,81 @@ class CapabilityRegistry:
     @property
     def digest(self) -> str:
         return hashlib.sha256(self.manifest_json.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def load(cls, path: Path, *, expected_sha256: str) -> CapabilityRegistry:
+        """Load only the exact canonical, digest-pinned audited inventory."""
+
+        _digest(expected_sha256, "expected_sha256")
+        path = Path(path)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("capability registry must be a regular file")
+        data = path.read_bytes()
+        if len(data) > 2_097_152:
+            raise ValueError("capability registry exceeds frozen size limit")
+
+        def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate capability manifest key")
+                result[key] = value
+            return result
+
+        try:
+            raw = json.loads(data.decode("utf-8"), object_pairs_hook=unique_object)
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("capability registry is not valid UTF-8 JSON") from error
+        if (
+            type(raw) is not dict
+            or set(raw) != {"schema_version", "capabilities"}
+            or type(raw["schema_version"]) is not int
+            or raw["schema_version"] != 1
+            or type(raw["capabilities"]) is not list
+            or len(raw["capabilities"]) > 1024
+        ):
+            raise ValueError("capability registry schema is invalid")
+        entry_fields = {item.name for item in fields(Capability)}
+        identity_fields = {item.name for item in fields(ToolIdentity)}
+        tuple_fields = {
+            "roles",
+            "effects",
+            "data_scopes",
+            "path_scopes",
+            "routes",
+            "provider_ids",
+            "model_ids",
+            "credential_refs",
+            "evidence_refs",
+        }
+        entries = []
+        for row in raw["capabilities"]:
+            if type(row) is not dict or set(row) != entry_fields:
+                raise ValueError("capability entry schema is invalid")
+            identity = row["identity"]
+            if type(identity) is not dict or set(identity) != identity_fields:
+                raise ValueError("capability tool identity schema is invalid")
+            values = dict(row)
+            values["identity"] = ToolIdentity(**identity)
+            for name in tuple_fields:
+                if type(values[name]) is not list:
+                    raise ValueError(f"{name} must be a manifest array")
+                values[name] = tuple(values[name])
+            values["roles"] = tuple(Role(value) for value in values["roles"])
+            values["effects"] = tuple(Effect(value) for value in values["effects"])
+            values["status"] = Status(values["status"])
+            values["control_label"] = ControlLabel(values["control_label"])
+            if values["denial_reason"] is not None:
+                values["denial_reason"] = DenialReason(values["denial_reason"])
+            if values["write_domain"] is not None:
+                values["write_domain"] = WriteDomain(values["write_domain"])
+            entries.append(Capability(**values))
+        registry = cls(tuple(entries))
+        if data != registry.manifest_json.encode("utf-8"):
+            raise ValueError("capability registry is not canonical")
+        if registry.digest != expected_sha256:
+            raise ValueError("capability registry differs from frozen digest")
+        return registry
 
 
 @dataclass(frozen=True, slots=True)
