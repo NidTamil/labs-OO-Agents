@@ -50,3 +50,100 @@ The approved budgets reuse 600 shared model requests per task, 128,000 maximum o
 DeepSeek is active policy, not a live-certification claim: official https://api.deepseek.com chat completions, deepseek-flash, enabled thinking, reasoning_effort=max. The controller holds DEEPSEEK_API_KEY; solver/child files, env, prompts, logs, argv and process inspection must never contain it. GLM alone selects the one official final. Provider alias metadata is recorded and disclosed; frozen provider weights are not guaranteed.
 
 Control labels in the amended plans distinguish official requirements, leakage boundaries, performance optimisations and optional local choices. Documentation review, mocked/unit tests and read-only remote inspection cannot substitute for live capability certification. No official cohort task may be opened as a certification fixture, retried after start, or launched before separate approval.
+
+## 2026-10-06 runtime integration update
+
+The requested native runtime build is in progress. This update supersedes earlier
+statements about missing credentials and component availability; it does not
+change the unapproved/unstarted official campaign or certify a benchmark result.
+
+- Reused the existing Z.ai Coding Plan credential. Live benign GLM-5.3 requests
+  with thinking enabled and effort max succeeded (74 tokens non-streaming and
+  58 tokens streaming). The check found and fixed two real provider mismatches:
+  the gateway must preserve `/v1/messages`, and Claude's `glm-5.3[1m]` context
+  selector becomes API model `glm-5.3`. Provider/task keys remain controller-only.
+- Official DeepSeek connectivity was independently exercised with the supplied
+  controller credential (two benign calls, 124 tokens). The active advisory
+  runtime now runs a bounded read-only action loop through the existing budgeted
+  controller; native campaign recon/debug/critic execution remains to be proved.
+- GBrain's dedicated native sidecar authenticated an exact-source read grant.
+  Four embeddings, one query expansion and one rerank completed with six shared
+  request reservations and settlements. Separate oracle-gated capture authority
+  passed a dry run; no memory pages were written. Signed catalog/facade integration
+  is implemented and tested, with a fresh final remote probe still required.
+- A concrete per-container network boundary passed live SunChaser probes:
+  approved synthetic routes, active host-canary denial, four HTTP bypass denials,
+  drift-triggered container stop, and restoration of pre-existing network rules.
+  Later socket-disconnect improvements have local HTTP tests and await fresh Linux
+  verification. Evidence is under the leaderboard network-runtime directory.
+- The native launcher and one-shot controller reservation, managed hooks,
+  provider-stream/tool correlation, parent/child read-only scopes and exact MCP
+  tool-use-ID attribution are implemented. Pinned Linux VS Code/Claude packages
+  are downloaded. The base image is built; the native overlay and actual native
+  session/reconnect proof are outstanding. Personal VS Code/Claude settings were
+  not changed.
+- `arvo:1065` and `arvo:3938` were previously staged from the official ten-task
+  sample only; neither has been attempted by the new native solver.
+
+Tailscale requested renewed human SSH authentication during this work. Remote
+verification is pending that check; local integration, tests and review continue.
+Do not treat component tests, successful API probes, or signed observations as
+accepted native certification. The two matching synthetic native runs, complete
+capability evidence and frozen manifests remain prerequisites for test readiness.
+
+## Native calibration update (2026-10-06 local)
+
+Tailscale SSH is restored. A disposable native container ran VS Code 1.140.0
+Remote SSH and the official Claude Code 2.1.289 extension in a dedicated D:
+profile. The one-shot launcher reserved and returned, and six scoped MCP servers
+initialized. The extension's initial-prompt argument placed text in the composer
+but did not send it. After a controller-directed Send action in the isolated
+window, the provider-free calibration gateway received an actual parent
+`/v1/messages` request and captured 36 real tool schemas. Its redacted artifact
+SHA-256 is `e9f60403ce650fa01b80bfbec3c5bb2fc2071a584c73690639bb011555e357d3`.
+No model was dispatched or synthetic task solved. The collector now accommodates
+bounded preliminary and concurrent native sessions, then locks to the first model
+session; focused tests passed on Windows and SunChaser. The actual tool inventory
+omits legacy `Grep` and `Glob`, which the capability builder no longer invents.
+Automatic controlled submission, exact registry freeze and the full live
+model/memory/tool/DeepSeek/oracle path remain outstanding. The official scored
+campaign remains unapproved and unstarted.
+
+## Synthetic native readiness update (2026-10-06 local)
+
+The amended runtime reached the live synthetic readiness gate under the single
+v23 controller freeze (`51f7116a75b93f1741776216efdd385698ebfe93f0edcbf1b08c267d0db727e9`).
+Four real native tasks, two executions each of the private `chunk-table` and
+`length-header` fixtures, returned `oracle_true=true` and
+`boundary_failed=false`. Each dispatched GLM-5.3 through Claude Code 2.1.289
+in VS Code Remote SSH 1.140.0, used parent and child tool sessions, completed
+the three active DeepSeek advisory roles, selected one final, and recorded a
+controller-only GBrain episode after the signed synthetic verdict. The private
+fixtures are not official benchmark tasks or scored campaign results.
+
+The independent audit at `/srv/sunchaser/runs/synthetic-readiness-v23-audit.json`
+(SHA-256 `24a077581ba67e08b657a2717856e76fac9ac96cdcb78a5423cf24a224cf44cf`)
+verified four Ed25519 oracle signatures, the pinned run/task/freeze/candidate
+identities, 745 sequential runtime-audit records and their hash chains, child
+GBrain and clangd calls, controlled documentation calls, all three DeepSeek
+roles, one final selection per task, and post-verdict memory ordering. The
+audit records 151 GLM requests: 148 with observed provider usage and three
+interrupted at controller stop. Those three lack final provider token counts;
+the ledger transparently charges their full one-million-token reservations
+instead of treating them as observed usage. DeepSeek returned the moving
+`deepseek-flash` alias and per-call usage, but did not return a fixed weight
+version or fingerprint. Native Claude requested `max_tokens=32000` with
+`output_config.effort=max`, despite the larger frozen policy ceiling. These
+provider-disclosed limits must accompany any later benchmark report.
+
+The live network denial proof at
+`/srv/sunchaser/evidence/network-boundary-20261006-v19/boundary-proof.json`
+passed canary, gateway-bypass, drift and cleanup checks; its boundary-runtime
+source hash still matches v23. The v23 policy separately freezes the five
+logical endpoints and six denied leakage categories. The remote component
+suite passed 898 tests with five skips and two deselections after the final
+test-file cleanup. Ruff passed across the leaderboard source, tests and scripts;
+the native launcher passed 27 Node tests. This establishes readiness
+for the already-authorised two practice exercises from the official ten-task
+subset, subject to maintaining the same freeze and reporting the real oracle
+results. No official scored campaign has started or been authorised.

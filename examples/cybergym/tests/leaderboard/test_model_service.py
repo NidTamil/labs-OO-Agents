@@ -39,7 +39,7 @@ PRIMARY_CHUNKS = [
             "type": "message_start",
             "message": {
                 "id": "m1",
-                "model": "glm-5.3[1m]",
+                "model": "glm-5.3",
                 "usage": {
                     "input_tokens": 11,
                     "cache_read_input_tokens": 1,
@@ -181,7 +181,7 @@ async def _call(service, scope, body, *, disconnect_after=None):
 def _primary_body():
     return json.dumps(
         {
-            "model": "glm-5.3[1m]",
+            "model": "glm-5.3",
             "max_tokens": 128000,
             "stream": True,
             "messages": [{"role": "user", "content": "synthetic task"}],
@@ -228,7 +228,7 @@ def test_native_anthropic_stream_uses_server_connection_and_keeps_wire_bytes(tmp
     assert b"".join(item["body"] for item in events[1:]) == b"".join(PRIMARY_CHUNKS)
     assert events[-1] == {"type": "http.response.body", "body": b"", "more_body": False}
     assert resolved == [CONNECTION]
-    assert transport.calls[0][0] == "https://api.z.ai/api/anthropic/messages"
+    assert transport.calls[0][0] == "https://api.z.ai/api/anthropic/v1/messages"
     assert transport.calls[0][1]["Authorization"] == "Bearer " + ZAI_TOKEN
     assert transport.calls[0][1]["anthropic-version"] == "2023-06-01"
     assert transport.calls[0][2] == body
@@ -252,13 +252,13 @@ def test_bearer_task_token_is_accepted_without_provider_key_exposure(tmp_path):
     [
         (
             "/v1/messages/count_tokens",
-            b'{"model":"glm-5.3[1m]","messages":[{"role":"user","content":"x"}]}',
+            b'{"model":"glm-5.3","messages":[{"role":"user","content":"x"}]}',
             StreamResponse(
                 [b'{"input_', b'tokens":14}'], headers={"content-type": "application/json"}
             ),
             None,
             None,
-            "https://api.z.ai/api/anthropic/messages/count_tokens",
+            "https://api.z.ai/api/anthropic/v1/messages/count_tokens",
         ),
         (
             "/v1/chat/completions",

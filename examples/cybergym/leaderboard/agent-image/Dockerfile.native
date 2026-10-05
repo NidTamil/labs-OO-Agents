@@ -1,0 +1,21 @@
+# Build only from the independently checked base image's immutable local ID.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG LAUNCHER_SHA256
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+COPY vscode-server-linux-x64.tar.gz claude-code-linux-x64.vsix sunchaser-cybergym-launcher.vsix /opt/sunchaser/vendor/
+COPY install-native.py /usr/local/lib/cybergym/install-native.py
+COPY native-mcp.json /etc/claude-code/managed-mcp.json
+RUN python3 /usr/local/lib/cybergym/install-native.py --vendor /opt/sunchaser/vendor --launcher-sha256 "${LAUNCHER_SHA256}" \
+    && rm -rf /opt/sunchaser/vendor
+COPY native-entrypoint.sh /usr/local/bin/cybergym-native-entrypoint
+COPY native-home.py /usr/local/lib/cybergym/native-home.py
+COPY native-agents /opt/sunchaser/native-agents
+RUN chmod 0755 /usr/local/bin/cybergym-native-entrypoint \
+    && find /opt/sunchaser/native-agents -type f -exec chmod 0444 {} + \
+    && mkdir -p /etc/sunchaser \
+    && touch /etc/sunchaser/native-launch-trust.json \
+    && chmod 0644 /etc/sunchaser/native-launch-trust.json
+ENTRYPOINT ["/usr/local/bin/cybergym-native-entrypoint"]

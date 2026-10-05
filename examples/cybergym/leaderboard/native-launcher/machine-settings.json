@@ -1,0 +1,23 @@
+{
+  "claudeCode.useTerminal": false,
+  "claudeCode.selectedModel": "glm-5.3[1m]",
+  "claudeCode.continueAfterReload": false,
+  "claudeCode.attachOpenFile": false,
+  "claudeCode.environmentVariables": [
+    {"name": "ANTHROPIC_BASE_URL", "value": "http://model-gateway"},
+    {"name": "ANTHROPIC_AUTH_TOKEN", "value": "xeus-container-peer-auth"},
+    {"name": "ANTHROPIC_MODEL", "value": "glm-5.3[1m]"},
+    {"name": "ANTHROPIC_DEFAULT_OPUS_MODEL", "value": "glm-5.3[1m]"},
+    {"name": "ANTHROPIC_DEFAULT_SONNET_MODEL", "value": "glm-5.3[1m]"},
+    {"name": "ANTHROPIC_DEFAULT_HAIKU_MODEL", "value": "glm-5.3[1m]"},
+    {"name": "CLAUDE_CODE_SUBAGENT_MODEL", "value": "glm-5.3[1m]"},
+    {"name": "CLAUDE_CODE_EFFORT_LEVEL", "value": "max"},
+    {"name": "ENABLE_TOOL_SEARCH", "value": "false"},
+    {"name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "value": "1"},
+    {"name": "CLAUDE_CONFIG_DIR", "value": "/home/agent/.claude"},
+    {"name": "DISABLE_AUTOUPDATER", "value": "1"}
+  ],
+  "extensions.autoUpdate": false,
+  "extensions.autoCheckUpdates": false,
+  "telemetry.telemetryLevel": "off"
+}

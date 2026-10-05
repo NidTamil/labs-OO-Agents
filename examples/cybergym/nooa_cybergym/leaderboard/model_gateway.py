@@ -44,6 +44,9 @@ from .deepseek import (
 )
 
 PRIMARY_MODEL = "glm-5.3[1m]"
+# Claude's [1m] suffix selects the client context window and is removed on
+# the wire. The Coding Plan rejects it as an API model identifier.
+PRIMARY_WIRE_MODEL = "glm-5.3"
 PRIMARY_CONTEXT_TOKENS = 1_000_000
 PRIMARY_CODING_PLAN_BASE_URL = "https://api.z.ai/api/anthropic"
 _PRIMARY_PATHS = frozenset(("/v1/messages", "/v1/messages/count_tokens"))
@@ -52,6 +55,10 @@ _MAX_OUTPUT_TOKENS = 128_000
 _MAX_IDENTITY_BUFFER = 1_048_576
 _MAX_SEMANTIC_SSE_FRAME_BYTES = 8 * 1_048_576
 _MAX_SEMANTIC_HOLD_BYTES = 16 * 1_048_576
+# Short overlaps with a random credential prefix are common in ordinary text.
+# Keep them buffered across chunks for full-secret detection, but do not treat
+# fewer than eight matching bytes as credential disclosure at stream end.
+_MIN_IDENTIFYING_FRAGMENT = 8
 _SSE_FRAME_END = re.compile(rb"(?:\r?\n){2}")
 _STATIC_RESPONSE_STRING_KEYS = frozenset(
     {
@@ -90,6 +97,26 @@ class GatewayDeadlineExceeded(TimeoutError):
 
 class GatewayUpstreamError(RuntimeError):
     """The provider failed; its body and transport exception are withheld."""
+
+
+def _failure_code(error: Exception | None) -> str | None:
+    """Audit fixed internal failure categories without copying upstream text."""
+    if error is None:
+        return None
+    return {
+        "provider stream ended without terminal event": "provider_stream_no_terminal",
+        "provider SSE frame ended incomplete": "provider_sse_incomplete",
+        "provider stream failed": "provider_transport_failure",
+        "provider response contains a controller credential": "credential_denied",
+        "provider response contains a controller credential fragment": "credential_fragment_denied",
+        "provider identity missing or changed": "provider_identity_invalid",
+        "provider response has invalid SSE JSON": "provider_sse_invalid",
+        "provider SSE frame exceeds semantic guard limit": "provider_sse_limit",
+        "provider SSE hold exceeds semantic guard limit": "provider_sse_hold_limit",
+        "provider response semantic frame is too complex": "provider_sse_complexity",
+        "provider returned non-success status": "provider_http_error",
+        "provider usage invalid": "provider_usage_invalid",
+    }.get(str(error), "other_failure")
 
 
 def _digest(value: object) -> bool:
@@ -332,8 +359,8 @@ class HttpxStreamingTransport:
 
     async def open_stream(self, url, headers, body, timeout):
         approved = {
-            PRIMARY_CODING_PLAN_BASE_URL + "/messages": "api.z.ai",
-            PRIMARY_CODING_PLAN_BASE_URL + "/messages/count_tokens": "api.z.ai",
+            PRIMARY_CODING_PLAN_BASE_URL + "/v1/messages": "api.z.ai",
+            PRIMARY_CODING_PLAN_BASE_URL + "/v1/messages/count_tokens": "api.z.ai",
             ENDPOINT: "api.deepseek.com",
         }
         if url not in approved:
@@ -502,6 +529,11 @@ class _StreamObservation:
         else:
             usage = None
         if isinstance(usage, dict):
+            # Z.ai's Anthropic stream omits cache creation when none was billed.
+            # Keep the other mandatory counters unknown until actually observed.
+            if "cache_creation_input_tokens" not in usage and kind == "message_delta":
+                if self.cache_creation_tokens is None:
+                    self.cache_creation_tokens = 0
             for source, destination in (
                 ("input_tokens", "input_tokens"),
                 ("output_tokens", "output_tokens"),
@@ -705,11 +737,13 @@ class _SecretStreamGuard:
         self._tail = pending[-held:] if held else b""
         return pending[:-held] if held else pending
 
-    def finish(self) -> None:
-        if self._tail:
+    def finish(self) -> bytes:
+        if len(self._tail) >= _MIN_IDENTIFYING_FRAGMENT:
             raise GatewayUpstreamError(
                 "provider response contains a controller credential fragment"
             )
+        tail, self._tail = self._tail, b""
+        return tail
 
 
 def _decoded_strings(value: Any) -> list[tuple[tuple[str | int, ...], str]]:
@@ -844,7 +878,7 @@ class _SemanticSSEGuard:
     def finish(self) -> list[bytes]:
         if self._pending:
             raise GatewayUpstreamError("provider SSE frame ended incomplete")
-        if self._tails:
+        if any(len(tail) >= _MIN_IDENTIFYING_FRAGMENT for tail in self._tails.values()):
             raise GatewayUpstreamError(
                 "provider response contains a controller credential fragment"
             )
@@ -877,7 +911,7 @@ def validate_request(
     if grant.capability_policy_sha256 != policy.capability_policy_sha256:
         raise GatewayPolicyError("capability policy hash mismatch")
     model = payload.get("model")
-    if path in _PRIMARY_PATHS and model == policy.primary:
+    if path in _PRIMARY_PATHS and model == PRIMARY_WIRE_MODEL:
         if grant.role is not None or grant.trigger is not None or grant.failure is not None:
             raise GatewayPolicyError("primary request has an alternate role")
         if path == "/v1/messages" and (
@@ -950,6 +984,8 @@ class NativeModelGateway:
         resolve_admission: Callable[[object], TrustedAdmission],
         mark_started: Callable[[str, str], bool],
         transport: StreamingTransport | None = None,
+        native_stream_observer: Callable[[TrustedAdmission, bytes], None] | None = None,
+        native_stream_finished: Callable[[TrustedAdmission, bool, str | None], bool] | None = None,
     ):
         if not all(
             type(value) is str and value
@@ -972,6 +1008,8 @@ class NativeModelGateway:
         self._resolve_admission = resolve_admission
         self._mark_started = mark_started
         self._transport = transport or HttpxStreamingTransport()
+        self._native_stream_observer = native_stream_observer
+        self._native_stream_finished = native_stream_finished
         self._lock = asyncio.Lock()
         self._started = False
         self._halted_for_usage = False
@@ -1018,6 +1056,16 @@ class NativeModelGateway:
         ):
             raise GatewayPolicyError("trusted task/attempt admission required")
         route = validate_request(payload, self._policy, path, grant)
+
+        async def emit_chunk(chunk: bytes) -> None:
+            if self._native_stream_observer is not None and route == "primary":
+                try:
+                    self._native_stream_observer(grant, chunk)
+                except Exception:
+                    self._halted_for_audit = True
+                    raise GatewayUpstreamError("native stream custody failed") from None
+            await send_chunk(chunk)
+
         role = grant.role if route == "deepseek" else None
         reserved_tokens = CONTEXT_TOKENS if role else PRIMARY_CONTEXT_TOKENS
         async with self._lock:
@@ -1055,7 +1103,7 @@ class NativeModelGateway:
             first_request = not self._started
         started_at = time.monotonic()
         requested_at = datetime.now(UTC).isoformat()
-        upstream_url = ENDPOINT if role else self._zai_url + path[len("/v1") :]
+        upstream_url = ENDPOINT if role else self._zai_url + path
         base_event = {
             "task_id": self._task_id,
             "attempt_id": self._attempt_id,
@@ -1064,6 +1112,7 @@ class NativeModelGateway:
             "role": role.value if role else "primary",
             "trigger": grant.trigger,
             "requested_model": payload["model"],
+            "configured_model": MODEL if role else self._policy.primary,
             "request_sha256": hashlib.sha256(body).hexdigest(),
             "policy_sha256": self._policy.digest,
             "capability_policy_sha256": self._policy.capability_policy_sha256,
@@ -1171,17 +1220,26 @@ class NativeModelGateway:
                             identity_verified = True
                             await send_headers(status, safe_headers)
                             for held_chunk in pending:
-                                await send_chunk(held_chunk)
+                                await emit_chunk(held_chunk)
                             pending.clear()
                     else:
                         for safe_part in safe_parts:
                             if safe_part:
-                                await send_chunk(safe_part)
-                secret_guard.finish()
+                                await emit_chunk(safe_part)
+                final_raw = secret_guard.finish()
+                if count_tokens:
+                    if final_raw:
+                        pending.append(final_raw)
+                elif final_raw:
+                    for safe_part in semantic_guard.feed(final_raw):
+                        if identity_verified:
+                            await emit_chunk(safe_part)
+                        else:
+                            pending.append(safe_part)
                 if semantic_guard is not None:
                     for safe_part in semantic_guard.finish():
                         if identity_verified:
-                            await send_chunk(safe_part)
+                            await emit_chunk(safe_part)
                         else:
                             pending.append(safe_part)
                 observation.finish()
@@ -1198,7 +1256,7 @@ class NativeModelGateway:
                         raise GatewayUpstreamError("provider identity missing or changed")
                     await send_headers(status, safe_headers)
                     for held_chunk in pending:
-                        await send_chunk(held_chunk)
+                        await emit_chunk(held_chunk)
                 elif not identity_verified or not observation.provider_request_id:
                     raise GatewayUpstreamError("provider identity missing or changed")
                 if role and observation.invalid_deepseek_usage():
@@ -1244,6 +1302,27 @@ class NativeModelGateway:
                         outcome = "transport_error"
                         error = GatewayUpstreamError("provider stream close failed")
             duration = time.monotonic() - started_at
+            failure_code = _failure_code(error)
+            retryable = False
+            if self._native_stream_finished is not None and route == "primary":
+                try:
+                    custody_retry = self._native_stream_finished(
+                        grant, outcome == "completed", failure_code
+                    )
+                    retryable = bool(
+                        custody_retry
+                        and outcome in {"provider_error", "transport_error"}
+                        and failure_code in {
+                            "provider_stream_no_terminal",
+                            "provider_sse_incomplete",
+                            "provider_transport_failure",
+                        }
+                    )
+                except Exception:
+                    self._halted_for_audit = True
+                    outcome = "audit_failed"
+                    error = GatewayUpstreamError("native stream custody failed")
+                    failure_code = "native_custody_failed"
             usage = observation.usage_row(
                 outcome=outcome,
                 reserved_tokens=reserved_tokens,
@@ -1262,6 +1341,8 @@ class NativeModelGateway:
                         | {
                             "event": "request_terminal",
                             "outcome": "audit_failed" if audit_failed else outcome,
+                            "failure_code": failure_code,
+                            "retryable": retryable,
                             "http_status": status,
                             "duration_seconds": duration,
                             "usage_status": usage["usage_status"],
@@ -1285,7 +1366,7 @@ class NativeModelGateway:
                     self._active_roles.discard(role)
                     if usage["usage_status"] == "observed" and not audit_failed:
                         state["tokens"] += usage["counted_tokens"] - reserved_tokens
-                if usage["usage_status"] != "observed":
+                if usage["usage_status"] != "observed" and not retryable:
                     self._halted_for_usage = True
                 if pre_forward_audit_failed or audit_failed:
                     self._halted_for_audit = True

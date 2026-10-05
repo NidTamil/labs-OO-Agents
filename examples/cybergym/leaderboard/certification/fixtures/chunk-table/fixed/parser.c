@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
     }
 
     uint32_t count = little_endian_u32(input + 4);
-    if ((size_t)count > (SIZE_MAX - 8) / 4 || (size_t)count * 4 > length - 8) {
+    if ((size_t)count > (length - 8) / 4) {
         free(input);
         return 0;
     }

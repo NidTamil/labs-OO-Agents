@@ -94,7 +94,7 @@ def test_model_transport_rejects_nonpublic_dns_before_controller_key_dispatch(ad
 
     async def call():
         await transport.open_stream(
-            "https://api.z.ai/api/anthropic/messages",
+            "https://api.z.ai/api/anthropic/v1/messages",
             {"Authorization": "Bearer synthetic-controller-key"},
             b"{}",
             5.0,
@@ -114,7 +114,7 @@ def test_model_transport_rejects_mixed_public_and_private_dns_answers():
 
     async def call():
         await transport.open_stream(
-            "https://api.z.ai/api/anthropic/messages",
+            "https://api.z.ai/api/anthropic/v1/messages",
             {"Authorization": "Bearer synthetic-controller-key"},
             b"{}",
             5.0,
@@ -137,7 +137,7 @@ def test_model_transport_pins_checked_ip_but_preserves_original_host_and_tls_nam
 
     async def call():
         response = await transport.open_stream(
-            "https://api.z.ai/api/anthropic/messages",
+            "https://api.z.ai/api/anthropic/v1/messages",
             {"Authorization": "Bearer synthetic-controller-key"},
             b"{}",
             5.0,
@@ -197,7 +197,7 @@ def test_model_transport_does_not_follow_redirect_or_resolve_its_target():
 
     async def call():
         response = await transport.open_stream(
-            "https://api.z.ai/api/anthropic/messages", {}, b"{}", 5.0
+            "https://api.z.ai/api/anthropic/v1/messages", {}, b"{}", 5.0
         )
         try:
             return response.status_code
@@ -211,11 +211,11 @@ def test_model_transport_does_not_follow_redirect_or_resolve_its_target():
 @pytest.mark.parametrize(
     "url",
     (
-        "https://127.0.0.1/api/anthropic/messages",
-        "http://api.z.ai/api/anthropic/messages",
-        "https://api.z.ai:8443/api/anthropic/messages",
+        "https://127.0.0.1/api/anthropic/v1/messages",
+        "http://api.z.ai/api/anthropic/v1/messages",
+        "https://api.z.ai:8443/api/anthropic/v1/messages",
         "https://api.z.ai/api/anthropic/unapproved",
-        "https://attacker.example/api/anthropic/messages",
+        "https://attacker.example/api/anthropic/v1/messages",
     ),
 )
 def test_model_transport_rejects_unapproved_route_before_dns(url):
@@ -248,7 +248,7 @@ def test_model_transport_rejects_caller_host_override_before_dns():
 
     async def call():
         await transport.open_stream(
-            "https://api.z.ai/api/anthropic/messages",
+            "https://api.z.ai/api/anthropic/v1/messages",
             {"Host": "attacker.example", "Authorization": "Bearer synthetic-controller-key"},
             b"{}",
             5.0,
@@ -322,7 +322,7 @@ def primary_stream():
                 "type": "message_start",
                 "message": {
                     "id": "m1",
-                    "model": "glm-5.3[1m]",
+                    "model": "glm-5.3",
                     "usage": {
                         "input_tokens": 11,
                         "cache_read_input_tokens": 7,
@@ -400,6 +400,8 @@ def gateway(
     *,
     repeat_id=False,
     zai_url="https://api.z.ai/api/anthropic",
+    native_stream_observer=None,
+    native_stream_finished=None,
 ):
     transport = Transport(response)
     audit = GatewayAudit(tmp_path / "model-request.jsonl", tmp_path / "usage.jsonl")
@@ -421,6 +423,8 @@ def gateway(
         ),
         mark_started=lambda task_id, attempt_id: starts.append((task_id, attempt_id)) or True,
         transport=transport,
+        native_stream_observer=native_stream_observer,
+        native_stream_finished=native_stream_finished,
     )
     return core, transport, starts
 
@@ -463,11 +467,154 @@ def deepseek_payload():
     }
 
 
+def test_native_custody_receives_exact_checked_stream_and_terminal(tmp_path):
+    observed, finished = [], []
+    core, _, _ = gateway(
+        tmp_path,
+        primary_stream(),
+        native_stream_observer=lambda grant, data: observed.append((grant.request_id, data)),
+        native_stream_finished=lambda grant, complete, failure_code: finished.append(
+            (grant.request_id, complete, failure_code)
+        ),
+    )
+    _, _, output = run(
+        core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True}
+    )
+    assert b"".join(data for _, data in observed) == b"".join(output)
+    assert finished == [("req-1", True, None)]
+
+
+def test_primary_thinking_only_failure_records_bounded_retry_custody(tmp_path):
+    response = StreamResponse(
+        lines(
+            {"type": "message_start", "message": {"id": "m1", "model": "glm-5.3"}},
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+        )
+    )
+    finished = []
+    core, transport, _ = gateway(
+        tmp_path,
+        response,
+        native_stream_finished=lambda grant, complete, code: finished.append((complete, code)) or code == "provider_stream_no_terminal",
+    )
+    with pytest.raises(GatewayUpstreamError, match="terminal event"):
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
+    assert finished == [(False, "provider_stream_no_terminal")]
+    terminal = rows(tmp_path / "model-request.jsonl")[-1]
+    assert terminal["failure_code"] == "provider_stream_no_terminal"
+    assert terminal["retryable"] is True
+    assert rows(tmp_path / "usage.jsonl")[-1]["counted_tokens"] == 1_000_000
+    with pytest.raises(GatewayUpstreamError, match="terminal event"):
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
+    assert len(transport.calls) == 2
+
+
+def test_nonretryable_primary_interruption_still_halts_usage(tmp_path):
+    response = StreamResponse(lines({"type": "message_start", "message": {"id": "m1", "model": "glm-5.3"}}))
+    core, transport, _ = gateway(
+        tmp_path,
+        response,
+        native_stream_finished=lambda grant, complete, code: False,
+    )
+    with pytest.raises(GatewayUpstreamError, match="terminal event"):
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
+    with pytest.raises(GatewayPolicyError, match="usage unavailable"):
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
+    assert len(transport.calls) == 1
+
+
+def test_incomplete_sse_frame_has_distinct_retryable_failure_code(tmp_path):
+    response = StreamResponse(
+        lines({"type": "message_start", "message": {"id": "m1", "model": "glm-5.3"}})
+        + [b'data: {"type":"content_block_delta"']
+    )
+    finished = []
+    core, _, _ = gateway(
+        tmp_path,
+        response,
+        native_stream_finished=lambda grant, complete, code: finished.append(code) or code == "provider_sse_incomplete",
+    )
+    with pytest.raises(GatewayUpstreamError, match="SSE frame ended incomplete"):
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
+    assert finished == ["provider_sse_incomplete"]
+    assert rows(tmp_path / "model-request.jsonl")[-1]["retryable"] is True
+
+
+def test_credential_fragment_failure_code_never_allows_retry(tmp_path):
+    from nooa_cybergym.leaderboard.model_gateway import _failure_code
+
+    assert _failure_code(GatewayUpstreamError("provider response contains a controller credential fragment")) == "credential_fragment_denied"
+    assert _failure_code(GatewayUpstreamError("provider SSE frame ended incomplete")) == "provider_sse_incomplete"
+
+
+def test_short_ambiguous_credential_prefix_is_released_at_stream_end():
+    from nooa_cybergym.leaderboard.model_gateway import _SecretStreamGuard, _SemanticSSEGuard
+
+    raw = _SecretStreamGuard(("controller-private-key",))
+    assert raw.feed(b"ordinary text ending in c") == b"ordinary text ending in "
+    assert raw.finish() == b"c"
+    semantic = _SemanticSSEGuard(("controller-private-key",))
+    frame = lines({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "logic"}})[0]
+    assert semantic.feed(frame) == []
+    assert semantic.finish() == [frame]
+
+
+def test_identifying_credential_prefix_still_fails_closed():
+    from nooa_cybergym.leaderboard.model_gateway import _SecretStreamGuard, _SemanticSSEGuard
+
+    raw = _SecretStreamGuard(("controller-private-key",))
+    raw.feed(b"controller-priva")
+    with pytest.raises(GatewayUpstreamError, match="credential fragment"):
+        raw.finish()
+    semantic = _SemanticSSEGuard(("controller-private-key",))
+    semantic.feed(lines({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "controller-priva"}})[0])
+    with pytest.raises(GatewayUpstreamError, match="credential fragment"):
+        semantic.finish()
+
+
+def test_native_custody_failure_stops_further_provider_admission(tmp_path):
+    def fail(_grant, _data):
+        raise OSError("synthetic private error")
+
+    core, transport, _ = gateway(tmp_path, primary_stream(), native_stream_observer=fail)
+    with pytest.raises(GatewayUpstreamError, match="custody"):
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
+    with pytest.raises(GatewayPolicyError, match="audit unavailable"):
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
+    assert len(transport.calls) == 1
+
+
+def test_real_zai_wire_format_preserves_v1_and_settles_optional_cache_creation(tmp_path):
+    # Shape observed from the Coding Plan's actual streaming response. [1m]
+    # is Claude's client context selector, not the provider model identifier.
+    response = primary_stream()
+    chunks = b"".join(response.chunks).replace(b"glm-5.3", b"glm-5.3")
+    chunks = chunks.replace(b'"cache_creation_input_tokens": 2, ', b"")
+    chunks = chunks.replace(b', "cache_creation_input_tokens": 2', b"")
+    response.chunks = [chunks]
+    core, transport, _ = gateway(tmp_path, response)
+    result, _, _ = run(
+        core,
+        "/v1/messages",
+        {
+            "model": "glm-5.3",
+            "max_tokens": 128000,
+            "stream": True,
+            "thinking": {"type": "enabled"},
+            "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "benign probe"}],
+        },
+    )
+    assert transport.calls[0][0] == "https://api.z.ai/api/anthropic/v1/messages"
+    assert result.usage_status == "observed"
+    assert rows(tmp_path / "usage.jsonl")[0]["cache_creation_tokens"] == 0
+
+
 def test_primary_stream_keeps_wire_bytes_and_records_observed_usage(tmp_path):
     response = primary_stream()
     core, transport, starts = gateway(tmp_path, response)
     payload = {
-        "model": "glm-5.3[1m]",
+        "model": "glm-5.3",
         "messages": [{"role": "user", "content": "task"}],
         "max_tokens": 128000,
         "stream": True,
@@ -476,7 +623,7 @@ def test_primary_stream_keeps_wire_bytes_and_records_observed_usage(tmp_path):
     assert b"".join(output) == b"".join(response.chunks)
     assert headers == [(200, {"content-type": "text/event-stream"})]
     assert starts == [("task-1", "attempt-1")]
-    assert transport.calls[0][0] == "https://api.z.ai/api/anthropic/messages"
+    assert transport.calls[0][0] == "https://api.z.ai/api/anthropic/v1/messages"
     assert transport.calls[0][1]["Authorization"] == "Bearer " + ZAI_TOKEN
     assert transport.calls[0][2] == json.dumps(payload).encode()
     assert result.usage_status == "observed"
@@ -567,9 +714,9 @@ def test_debug_needs_controller_observed_failure_from_same_attempt(tmp_path):
 def test_cross_task_admission_and_invalid_token_are_rejected_before_forward(tmp_path):
     core, transport, starts = gateway(tmp_path, primary_stream(), admission(task_id="task-2"))
     with pytest.raises(GatewayPolicyError, match="task.*attempt"):
-        run(core, "/v1/messages", {"model": "glm-5.3[1m]"})
+        run(core, "/v1/messages", {"model": "glm-5.3"})
     with pytest.raises(GatewayPolicyError, match="task authorization"):
-        run(core, "/v1/messages", {"model": "glm-5.3[1m]"}, token="wrong")
+        run(core, "/v1/messages", {"model": "glm-5.3"}, token="wrong")
     assert not transport.calls and not starts
 
 
@@ -632,11 +779,11 @@ def test_count_tokens_json_response_is_forwarded_and_counted_as_observed(tmp_pat
     result, headers, output = run(
         core,
         "/v1/messages/count_tokens",
-        {"model": "glm-5.3[1m]", "messages": [{"role": "user", "content": "x"}]},
+        {"model": "glm-5.3", "messages": [{"role": "user", "content": "x"}]},
     )
     assert b"".join(output) == b'{"input_tokens":14}'
     assert headers == [(200, {"content-type": "application/json"})]
-    assert transport.calls[0][0] == "https://api.z.ai/api/anthropic/messages/count_tokens"
+    assert transport.calls[0][0] == "https://api.z.ai/api/anthropic/v1/messages/count_tokens"
     assert result.usage_status == "observed"
     usage = rows(tmp_path / "usage.jsonl")[0]
     assert usage["input_tokens"] == 14 and usage["output_tokens"] is None
@@ -706,9 +853,9 @@ def test_transport_exception_is_redacted_and_failed_dispatch_keeps_reservation(t
 
 def test_duplicate_trusted_request_id_cannot_merge_distinct_usage_streams(tmp_path):
     core, transport, _ = gateway(tmp_path, primary_stream(), repeat_id=True)
-    run(core, "/v1/messages", {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True})
+    run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
     with pytest.raises(GatewayPolicyError, match="duplicate request"):
-        run(core, "/v1/messages", {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True})
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
     assert len(transport.calls) == 1
     assert len(rows(tmp_path / "usage.jsonl")) == 1
 
@@ -793,7 +940,7 @@ def test_reflected_controller_secret_split_across_chunks_is_never_released(tmp_p
     if provider == "primary":
         secret = ZAI_TOKEN.encode()
         initial = primary_stream().chunks[0]
-        payload = {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True}
+        payload = {"model": "glm-5.3", "max_tokens": 128000, "stream": True}
         path = "/v1/messages"
         grant = admission()
         reflection = lines(
@@ -849,7 +996,7 @@ def test_decoded_sse_credential_reflection_is_never_released(tmp_path, provider,
     if provider == "primary":
         secret = ZAI_TOKEN
         initial = primary_stream().chunks[0]
-        payload = {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True}
+        payload = {"model": "glm-5.3", "max_tokens": 128000, "stream": True}
         path = "/v1/messages"
         grant = admission()
 
@@ -939,7 +1086,7 @@ def test_count_tokens_decoded_json_credential_reflection_is_never_released(tmp_p
             core.forward(
                 path="/v1/messages/count_tokens",
                 authorization="Bearer " + TASK_TOKEN,
-                body=json.dumps({"model": "glm-5.3[1m]", "messages": []}).encode(),
+                body=json.dumps({"model": "glm-5.3", "messages": []}).encode(),
                 trusted_connection=object(),
                 send_headers=send_headers,
                 send_chunk=send_chunk,
@@ -979,9 +1126,7 @@ def test_benign_prefix_frames_are_released_before_provider_finishes(tmp_path):
         core.forward(
             path="/v1/messages",
             authorization="Bearer " + TASK_TOKEN,
-            body=json.dumps(
-                {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True}
-            ).encode(),
+            body=json.dumps({"model": "glm-5.3", "max_tokens": 128000, "stream": True}).encode(),
             trusted_connection=object(),
             send_headers=send_headers,
             send_chunk=send_chunk,
@@ -1009,7 +1154,7 @@ def test_oversized_semantic_sse_frame_fails_before_release(tmp_path):
                 path="/v1/messages",
                 authorization="Bearer " + TASK_TOKEN,
                 body=json.dumps(
-                    {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True}
+                    {"model": "glm-5.3", "max_tokens": 128000, "stream": True}
                 ).encode(),
                 trusted_connection=object(),
                 send_headers=send_headers,
@@ -1067,7 +1212,7 @@ def test_post_forward_audit_failure_latches_gateway_closed(tmp_path, failed_writ
             original(event)
 
         core._audit.record_request = fail_once
-    payload = {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True}
+    payload = {"model": "glm-5.3", "max_tokens": 128000, "stream": True}
     with pytest.raises(GatewayUpstreamError, match="controller audit failed") as error:
         run(core, "/v1/messages", payload)
     assert ZAI_TOKEN not in str(error.value)
@@ -1081,7 +1226,7 @@ def test_post_forward_audit_failure_latches_gateway_closed(tmp_path, failed_writ
 @pytest.mark.parametrize("max_tokens", [None, 128001, True])
 def test_primary_output_ceiling_is_enforced_before_forward(tmp_path, max_tokens):
     core, transport, _ = gateway(tmp_path, primary_stream())
-    payload = {"model": "glm-5.3[1m]", "stream": True}
+    payload = {"model": "glm-5.3", "stream": True}
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
     with pytest.raises(GatewayPolicyError, match="primary output"):
@@ -1096,7 +1241,7 @@ def test_primary_returned_output_ceiling_keeps_reservation(tmp_path):
                 "type": "message_start",
                 "message": {
                     "id": "m1",
-                    "model": "glm-5.3[1m]",
+                    "model": "glm-5.3",
                     "usage": {
                         "input_tokens": 11,
                         "cache_read_input_tokens": 0,
@@ -1110,13 +1255,13 @@ def test_primary_returned_output_ceiling_keeps_reservation(tmp_path):
     )
     core, _, _ = gateway(tmp_path, response)
     with pytest.raises(GatewayUpstreamError, match="provider usage"):
-        run(core, "/v1/messages", {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True})
+        run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
     assert rows(tmp_path / "usage.jsonl")[0]["counted_tokens"] == 1000000
 
 
-@pytest.mark.parametrize("model", ["glm-5.3[1m]", "deepseek-flash"])
+@pytest.mark.parametrize("model", ["glm-5.3", "deepseek-flash"])
 def test_wrong_returned_model_is_rejected_before_solver_receives_bytes(tmp_path, model):
-    if model == "glm-5.3[1m]":
+    if model == "glm-5.3":
         response = StreamResponse(
             lines(
                 {"type": "message_start", "message": {"id": "m1", "model": "wrong-model"}},
@@ -1184,9 +1329,7 @@ def test_hanging_stream_close_is_aborted_within_total_deadline(tmp_path):
         return await core.forward(
             path="/v1/messages",
             authorization="Bearer " + TASK_TOKEN,
-            body=json.dumps(
-                {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True}
-            ).encode(),
+            body=json.dumps({"model": "glm-5.3", "max_tokens": 128000, "stream": True}).encode(),
             trusted_connection=object(),
             send_headers=send_headers,
             send_chunk=send_chunk,
@@ -1203,7 +1346,7 @@ def test_count_tokens_over_primary_context_is_not_reported_as_observed(tmp_path)
     )
     core, _, _ = gateway(tmp_path, response)
     with pytest.raises(GatewayUpstreamError, match="provider usage"):
-        run(core, "/v1/messages/count_tokens", {"model": "glm-5.3[1m]"})
+        run(core, "/v1/messages/count_tokens", {"model": "glm-5.3"})
     usage = rows(tmp_path / "usage.jsonl")[0]
     assert usage["counted_tokens"] == 1000000
 
@@ -1214,7 +1357,7 @@ def test_initial_sse_without_identity_is_held_then_forwarded_in_original_order(t
     result, _, output = run(
         core,
         "/v1/messages",
-        {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True},
+        {"model": "glm-5.3", "max_tokens": 128000, "stream": True},
     )
     assert result.usage_status == "observed"
     assert output == response.chunks
@@ -1225,8 +1368,8 @@ def test_primary_endpoint_is_part_of_recorded_policy_identity(tmp_path):
     run(
         core,
         "/v1/messages",
-        {"model": "glm-5.3[1m]", "max_tokens": 128000, "stream": True},
+        {"model": "glm-5.3", "max_tokens": 128000, "stream": True},
     )
     request = rows(tmp_path / "model-request.jsonl")[0]
-    assert request["upstream_endpoint"] == "https://api.z.ai/api/anthropic/messages"
+    assert request["upstream_endpoint"] == "https://api.z.ai/api/anthropic/v1/messages"
     assert request["policy_sha256"] == policy().digest

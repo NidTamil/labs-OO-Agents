@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "gbrain": { "type": "http", "url": "http://gbrain-read-gateway/mcp" },
+    "clangd": { "type": "http", "url": "http://registered-tool-gateway/mcp/clangd" },
+    "documentation": { "type": "http", "url": "http://registered-tool-gateway/mcp/documentation" },
+    "advisor": { "type": "http", "url": "http://registered-tool-gateway/advisor/mcp", "timeout": 3600000 },
+    "finalizer": { "type": "http", "url": "http://registered-tool-gateway/mcp/finalizer" },
+    "vulnerable": { "type": "http", "url": "http://cybergym-submit/mcp" }
+  }
+}

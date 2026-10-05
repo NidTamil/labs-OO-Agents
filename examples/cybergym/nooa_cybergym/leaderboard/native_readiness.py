@@ -283,7 +283,7 @@ def audit_native_readiness(
         name: (controller_dir / filename).is_file()
         for name, filename in _CONTROLLER_COMPONENTS.items()
     }
-    launcher_dir = repo_root / "examples" / "cybergym" / "vscode-launcher"
+    launcher_dir = repo_root / "examples" / "cybergym" / "leaderboard" / "native-launcher"
     launcher_present = (launcher_dir / "extension.js").is_file() and (
         launcher_dir / "package.json"
     ).is_file()

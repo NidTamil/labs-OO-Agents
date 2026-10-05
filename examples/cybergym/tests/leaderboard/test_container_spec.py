@@ -26,15 +26,73 @@ from nooa_cybergym.leaderboard.network import NetworkPolicy
 NETWORK_ID = "a" * 64
 
 
+def test_controller_task_token_cannot_enter_container_configuration(tmp_path):
+    secret = "synthetic-private-controller-token"
+    with pytest.raises(ValueError, match="controller-only") as raised:
+        build_container_kwargs(
+            image="agent:test",
+            workspace=tmp_path,
+            output=tmp_path / "output",
+            network="isolated",
+            ssh_port=22222,
+            task_token=secret,
+        )
+    assert secret not in str(raised.value)
+
+
+def test_native_trust_mount_contains_only_ed25519_public_keys(tmp_path):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    public = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+    trust = tmp_path / "native-trust.json"
+    trust.write_text(json.dumps({"synthetic-controller": public}))
+    kwargs = build_container_kwargs(
+        image="agent:test",
+        workspace=tmp_path / "workspace",
+        output=tmp_path / "output",
+        network="isolated",
+        ssh_port=22222,
+        native_trust_file=trust,
+    )
+    assert kwargs["volumes"][str(trust)] == {
+        "bind": "/etc/sunchaser/native-launch-trust.json",
+        "mode": "ro",
+    }
+    trust.write_text(
+        json.dumps(
+            {
+                "key": key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                ).decode()
+            }
+        )
+    )
+    with pytest.raises(ValueError, match="public"):
+        build_container_kwargs(
+            image="agent:test",
+            workspace=tmp_path / "workspace",
+            output=tmp_path / "output",
+            network="isolated",
+            ssh_port=22222,
+            native_trust_file=trust,
+        )
+
+
 def test_container_has_only_reviewed_host_interfaces(tmp_path: Path) -> None:
-    task_token = "synthetic-task-secret"
     kwargs = build_container_kwargs(
         image="sunchaser/cybergym-agent:test",
         workspace=tmp_path / "workspace",
         output=tmp_path / "output",
         network="cybergym-internal",
         ssh_port=22222,
-        task_token=task_token,
         ssh_public_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockFixtureKey fixture",
         container_name="cybergym-task-test",
     )
@@ -65,7 +123,7 @@ def test_container_has_only_reviewed_host_interfaces(tmp_path: Path) -> None:
     assert kwargs.get("network_mode") != "host"
     assert "/var/run/docker.sock" not in kwargs["volumes"]
     assert kwargs["environment"]["CYBERGYM_SSH_PUBLIC_KEY"].startswith("ssh-ed25519 ")
-    assert kwargs["environment"]["CYBERGYM_TASK_TOKEN"] == task_token
+    assert "CYBERGYM_TASK_TOKEN" not in kwargs["environment"]
 
 
 @pytest.mark.parametrize("ssh_port", [0, -1, 65536, True])
@@ -77,7 +135,6 @@ def test_rejects_invalid_ssh_port(tmp_path: Path, ssh_port: object) -> None:
             output=tmp_path / "output",
             network="isolated",
             ssh_port=ssh_port,
-            task_token="synthetic-token",
         )
 
 
@@ -90,7 +147,6 @@ def test_rejects_newlines_in_public_key_without_echoing_it(tmp_path: Path) -> No
             output=tmp_path / "output",
             network="isolated",
             ssh_port=22222,
-            task_token="synthetic-token",
             ssh_public_key=injected_key,
         )
     assert "PermitRootLogin yes" not in str(raised.value)
@@ -170,6 +226,11 @@ class _FakeClient:
         pass
 
     def run(self, **_kwargs: object) -> _FakeContainer:
+        policy_path = Path(__file__).resolve().parents[2] / "leaderboard/config/network-policy.json"
+        expected = dict.fromkeys(
+            NetworkPolicy.load(policy_path).allowed_logical_endpoints, "172.18.0.1"
+        )
+        assert _kwargs["extra_hosts"] == expected
         self.run_calls += 1
         self.attrs["Containers"][self.container.id] = {}
         if self.extra_peer_after_start:
@@ -490,7 +551,6 @@ def test_start_records_only_verified_public_host_identity(tmp_path: Path) -> Non
         network_name="cybergym-internal",
         expected_network_id=NETWORK_ID,
         ssh_public_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockFixtureKey fixture",
-        task_token=token,
         image="agent:test",
         ssh_port=22222,
         container_name="cybergym-task-test",
@@ -543,7 +603,6 @@ def test_start_fails_closed_on_unverified_host_key_and_removes_container(tmp_pat
             network_name="cybergym-internal",
             expected_network_id=NETWORK_ID,
             ssh_public_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockFixtureKey fixture",
-            task_token=token,
             image="agent:test",
             ssh_port=22222,
             host_gateway_sentinel=_FakeSentinel(),
@@ -575,7 +634,6 @@ def test_rejects_host_key_with_wrong_wire_format_even_when_fingerprint_matches(
             network_name="cybergym-internal",
             expected_network_id=NETWORK_ID,
             ssh_public_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockFixtureKey fixture",
-            task_token="synthetic-token",
             image="agent:test",
             ssh_port=22222,
             host_gateway_sentinel=_FakeSentinel(),
@@ -594,7 +652,6 @@ def test_evidence_directory_cannot_be_inside_agent_workspace(tmp_path: Path) -> 
             network_name="cybergym-internal",
             expected_network_id=NETWORK_ID,
             ssh_public_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockFixtureKey fixture",
-            task_token="synthetic-token",
             image="agent:test",
             ssh_port=22222,
             host_gateway_sentinel=_FakeSentinel(),
@@ -613,7 +670,6 @@ def test_cleanup_failure_is_reported_without_leaking_runtime_error(tmp_path: Pat
             network_name="cybergym-internal",
             expected_network_id=NETWORK_ID,
             ssh_public_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockFixtureKey fixture",
-            task_token="synthetic-token",
             image="agent:test",
             ssh_port=22222,
             host_gateway_sentinel=_FakeSentinel(),
@@ -635,7 +691,6 @@ def test_refuses_network_that_allows_direct_external_egress(tmp_path: Path) -> N
             network_name="default-bridge",
             expected_network_id=NETWORK_ID,
             ssh_public_key="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockFixtureKey fixture",
-            task_token="synthetic-token",
             image="agent:test",
             ssh_port=22222,
             host_gateway_sentinel=_FakeSentinel(),

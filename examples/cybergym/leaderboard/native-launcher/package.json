@@ -1,0 +1,15 @@
+{
+  "name": "sunchaser-cybergym-launcher",
+  "displayName": "SunChaser CyberGym Native Launcher",
+  "description": "Version-locked native task launcher with controller launch custody.",
+  "version": "0.1.0",
+  "publisher": "xeus",
+  "license": "Apache-2.0",
+  "engines": {"vscode": "1.140.0"},
+  "categories": ["Other"],
+  "extensionKind": ["workspace"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "capabilities": {"untrustedWorkspaces": {"supported": false}},
+  "scripts": {"test": "node --test test/*.test.js"}
+}

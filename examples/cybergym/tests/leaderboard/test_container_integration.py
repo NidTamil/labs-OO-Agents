@@ -152,7 +152,6 @@ def test_task_image_ssh_identity_is_nonroot_and_mounts_are_disposable(tmp_path: 
                 network.name,
                 ssh_public_key,
                 expected_network_id=network.id,
-                task_token=f"synthetic-task-token-{index}",
                 image=tag,
                 docker_client=client,
             )

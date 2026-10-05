@@ -114,7 +114,7 @@ def test_complete_synthetic_attestor_exercises_future_gate_without_live_claim(
         "capabilities.py",
     ):
         (controller / name).write_text("# synthetic fixture only\n")
-    launcher = repo / "examples" / "cybergym" / "vscode-launcher"
+    launcher = repo / "examples" / "cybergym" / "leaderboard" / "native-launcher"
     launcher.mkdir(parents=True)
     (launcher / "extension.js").write_text("// synthetic fixture only\n")
     (launcher / "package.json").write_text("{}")

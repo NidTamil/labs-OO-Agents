@@ -75,6 +75,7 @@ def build_container_kwargs(
     task_token: str | None = None,
     ssh_public_key: str | None = None,
     container_name: str = "cybergym-task",
+    native_trust_file: Path | None = None,
 ) -> dict[str, Any]:
     """Construct the reviewed Docker SDK run configuration without side effects."""
     if type(ssh_port) is not int or not 1 <= ssh_port <= 65535:
@@ -86,7 +87,9 @@ def build_container_kwargs(
     ):
         _one_line(value, name)
     if task_token is not None:
-        _one_line(task_token, "task_token")
+        raise ValueError(
+            "task tokens are controller-only; container credential injection is forbidden"
+        )
     if ssh_public_key is not None:
         _one_line(ssh_public_key, "ssh_public_key")
         if (
@@ -96,11 +99,39 @@ def build_container_kwargs(
             raise ValueError("ssh_public_key must be one SSH Ed25519 public key")
 
     environment: dict[str, str] = {}
-    if task_token is not None:
-        environment["CYBERGYM_TASK_TOKEN"] = task_token
     if ssh_public_key is not None:
         environment["CYBERGYM_SSH_PUBLIC_KEY"] = ssh_public_key
 
+    volumes = {
+        str(workspace.resolve()): {"bind": "/workspace", "mode": "ro"},
+        str(output.resolve()): {"bind": "/workspace/output", "mode": "rw"},
+    }
+    if native_trust_file is not None:
+        trust = Path(native_trust_file)
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+            if (
+                not trust.is_absolute()
+                or trust.resolve() != trust
+                or not trust.is_file()
+                or trust.stat().st_size > 65536
+            ):
+                raise ValueError
+            keys = json.loads(trust.read_bytes())
+            if type(keys) is not dict or not keys or len(keys) > 16:
+                raise ValueError
+            for key_id, pem in keys.items():
+                if (
+                    not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", key_id)
+                    or type(pem) is not str
+                    or not isinstance(load_pem_public_key(pem.encode()), Ed25519PublicKey)
+                ):
+                    raise ValueError
+        except Exception:
+            raise ValueError("native trust mount requires only Ed25519 public keys") from None
+        volumes[str(trust)] = {"bind": "/etc/sunchaser/native-launch-trust.json", "mode": "ro"}
     return {
         "image": image,
         "name": container_name,
@@ -119,10 +150,7 @@ def build_container_kwargs(
             "/home/agent": "rw,nosuid,size=8g",
             "/workspace/src": "rw,nosuid,nodev,size=12g",
         },
-        "volumes": {
-            str(workspace.resolve()): {"bind": "/workspace", "mode": "ro"},
-            str(output.resolve()): {"bind": "/workspace/output", "mode": "rw"},
-        },
+        "volumes": volumes,
         "environment": environment,
         "detach": True,
     }
@@ -242,6 +270,7 @@ def start_task_container(
     host_gateway_sentinel: HostGatewaySentinel | None = None,
     ssh_relay_factory: Callable[[str, int, int], _RelayHandle] | None = None,
     startup_timeout_seconds: float = 900.0,
+    native_trust_file: Path | None = None,
 ) -> TaskContainer:
     """Start one disposable task image and save verified public SSH identity.
 
@@ -272,6 +301,7 @@ def start_task_container(
         task_token=task_token,
         ssh_public_key=ssh_public_key,
         container_name=container_name,
+        native_trust_file=native_trust_file,
     )
     if (
         type(startup_timeout_seconds) not in (int, float)
@@ -317,6 +347,9 @@ def start_task_container(
         raise RuntimeError("host gateway network identity could not be verified") from None
     if host_gateway_sentinel is None:
         raise RuntimeError("host gateway boundary attestation required")
+    # Logical routes terminate at the scoped controller proxy. Docker DNS is
+    # not an external resolver and must never supply an unreviewed destination.
+    kwargs["extra_hosts"] = {name: address for name, address, _ in boundary.routes}
 
     container = None
     relay: _RelayHandle | None = None

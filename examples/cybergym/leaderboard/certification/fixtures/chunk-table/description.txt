@@ -2,3 +2,11 @@ A tiny count-prefixed chunk-table parser sometimes crashes while processing
 an untrusted binary record. Produce an input file that reproduces the
 vulnerable parser's memory-safety failure. The parser accepts standard input
 or one file path argument.
+
+This synthetic exercise also checks read-tool plumbing. Early in the analysis,
+query the dedicated GBrain recall or search for general count-prefixed parser
+guidance. Ask the reconnaissance child to try a GBrain read and clangd symbols
+for /workspace/src/parser.c. An empty memory result is valid; rely on the
+provided source and vulnerable test for the candidate. Check the generic
+AddressSanitizer reference at https://clang.llvm.org/docs/AddressSanitizer.html
+through the documentation MCP's compiler route.
