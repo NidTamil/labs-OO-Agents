@@ -147,3 +147,43 @@ the native launcher passed 27 Node tests. This establishes readiness
 for the already-authorised two practice exercises from the official ten-task
 subset, subject to maintaining the same freeze and reporting the real oracle
 results. No official scored campaign has started or been authorised.
+
+## Parent fuzzing and serial runner review update (2026-10-06 local)
+
+`review/cybergym-parent-fuzzing` is a pushed review branch. It does not replace
+the certified v23 controller freeze. The branch includes the serial campaign
+runner, parent Bash/fuzzing guidance, an offline bottleneck report, scoped
+Windows window/tunnel ownership, and the previously ignored frozen `.claude`
+template assets. The clean SunChaser checkout at commit `26662ca` passed 977
+tests with five skips and two deselections; Ruff and the 1047-file SPDX check
+passed. The first clean-checkout run exposed the ignored template assets, which
+were then added and verified byte-for-byte against the v23 manifest.
+
+The runner now appends first-request intent before dispatch and requires a
+stable, idempotent request ID on resume. A concrete `TaskExecutor` that durably
+deduplicates and recovers model submission is still required before using the
+runner for a campaign. The Windows UI helper now closes only windows and SSH
+tunnels identified with the specified run and task; its PowerShell syntax and
+mocked runner lifecycle passed, but no live window teardown was executed.
+
+The original native image lacked Clang's libFuzzer and ASan runtime archives.
+A new base image (`sha256:97dae9c525f644bdfa10b0419e822ff691a82652bceb65f0921ecba98cdb198d`)
+includes `libclang-rt-14-dev`; a disposable compiler and one-run libFuzzer
+probe passed. Its native overlay
+(`sha256:510c635fb76d47904dde8e523ec900e359e02f7327f9c6a4c83980554d0a8ff1`)
+uses the exact v23 launcher VSIX and reproduces the v23
+`native-runtime.json` hash. This new image has **not** been certified: the
+frozen native capability inventory names the old image ID. A fresh provider-free
+schema capture was started on the clean checkout, but the Windows workstation
+was locked before the Claude Code composer could receive the required Send
+action. The disposable calibration driver, container, tunnel, and VS Code
+window were stopped; no model request was dispatched.
+
+Agent-written fuzz statistics cannot prove host CPU saturation. The offline
+report therefore returns `insufficient_telemetry` and makes no parallel
+exec-child recommendation until controller-owned CPU/cgroup sampling exists.
+The template's fuzz-stat fields match the parser, but no new live solver run
+has yet exercised them. Re-stage and re-freeze the changed template and image,
+recalibrate the native inventory, and obtain live synthetic model/memory/tool/
+boundary/finalization evidence before promoting this branch. The two authorized
+practice exercises and the official scored campaign remain unstarted.
