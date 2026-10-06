@@ -171,15 +171,17 @@ the configured host copy remains at `D:\GLM\cybergym-windows.ps1`.
 The original native image lacked Clang's libFuzzer and ASan runtime archives.
 A new base image (`sha256:97dae9c525f644bdfa10b0419e822ff691a82652bceb65f0921ecba98cdb198d`)
 includes `libclang-rt-14-dev`; a disposable compiler and one-run libFuzzer
-probe passed. Its native overlay
-(`sha256:510c635fb76d47904dde8e523ec900e359e02f7327f9c6a4c83980554d0a8ff1`)
+probe passed. Its final native overlay, rebuilt from the exact pushed source
+(`sha256:4e3a5c2bdcf860e231e2d5b00840c27d3b3f2c318cdd53c2d48946b88736721e`),
 uses the exact v23 launcher VSIX and reproduces the v23
-`native-runtime.json` hash. This new image has **not** been certified: the
-frozen native capability inventory names the old image ID. A fresh provider-free
-schema capture was started on the clean checkout, but the Windows workstation
-was locked before the Claude Code composer could receive the required Send
-action. The disposable calibration driver, container, tunnel, and VS Code
-window were stopped; no model request was dispatched.
+`native-runtime.json` hash. The one-run libFuzzer probe also passed inside this
+final overlay. This new image has **not** been certified: the frozen native
+capability inventory names the old image ID. A provider-free schema capture was
+attempted on an earlier overlay of the same base and launcher, but the Windows
+workstation was locked before the Claude Code composer could receive the
+required Send action. The disposable calibration driver, container, tunnel, and
+VS Code window were stopped; no model request was dispatched. The earlier
+uncertified overlays were removed after the final source build.
 
 Agent-written fuzz statistics cannot prove host CPU saturation. The offline
 report therefore returns `insufficient_telemetry` and makes no parallel
