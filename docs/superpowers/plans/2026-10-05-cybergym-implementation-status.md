@@ -164,7 +164,9 @@ stable, idempotent request ID on resume. A concrete `TaskExecutor` that durably
 deduplicates and recovers model submission is still required before using the
 runner for a campaign. The Windows UI helper now closes only windows and SSH
 tunnels identified with the specified run and task; its PowerShell syntax and
-mocked runner lifecycle passed, but no live window teardown was executed.
+mocked runner lifecycle passed, but no live window teardown was executed. Its
+reviewed source is tracked at `examples/cybergym/scripts/cybergym-windows.ps1`;
+the configured host copy remains at `D:\GLM\cybergym-windows.ps1`.
 
 The original native image lacked Clang's libFuzzer and ASan runtime archives.
 A new base image (`sha256:97dae9c525f644bdfa10b0419e822ff691a82652bceb65f0921ecba98cdb198d`)

@@ -83,7 +83,8 @@ class PowerShellNativeUi:
     """Default controller: shells out to the operational launcher/reaper script.
 
     The script path is taken from ``CYBERGYM_NATIVE_UI_SCRIPT`` (or the constructor)
-    so the repo carries no machine-specific path. See ``cybergym-windows.ps1``:
+    so the repo carries no machine-specific path. See the reviewed
+    ``examples/cybergym/scripts/cybergym-windows.ps1``:
     ``-Reap -RunId <r>`` / ``-Open -RunId <r> -TaskId <t>
     -RemoteHost <h> -Port <n>`` / ``-Close -RunId <r> -TaskId <t>
     -RemoteHost <h>``.
