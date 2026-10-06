@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Correlate real provider tool calls with native hooks before authorization.
 
 Container identity comes from the host gateway. Hook/session identifiers are

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Stream the scoped Docker gateway into the controller's ASGI model service.
 
 The native client uses a public placeholder, never a controller credential.

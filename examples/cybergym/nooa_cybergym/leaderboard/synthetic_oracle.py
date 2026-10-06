@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Private, actual vulnerable/fixed evaluation of a stopped synthetic run.
 
 This is deliberately labelled a toy oracle. Its signed result is never an

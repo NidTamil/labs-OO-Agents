@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Frozen native Workflow scripts and their reviewed child declarations.
 
 Scripts use the observed Claude Code 2.1.289 agent/parallel/phase API. This

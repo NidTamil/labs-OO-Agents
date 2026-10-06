@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Xeus-backed campaign signatures, payload custody, and serial event ledger.
 
 This adapter runs only in the trusted POSIX controller. A campaign-wide

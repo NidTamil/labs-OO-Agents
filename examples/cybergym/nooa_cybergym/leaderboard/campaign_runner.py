@@ -12,10 +12,11 @@ opened once per task before the first model request, closed on the signed termin
 receipt, and reaped on completion or on any failure. It mirrors the campaign plan's
 "one prepared/running/terminal task at a time ... on terminal, stop the tunnel".
 
-The loop never signs, never fabricates a receipt, and never retries a started
-attempt: it only calls the ledger transitions, which reject anything out of order.
-Because every step is ledger-replayed, a crash is resumed by re-reading the ledger;
-the only in-memory state is which window is currently open, which ``reap()`` clears.
+The loop never signs or fabricates a receipt. It records first-request intent
+before dispatch and asks the executor to ensure that request exists by its
+ledger ID. Repeated calls after a crash must not submit a second model request.
+The only in-memory state is which window is currently open; run-scoped
+``reap()`` clears it on recovery.
 """
 
 from __future__ import annotations
@@ -42,9 +43,10 @@ class UiTarget:
 class TaskExecutor(Protocol):
     """Per-task side effects the runner delegates (Docker, prompt, oracle, signing).
 
-    Every method is keyed only by ``task_id`` so the runner can resume after a crash
-    by re-reading the ledger; the executor is responsible for reattaching to a task
-    it already prepared or started (e.g. by reading its ``connection.json``).
+    ``first_request_id`` reserves a stable identity without submitting a request.
+    ``start`` must be idempotent across process restarts for that identity: on
+    recovery the runner invokes it again with the ID in the verified ledger.
+    An adapter cannot implement this by blindly resubmitting the model prompt.
     """
 
     def prepare(self, task_id: str) -> None:
@@ -53,8 +55,11 @@ class TaskExecutor(Protocol):
     def ui_target(self, task_id: str) -> UiTarget:
         """Return the SSH remote-host alias and forwarded port to attach the UI."""
 
-    def start(self, task_id: str) -> str:
-        """Submit the frozen prompt once and return the first model request id."""
+    def first_request_id(self, task_id: str) -> str:
+        """Return a durable, stable identity without submitting a model request."""
+
+    def start(self, task_id: str, request_id: str) -> None:
+        """Ensure the frozen prompt was submitted once under this request ID."""
 
     def await_terminal(self, task_id: str) -> bytes:
         """Block until the signed terminal receipt (oracle verdict or failure)."""
@@ -64,14 +69,14 @@ class TaskExecutor(Protocol):
 class NativeUiController(Protocol):
     """Owns the host-side native VS Code window + SSH tunnel for one task at a time."""
 
-    def reap(self) -> None:
-        """Kill every cybergym window + tunnel, whoever opened them (orphan safety)."""
+    def reap(self, run_id: str) -> None:
+        """Close only windows and tunnels owned by this campaign run."""
 
-    def open(self, remote_host: str, ssh_port: int) -> None:
-        """Open exactly one window + tunnel for ``remote_host`` on ``ssh_port``."""
+    def open(self, run_id: str, task_id: str, remote_host: str, ssh_port: int) -> None:
+        """Open one owned window + tunnel for this task."""
 
-    def close(self, remote_host: str) -> None:
-        """Tear down the window + tunnel for ``remote_host`` (no-op if absent)."""
+    def close(self, run_id: str, task_id: str, remote_host: str) -> None:
+        """Close only this run/task's window + tunnel (no-op if absent)."""
 
 
 class PowerShellNativeUi:
@@ -79,7 +84,9 @@ class PowerShellNativeUi:
 
     The script path is taken from ``CYBERGYM_NATIVE_UI_SCRIPT`` (or the constructor)
     so the repo carries no machine-specific path. See ``cybergym-windows.ps1``:
-    ``-Reap`` / ``-Open -RemoteHost <h> -Port <n> -Force`` / ``-Close -RemoteHost <h>``.
+    ``-Reap -RunId <r>`` / ``-Open -RunId <r> -TaskId <t>
+    -RemoteHost <h> -Port <n>`` / ``-Close -RunId <r> -TaskId <t>
+    -RemoteHost <h>``.
     """
 
     def __init__(self, script: str | None = None, *, pwsh: str = "pwsh") -> None:
@@ -97,14 +104,32 @@ class PowerShellNativeUi:
             check=True,
         )
 
-    def reap(self) -> None:
-        self._run("-Reap")
+    def reap(self, run_id: str) -> None:
+        self._run("-Reap", "-RunId", run_id)
 
-    def open(self, remote_host: str, ssh_port: int) -> None:
-        self._run("-Open", "-RemoteHost", remote_host, "-Port", str(ssh_port), "-Force")
+    def open(self, run_id: str, task_id: str, remote_host: str, ssh_port: int) -> None:
+        self._run(
+            "-Open", "-RunId", run_id, "-TaskId", task_id,
+            "-RemoteHost", remote_host, "-Port", str(ssh_port),
+        )
 
-    def close(self, remote_host: str) -> None:
-        self._run("-Close", "-RemoteHost", remote_host)
+    def close(self, run_id: str, task_id: str, remote_host: str) -> None:
+        self._run(
+            "-Close", "-RunId", run_id, "-TaskId", task_id,
+            "-RemoteHost", remote_host,
+        )
+
+
+def _started_request_id(state: CampaignState, task_id: str) -> str:
+    """Read the first-request identity from the verified durable ledger."""
+    events = state.authority.read_verified_events(state.evidence_root, state.run_id)
+    for event in reversed(events):
+        if event.get("type") == "started" and event.get("task_id") == task_id:
+            request_id = event.get("request_id")
+            if type(request_id) is str and request_id:
+                return request_id
+            break
+    raise RuntimeError("started task lacks a verified first-request identity")
 
 
 def run_campaign(
@@ -125,15 +150,16 @@ def run_campaign(
         raise ValueError("campaign scheduling is serial; max_parallel_tasks must be 1")
 
     open_host: str | None = None
-    # Clear any window/tunnel orphaned by a prior aborted or manual run before starting.
-    ui.reap()
+    open_task_id: str | None = None
+    # Clear only resources owned by this run from an earlier interrupted process.
+    ui.reap(state.run_id)
     try:
         while True:
             action = next_action(state)
             if action.kind == "complete":
                 # Final sweep: each task self-closes at terminal, but a crashed-then-
                 # resumed task can leave an untracked orphan, so end on a clean slate.
-                ui.reap()
+                ui.reap(state.run_id)
                 log("campaign complete")
                 return
             task_id = action.task_id
@@ -146,28 +172,37 @@ def run_campaign(
 
             elif action.kind == "observe_prepared":
                 target = executor.ui_target(task_id)
-                if open_host is not None and open_host != target.remote_host:
+                if open_host is not None and open_task_id != task_id:
                     # Serial invariant: never leave a prior task's UI alive.
-                    ui.close(open_host)
-                ui.open(target.remote_host, target.ssh_port)
+                    assert open_task_id is not None
+                    ui.close(state.run_id, open_task_id, open_host)
+                ui.open(state.run_id, task_id, target.remote_host, target.ssh_port)
                 open_host = target.remote_host
-                log(f"started {task_id} on {target.remote_host}:{target.ssh_port}")
-                request_id = executor.start(task_id)
+                open_task_id = task_id
+                log(f"opening {task_id} on {target.remote_host}:{target.ssh_port}")
+                request_id = executor.first_request_id(task_id)
                 state.mark_started(task_id, request_id=request_id)
 
             elif action.kind == "observe_started":
+                if open_task_id != task_id:
+                    target = executor.ui_target(task_id)
+                    ui.open(state.run_id, task_id, target.remote_host, target.ssh_port)
+                    open_host = target.remote_host
+                    open_task_id = task_id
+                executor.start(task_id, _started_request_id(state, task_id))
                 receipt = executor.await_terminal(task_id)
                 state.mark_terminal(task_id, receipt)
                 if open_host is not None:
-                    ui.close(open_host)
+                    ui.close(state.run_id, task_id, open_host)
                     open_host = None
+                    open_task_id = None
                 log(f"terminal {task_id}")
 
             else:  # pragma: no cover - campaign.next_action yields no other kind
                 raise RuntimeError(f"unsupported campaign action: {action.kind!r}")
     except BaseException:
         # Never leak a window or tunnel across a failure or interrupt.
-        ui.reap()
+        ui.reap(state.run_id)
         raise
 
 
@@ -191,7 +226,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI s
                 {
                     "state": "campaign.check_go_live(signed decision/certification/"
                     "harness_lock/cohort, frozen policy, tasks.json, trusted authority)",
-                    "executor": "TaskExecutor (prepare/ui_target/start/await_terminal)",
+                    "executor": "TaskExecutor (prepare/ui_target/first_request_id/start/await_terminal; start idempotent by request_id)",
                     "ui": "NativeUiController (PowerShellNativeUi by default)",
                     "native_ui_script_env": "CYBERGYM_NATIVE_UI_SCRIPT",
                 },

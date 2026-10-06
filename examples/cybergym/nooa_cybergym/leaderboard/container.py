@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-owned Docker boundary for one CyberGym task attempt.
 
 The agent sees only its read-only task bundle, writable output, and fresh

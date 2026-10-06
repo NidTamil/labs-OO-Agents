@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Fail-closed attestation contract for the Docker bridge's host gateway.
 
 Docker ``internal=True`` removes external routing, but does not isolate the

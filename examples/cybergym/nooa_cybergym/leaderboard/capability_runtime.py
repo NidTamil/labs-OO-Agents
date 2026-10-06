@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller adapters from observed native calls to the real capability registry.
 
 The synthetic factory approves only component-verified synthetic calibration.

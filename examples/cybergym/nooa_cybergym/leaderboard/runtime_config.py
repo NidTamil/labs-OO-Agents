@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Concrete inputs for two native synthetic runs, never readiness evidence.
 
 The controller loads this after freezing its actual files and image identity.

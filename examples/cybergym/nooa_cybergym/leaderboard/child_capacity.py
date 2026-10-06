@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Durable shared capacity for native and controller-side advisory children.
 
 Native capacity is fungible within an observed child type. The native start hook

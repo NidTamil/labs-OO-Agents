@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Run one disposable, provider-free native schema discovery on SunChaser.
 
 This is a calibration controller, never a benchmark or certification run. It

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Additive official DeepSeek controller adapter; never a solver-side client.
 
 The trusted caller owns role assignment, failure observation, shared budgets and

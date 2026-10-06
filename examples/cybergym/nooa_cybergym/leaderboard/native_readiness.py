@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Read-only inventory of the native Claude harness integration boundary.
 
 Source inspection is an observation, never evidence of a running task. A future

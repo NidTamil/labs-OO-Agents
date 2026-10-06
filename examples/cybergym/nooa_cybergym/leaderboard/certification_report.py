@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Fail-closed comparison and Xeus-signable payload for two synthetic runs.
 
 This validates reported evidence and independently attested raw-run identities;

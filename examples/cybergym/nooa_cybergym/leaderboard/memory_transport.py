@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-held MCP adapter for the dedicated CyberGym GBrain read facade.
 
 This adapter validates the current authenticated tools/list against a catalog

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Real controller-only read capabilities for observed DeepSeek JSON actions.
 
 No HTTP route accepts AdvisoryAction. The owning advisory orchestrator creates

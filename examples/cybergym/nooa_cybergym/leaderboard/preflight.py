@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Active pre-model isolation probes for the exact native execution contexts.
 
 The controller supplies a ProbeExecutor that runs each command *inside* the

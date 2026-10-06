@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-owned terminating HTTPS fetch and ASGI documentation handler.
 
 Mount this ASGI callable only behind a listener that authenticates the task

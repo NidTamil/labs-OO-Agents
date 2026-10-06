@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Signed go-live admission and serial, ledger-replayed campaign scheduling.
 
 The Xeus authority adapter verifies signatures and supplies atomic, durable,

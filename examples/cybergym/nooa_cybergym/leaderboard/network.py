@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-side route guard for audited network and documentation tools.
 
 The CyberGym Squid firewall is a domain filter and cannot inspect HTTPS

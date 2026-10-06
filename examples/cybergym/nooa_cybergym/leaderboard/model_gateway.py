@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-owned streaming boundary for the native Claude model routes.
 
 The HTTP listener supplies a task-authenticated, server-side connection context.

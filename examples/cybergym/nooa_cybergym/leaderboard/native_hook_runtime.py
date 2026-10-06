@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Durable native hook observations, separate from trusted model admission.
 
 The 2.1.289 binary exposes session_id, agent_id, tool_use_id and effort in

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-only duplex transport to GBrain's authenticated native sidecar.
 
 The sidecar runs the installed native dispatcher in the dedicated profile. It

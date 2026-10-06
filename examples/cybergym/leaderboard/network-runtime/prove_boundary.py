@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Disposable synthetic proof; no cohort task, model, or provider is contacted.
 
 Run on the Linux Docker host through uv; see README.md. The script only removes

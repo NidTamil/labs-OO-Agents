@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Extract a task's source archive into its disposable tmpfs, without escapes.
 
 This uses only Python's standard library so the pinned Debian image does not

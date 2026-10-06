@@ -209,18 +209,18 @@ class RecordingUi(NativeUiController):
         self.calls = []
         self.open_hosts = []
 
-    def reap(self):
-        self.calls.append(("reap", None))
+    def reap(self, run_id):
+        self.calls.append(("reap", run_id))
         self.open_hosts.clear()
 
-    def open(self, remote_host, ssh_port):
+    def open(self, run_id, task_id, remote_host, ssh_port):
         # Serial invariant: never two windows live at once.
         assert not self.open_hosts, f"opened {remote_host} while {self.open_hosts} still live"
-        self.calls.append(("open", remote_host, ssh_port))
+        self.calls.append(("open", run_id, task_id, remote_host, ssh_port))
         self.open_hosts.append(remote_host)
 
-    def close(self, remote_host):
-        self.calls.append(("close", remote_host))
+    def close(self, run_id, task_id, remote_host):
+        self.calls.append(("close", run_id, task_id, remote_host))
         if remote_host in self.open_hosts:
             self.open_hosts.remove(remote_host)
 
@@ -230,6 +230,7 @@ class FakeExecutor(TaskExecutor):
         self.authority = authority
         self.fail_on = fail_on
         self.events = []
+        self.submitted = set()
         self._port = 38350
 
     def prepare(self, task_id):
@@ -241,9 +242,20 @@ class FakeExecutor(TaskExecutor):
         alias = "cybergym-syn-" + task_id.split(":")[1]
         return UiTarget(remote_host=alias, ssh_port=self._port)
 
-    def start(self, task_id):
-        self.events.append(("start", task_id))
+    def first_request_id(self, task_id):
+        self.events.append(("first_request_id", task_id))
         return f"req:{task_id}"
+
+    def start(self, task_id, request_id):
+        assert request_id == f"req:{task_id}"
+        assert any(
+            event.get("type") == "started"
+            and event.get("task_id") == task_id
+            and event.get("request_id") == request_id
+            for event in self.authority.events
+        ), "model request submitted before durable started intent"
+        self.events.append(("start", task_id, request_id))
+        self.submitted.add((task_id, request_id))
 
     def await_terminal(self, task_id):
         self.events.append(("await_terminal", task_id))
@@ -268,15 +280,16 @@ def test_runner_drives_one_task_and_owns_window_lifecycle(tmp_path):
     assert [name for name, *_ in executor.events] == [
         "prepare",
         "ui_target",
+        "first_request_id",
         "start",
         "await_terminal",
     ]
     # UI: initial reap, open before start, close after terminal, final reap on complete.
     assert ui.calls == [
-        ("reap", None),
-        ("open", alias, executor._port),
-        ("close", alias),
-        ("reap", None),
+        ("reap", "run-1"),
+        ("open", "run-1", last, alias, executor._port),
+        ("close", "run-1", last, alias),
+        ("reap", "run-1"),
     ]
     # Ledger reached completion.
     assert next_action(state).kind == "complete"
@@ -309,8 +322,8 @@ def test_runner_reaps_and_reraises_when_a_task_fails(tmp_path):
         run_campaign(state, executor, ui)
 
     # A window was opened for the failing task; the runner must reap before propagating.
-    assert ("open", "cybergym-syn-" + last.split(":")[1], executor._port) in ui.calls
-    assert ui.calls[-1] == ("reap", None)
+    assert ("open", "run-1", last, "cybergym-syn-" + last.split(":")[1], executor._port) in ui.calls
+    assert ui.calls[-1] == ("reap", "run-1")
     # The task never advanced to terminal.
     assert next_action(state).kind == "observe_started"
 
@@ -319,3 +332,42 @@ def test_runner_requires_serial_policy(tmp_path):
     state, authority = _state(tmp_path)
     with pytest.raises(ValueError, match="serial"):
         run_campaign(state, FakeExecutor(authority), RecordingUi(), max_parallel_tasks=2)
+
+
+def test_runner_does_not_submit_when_started_intent_append_is_unacknowledged(tmp_path):
+    state, authority = _state(tmp_path)
+    _seed_terminal_prefix(authority, 1506)
+    executor = FakeExecutor(authority)
+    ui = RecordingUi()
+    original_append = authority.append_event
+
+    def reject_started(root, run_id, event, expected_revision):
+        if event["type"] == "started":
+            return False
+        return original_append(root, run_id, event, expected_revision)
+
+    authority.append_event = reject_started
+    with pytest.raises(RuntimeError, match="ledger append acknowledgement unavailable"):
+        run_campaign(state, executor, ui)
+
+    assert not executor.submitted
+    assert next_action(state).kind == "observe_prepared"
+    assert ui.calls[-1] == ("reap", "run-1")
+
+
+def test_runner_resumes_started_intent_with_ledger_request_id(tmp_path):
+    state, authority = _state(tmp_path)
+    _seed_terminal_prefix(authority, 1506)
+    last = IDS[-1]
+    authority.events.extend(
+        ({"type": "prepared", "task_id": last},
+         {"type": "started", "task_id": last, "request_id": f"req:{last}"})
+    )
+    executor = FakeExecutor(authority)
+
+    run_campaign(state, executor, RecordingUi())
+
+    assert (last, f"req:{last}") in executor.submitted
+    assert [event["type"] for event in authority.events[-3:]] == [
+        "prepared", "started", "terminal"
+    ]

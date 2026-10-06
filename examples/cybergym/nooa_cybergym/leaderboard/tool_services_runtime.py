@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Native-authorized registered MCP tools backed by container LSP and checked HTTPS."""
 
 from __future__ import annotations

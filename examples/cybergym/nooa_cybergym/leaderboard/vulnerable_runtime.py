@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Actual vulnerable-side subprocess observations for testing and debug admission.
 
 The controller freezes argv recipes; the solver supplies only a candidate path.

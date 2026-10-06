@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-mounted ASGI listener for the native model gateway.
 
 The HTTP server must insert an opaque connection handle into the ASGI scope

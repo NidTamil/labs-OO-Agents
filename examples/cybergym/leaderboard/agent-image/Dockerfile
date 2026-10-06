@@ -9,6 +9,7 @@ RUN apt-get update \
         ca-certificates \
         clang \
         clangd \
+        libclang-rt-14-dev \
         gdb \
         git \
         openssh-client \

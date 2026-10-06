@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-owned, durable task start and redacted service audit custody.
 
 One process owns an attempt. A controller restart may inspect its records, but

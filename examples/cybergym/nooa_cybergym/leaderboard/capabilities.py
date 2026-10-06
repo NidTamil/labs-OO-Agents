@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Frozen operation inventory and controller-side authorization gate.
 
 This is disclosure and authorization metadata, not a sandbox or MCP proxy.

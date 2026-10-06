@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Stage a CyberGym Level 1 bundle outside the agent boundary and verify it."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Freeze observed native inventory and load registry-bound capability adapters.
 
 CLI: ``python -m nooa_cybergym.leaderboard.capability_inventory --config FILE

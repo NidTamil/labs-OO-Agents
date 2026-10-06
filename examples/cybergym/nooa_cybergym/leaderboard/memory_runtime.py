@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Signed native GBrain discovery and the controller's read-only HTTP/MCP route."""
 
 from __future__ import annotations

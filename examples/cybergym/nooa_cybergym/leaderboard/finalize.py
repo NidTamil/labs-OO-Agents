@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """One-shot custody of the GLM parent's declared final PoC.
 
 The caller must supply an attestor backed by the native parent event and Xeus

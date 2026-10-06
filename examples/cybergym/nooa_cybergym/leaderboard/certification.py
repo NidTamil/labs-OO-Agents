@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Synthetic-only certification admission and frozen policy binding.
 
 This module prepares a gate; it does not record a live certification pass.

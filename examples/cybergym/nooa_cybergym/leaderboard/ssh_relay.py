@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-owned loopback TCP relay to one isolated task container.
 
 Docker's internal bridge does not publish host ports. The controller binds

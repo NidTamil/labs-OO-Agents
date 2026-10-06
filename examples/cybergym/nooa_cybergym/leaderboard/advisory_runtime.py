@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Active, controller-owned DeepSeek advisory lanes with durable one-run custody.
 
 The existing DeepSeekController accepts text messages, so this adapter honestly

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-owned live native runs for the two non-cohort toy fixtures.
 
 This emits raw evidence, not a readiness attestation. A separate workstation

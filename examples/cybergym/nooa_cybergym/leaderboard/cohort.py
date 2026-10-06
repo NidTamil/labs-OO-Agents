@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-only lock of the full CyberGym Level 1 cohort and source bytes.
 
 The Xeus official-input resource currently pins a ten-task validation slice.

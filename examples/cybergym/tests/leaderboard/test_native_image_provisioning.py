@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Safe immutable vendor archive extraction without running Claude or VS Code."""
 
 from __future__ import annotations
@@ -13,6 +15,12 @@ from zipfile import ZipFile
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2] / "leaderboard/agent-image"
+
+
+def test_native_base_declares_clang_compiler_rt_for_fuzzing():
+    """The promised Clang ASan/libFuzzer workflow needs the matching runtime archives."""
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert "libclang-rt-14-dev" in dockerfile
 
 
 @pytest.fixture

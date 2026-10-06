@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Controller-owned, read-only facade for the dedicated CyberGym GBrain.
 
 The caller supplies an authenticated native transport, an attestor backed by

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Provider-free observation of the actual native advertised tool schemas.
 
 This handler has no provider transport. Its artifacts are calibration evidence,
