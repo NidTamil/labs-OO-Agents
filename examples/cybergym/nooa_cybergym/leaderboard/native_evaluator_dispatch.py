@@ -83,8 +83,8 @@ class NativeEvaluatorDispatch:
             or type(evaluator_config_sha256) is not str
             or _HASH.fullmatch(evaluator_config_sha256) is None
             or not python.is_absolute()
-            or python.is_symlink()
             or not python.is_file()
+            or not python.resolve().is_file()
             or not callable(getattr(artifact_store, "put_bytes", None))
             or not callable(getattr(kernel_signer, "sign", None))
             or not callable(getattr(kernel_verifier, "verify", None))

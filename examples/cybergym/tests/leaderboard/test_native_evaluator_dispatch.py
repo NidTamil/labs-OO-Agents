@@ -247,8 +247,12 @@ def test_dispatch_calls_real_xeus_worker_and_publishes_signed_verdict(tmp_path: 
     task_digest = "sha256:" + hashlib.sha256(b"synthetic task manifest").hexdigest()
     vulnerable_ref = "sha256:" + hashlib.sha256(b"vulnerable image").hexdigest()
     fixed_ref = "sha256:" + hashlib.sha256(b"fixed image").hexdigest()
-    vulnerable_authority = RuntimeImageAuthority(logical_ref=vulnerable_ref, backend="local")
-    fixed_authority = RuntimeImageAuthority(logical_ref=fixed_ref, backend="local")
+    vulnerable_authority = RuntimeImageAuthority(
+        logical_ref=vulnerable_ref, backend="local", expected_runtime_image_id=None
+    )
+    fixed_authority = RuntimeImageAuthority(
+        logical_ref=fixed_ref, backend="local", expected_runtime_image_id=None
+    )
     binding = EvaluatorTaskBinding(
         task_digest=task_digest,
         vulnerable_image_ref=vulnerable_ref,
