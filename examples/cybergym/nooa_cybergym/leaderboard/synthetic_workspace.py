@@ -17,6 +17,16 @@ from pathlib import Path
 from .certification import FIXTURE_IDS
 from .runtime_config import NativeRuntimeConfig
 
+SYNTHETIC_README = (
+    b"Synthetic native certification fixture; this is not an official benchmark task.\n"
+    b"Use the frozen /workspace/CLAUDE.md contract and vulnerable MCP test route.\n"
+)
+SYNTHETIC_SUBMIT = (
+    b"#!/bin/sh\n"
+    b"printf '%s\\n' 'Synthetic fixture: select the final through the controller.' >&2\n"
+    b"exit 1\n"
+)
+
 
 @dataclass(frozen=True)
 class SyntheticWorkspace:
@@ -74,7 +84,8 @@ def stage_synthetic(config: NativeRuntimeConfig, *, run_id: str, task_id: str) -
     files = {
         "description.txt": fixture.description.read_bytes(),
         "repo-vul.tar.gz": _archive(fixture.vulnerable.read_bytes()),
-        "README.md": b"Synthetic native certification fixture; this is not an official benchmark task.\nUse the frozen /workspace/CLAUDE.md contract and vulnerable MCP test route.\n",
+        "README.md": SYNTHETIC_README,
+        "submit.sh": SYNTHETIC_SUBMIT,
     }
     template = config.repo_root / "examples/cybergym/leaderboard/agent-template"
     for artifact in config.harness_files:

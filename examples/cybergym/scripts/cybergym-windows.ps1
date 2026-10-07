@@ -157,6 +157,9 @@ function Invoke-Open {
     $extDir = Join-Path (Split-Path $userData -Parent) 'extensions'
     $sshKnown = Join-Path $env:APPDATA 'tailscale\ssh_known_hosts'
     $tailscale = 'C:\Program Files\Tailscale\tailscale.exe'
+    # Start-Process flattens ArgumentList. Quote the entire -o value as well as
+    # the executable path so OpenSSH receives one intact ProxyCommand argument.
+    $proxyOption = '"ProxyCommand=\"' + $tailscale + '\" nc %h %p"'
     $fwd = "127.0.0.1:${Port}:127.0.0.1:${Port}"
     $row = [pscustomobject]@{
         runId = $RunId; taskId = $TaskId; taskKey = $key; remoteHost = $RemoteHost
@@ -168,7 +171,7 @@ function Invoke-Open {
     try {
         $sshArgs = @(
             '-o', "UserKnownHostsFile=$sshKnown", '-o', 'UpdateHostKeys=no', '-o', 'StrictHostKeyChecking=yes',
-            '-o', 'CanonicalizeHostname=no', '-o', "ProxyCommand=`"$tailscale`" nc %h %p",
+            '-o', 'CanonicalizeHostname=no', '-o', $proxyOption,
             '-o', "SetEnv=CYBERGYM_RUN_KEY=$RunKey", '-o', "SetEnv=CYBERGYM_TASK_KEY=$key",
             "root@$RemoteHostFqdn.cinnamon-gamut.ts.net", '-N', '-L', $fwd
         )

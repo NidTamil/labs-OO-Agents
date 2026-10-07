@@ -41,8 +41,8 @@ from .native_preflight_gate import NativePreflightAdmission
 from .native_preflight_protocol import NativePreflightProtocol
 from .native_process import frozen_hook_verifier, frozen_parent_verifier
 from .network import NetworkPolicy
-from .services_runtime import SealedRoutes
-from .synthetic_workspace import _archive
+from .services_runtime import SealedRoutes, _gateway_health
+from .synthetic_workspace import SYNTHETIC_README, SYNTHETIC_SUBMIT, _archive
 from .tool_services_runtime import _schema as registered_schema
 from .vulnerable_runtime import TOOL as VULNERABLE_TOOL
 
@@ -65,6 +65,8 @@ def _source_files(repo: Path) -> dict[str, bytes]:
     files = {
         "description.txt": (repo / _FIXTURE / "description.txt").read_bytes(),
         "repo-vul.tar.gz": _archive((repo / _FIXTURE / "vulnerable/parser.c").read_bytes()),
+        "README.md": SYNTHETIC_README,
+        "submit.sh": SYNTHETIC_SUBMIT,
     }
     for path in sorted(template.rglob("*")):
         if path.is_symlink():
@@ -302,6 +304,9 @@ def run(*, repo: Path, root: Path, native_runtime: Path, public_ssh_key: Path,
         def route(request):
             if request.peer != peer:
                 return GatewayReply(403, b'{"error":"calibration peer denied"}')
+            health = _gateway_health(request)
+            if health is not None:
+                return health
             if request.endpoint == "model-gateway":
                 return capture(request)
             if request.endpoint == "registered-tool-gateway" and request.path in {

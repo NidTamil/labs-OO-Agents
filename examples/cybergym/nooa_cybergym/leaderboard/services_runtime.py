@@ -155,6 +155,13 @@ class SealedRoutes:
             self._closed = True
 
 
+def _gateway_health(request: GatewayRequest) -> GatewayReply | None:
+    """A route-reachability probe; it does not attest provider or tool health."""
+    if request.method == "GET" and request.path == "/health" and not request.body:
+        return GatewayReply(200, b'{"status":"route-admitted"}')
+    return None
+
+
 class NativeServices:
     def __init__(
         self,
@@ -495,6 +502,9 @@ class NativeServices:
             try:
                 if not self.capabilities.authorize_peer(request.peer):
                     return GatewayReply(403, b'{"error":"task peer denied"}')
+                health = _gateway_health(request)
+                if health is not None:
+                    return health
                 return handler(request)
             finally:
                 self._leave_activity()
