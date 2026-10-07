@@ -552,3 +552,27 @@ passes 1000 tests, five skipped, two deselected; JUnit XML
 `e701510f59b2d90244d7925b0d45530eb1b735e9ab9a61495f50fdd5b6e2ef48`.
 The image rebuild, exact frozen digest updates, a live native preflight,
 idempotent per-task executor, and matching live synthetic runs remain open.
+
+Commit `5aa86a2` is pushed and checked out cleanly on SunChaser. The next
+native overlay was built from the previously checked libFuzzer base image
+`sha256:97dae9c525f644bdfa10b0419e822ff691a82652bceb65f0921ecba98cdb198d`
+and exact pushed launcher source. Its new image ID is
+`sha256:f42ed4003aec4d693b2ccfda435717c21a1c002073343463cbf0fae713c55d7e`.
+Read-only image inspection measured launcher `de82e490...`, hook
+`79599794...`, VS Code Node `e7bb5f50...`, hook Node `fde6a4bf...`,
+and native runtime manifest `63ddc6c7...`; the packaged VSIX digest is
+`865bba2e...`. The builder's first invocation with a bare image digest was
+rejected by BuildKit as a registry name. Ruling: use the locally tagged
+`sunchaser/cybergym-agent:fuzzrt-v24` only after verifying that its Docker ID
+equals the intended base digest; this preserves the source pin but depends on
+the tag staying unchanged between inspection and build. The build log resolved
+that tag to the same digest. The calibration controller needed a compatible
+preflight route: the new launcher runs parent probes before any model request.
+Source changes now provide the same verified parent/hook process checks and
+one-shot protocol in provider-free calibration; targeted Linux tests pass
+13/13. The full component suite at this source passes 1000 tests, five skipped,
+two deselected; JUnit XML `/srv/sunchaser/runs/cybergym-components-20261007-v25i.xml`
+has SHA-256 `ad491ee6e78d428e490f463879d092a9a0da19080c456c39a0d73821b47ac6a9`.
+A real calibration run is still required to validate that composition,
+refresh the capability freeze for the new image, and supply native process
+evidence. No practice or scored task has started.

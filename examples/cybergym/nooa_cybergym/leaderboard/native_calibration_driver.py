@@ -20,6 +20,7 @@ import threading
 import time
 from contextlib import ExitStack
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import docker
@@ -36,6 +37,9 @@ from .memory_runtime import _SOLVER_TOOLS as MEMORY_TOOLS
 from .native_calibration import NativeCalibration
 from .native_hook_runtime import NativeHookCollector, native_hook_handler
 from .native_launcher import NativeLaunchAuthority, build_launch_manifest, native_launch_handler
+from .native_preflight_gate import NativePreflightAdmission
+from .native_preflight_protocol import NativePreflightProtocol
+from .native_process import frozen_hook_verifier, frozen_parent_verifier
 from .network import NetworkPolicy
 from .services_runtime import SealedRoutes
 from .synthetic_workspace import _archive
@@ -140,6 +144,8 @@ def run(*, repo: Path, root: Path, native_runtime: Path, public_ssh_key: Path,
     task, evidence = root / "workspace", root / "evidence"
     evidence.mkdir(mode=0o700)
     task_manifest, hashes = _stage(repo, task)
+    workspace_manifest = evidence / "task-manifest.json"
+    _write_new(workspace_manifest, task_manifest, 0o444)
     public_key = public_ssh_key.read_text().strip()
     if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\s\x00-\x1f]+)?", public_key):
         raise ValueError("dedicated SSH public key required")
@@ -151,7 +157,7 @@ def run(*, repo: Path, root: Path, native_runtime: Path, public_ssh_key: Path,
     runtime = json.loads(native_runtime.read_bytes())
     if (runtime.get("schema_version") != 1
         or runtime.get("vscode_commit") != "07f806f999227108933c2e30515b26eecc1fda74"
-        or runtime.get("launcher_vsix_sha256") != "407657ad3f38a5466f8816251011c8a4ec74e1ee80daa4bc4aad2e9c2678ab8c"):
+        or runtime.get("launcher_vsix_sha256") != "865bba2eeea461b0dfaa71341e563615f12342db77a13d493eae753976b9d778"):
         raise ValueError("calibration native runtime differs from built image")
     binary_sha = runtime["claude_binary_sha256"]
     extension_sha = runtime["claude_extension_sha256"]
@@ -233,6 +239,47 @@ def run(*, repo: Path, root: Path, native_runtime: Path, public_ssh_key: Path,
         collector = NativeHookCollector(evidence / "native-hooks.sqlite", run_id=run_id,
             task_id=TASK_ID, launch_id=launch_id)
         peer = boundary.peers[task_container.container_ip]
+        def preflight_audit(event):
+            descriptor = os.open(
+                evidence / "preflight-audit.jsonl",
+                os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW,
+                0o600,
+            )
+            with os.fdopen(descriptor, "ab") as stream:
+                stream.write(canonical_json(event) + b"\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+            return True
+
+        inspected = client.api.inspect_container(container.id)
+        process_audit = SimpleNamespace(record=preflight_audit)
+        hook_verifier = frozen_hook_verifier(inspect=inspected, peer=peer,
+            audit=process_audit)
+        parent_verifier = frozen_parent_verifier(inspect=inspected, peer=peer,
+            launch_authority=authority,
+            audit=process_audit)
+        preflight_gate = NativePreflightAdmission(
+            container_id=container.id,
+            policy=policy,
+            workspace_manifest=workspace_manifest,
+            evidence_root=evidence,
+            observed_role=collector.model_role,
+            audit=preflight_audit,
+        )
+        preflight_protocol = NativePreflightProtocol(
+            peer=peer,
+            run_id=run_id,
+            task_id=TASK_ID,
+            launch_id=launch_id,
+            policy=policy,
+            workspace_root=task,
+            workspace_manifest=workspace_manifest,
+            evidence_root=evidence,
+            gate=preflight_gate,
+            verify_parent=parent_verifier,
+            verify_child=hook_verifier,
+            audit=preflight_audit,
+        )
         capture = NativeCalibration(authority=authority, collector=collector, peer=peer,
             image_id=image_id, binary_sha256=binary_sha, evidence_dir=evidence / "capture",
             inspect_container=lambda: client.api.inspect_container(container.id), redact=_redact)
@@ -242,7 +289,7 @@ def run(*, repo: Path, root: Path, native_runtime: Path, public_ssh_key: Path,
             collector,
             container_id=container.id,
             network_id=network.id,
-            verify_process=lambda request: None,
+            verify_process=hook_verifier,
         )
         catalogs = {
             ("gbrain-read-gateway", "/mcp"): (MEMORY_TOOLS, "gbrain"),
@@ -271,6 +318,9 @@ def run(*, repo: Path, root: Path, native_runtime: Path, public_ssh_key: Path,
                         if target.read_bytes() != request.body:
                             raise RuntimeError("rejected hook observation changed") from None
                 return reply
+            if request.endpoint == "registered-tool-gateway" and request.path in {
+                "/native-launch/preflight/begin", "/native-launch/preflight/submit"}:
+                return preflight_protocol(request)
             if request.endpoint == "registered-tool-gateway" and request.path == "/native-tools/authorize":
                 return GatewayReply(200, b'{"permissionDecision":"deny"}')
             key = (request.endpoint, request.path)
