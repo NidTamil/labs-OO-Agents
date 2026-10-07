@@ -36,6 +36,7 @@ from .host_boundary_runtime import HostBoundaryRuntime
 from .memory import SOURCE_ID
 from .native_launcher import NativeLaunchAuthority, build_launch_manifest
 from .native_process import frozen_hook_verifier, frozen_parent_verifier
+from .native_start_intent import wait_start_intent
 from .native_workflows import frozen_workflows
 from .runtime_config import NativeRuntimeConfig, load_runtime_config
 from .runtime_custody import TaskRuntimeContext
@@ -273,10 +274,15 @@ def run(
     task_id: str,
     ssh_port: int,
     timeout: int,
+    campaign_gated: bool = False,
 ) -> dict:
     config = load_runtime_config(config_path)
     fixture = validate_request(config, run_id=run_id, task_id=task_id)
-    if not 1024 <= ssh_port <= 65535 or not 60 <= timeout <= config.budgets.task_wall_timeout_sec:
+    if (
+        not 1024 <= ssh_port <= 65535
+        or not 60 <= timeout <= config.budgets.task_wall_timeout_sec
+        or type(campaign_gated) is not bool
+    ):
         raise ValueError("bounded isolated SSH port and task timeout required")
     bindings = load_frozen_bindings(bindings_path, config.registry)
     captured_schemas = load_captured_native_schemas(bindings_path, config.registry)
@@ -457,16 +463,24 @@ def run(
             )
         )
         sealed.seal(services.handlers)
-        selections = services.start_automatic_lanes(
-            level1_facts=("C parser memory-safety input fixture",), structural_terms=terms
-        )
-        write_new(
-            stage.root / "automatic-memory.json",
-            canonical_json(
-                {"schema_version": 1, "selected": [asdict(item) for item in selections]}
-            ),
-            0o444,
-        )
+
+        def start_automatic_lanes():
+            selected = services.start_automatic_lanes(
+                level1_facts=("C parser memory-safety input fixture",), structural_terms=terms
+            )
+            write_new(
+                stage.root / "automatic-memory.json",
+                canonical_json(
+                    {"schema_version": 1, "selected": [asdict(item) for item in selected]}
+                ),
+                0o444,
+            )
+            return selected
+
+        # A campaign worker may stage the isolated container before the ledger
+        # has a durable started event. Its automatic GBrain/DeepSeek lanes must
+        # not spend a model request until the signed controller start intent.
+        selections = () if campaign_gated else start_automatic_lanes()
         connection = {
             "scope": "synthetic_native_live",
             "run_id": run_id,
@@ -484,11 +498,27 @@ def run(
             "workspace": str(stage.root),
             "evidence": str(stage.evidence),
             "automatic_memory_selected": len(selections),
-            "status": "awaiting_isolated_native_ui",
+            "status": (
+                "awaiting_campaign_started_intent"
+                if campaign_gated
+                else "awaiting_isolated_native_ui"
+            ),
         }
         write_new(stage.evidence / "connection.json", canonical_json(connection))
         print(json.dumps(connection, sort_keys=True), flush=True)
         deadline = time.monotonic() + timeout
+        if campaign_gated:
+            wait_start_intent(
+                stage.evidence,
+                verifier=verifier,
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                launch_id=launch_id,
+                timeout_seconds=max(0, deadline - time.monotonic()),
+                stopped=stop.is_set,
+            )
+            selections = start_automatic_lanes()
         while not stop.wait(1):
             if boundary.failed.is_set() or not context.active:
                 raise RuntimeError("task boundary or shared budget failed")
@@ -594,6 +624,7 @@ def main(argv=None):
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--ssh-port", type=int, required=True)
     parser.add_argument("--timeout", type=int, default=3600)
+    parser.add_argument("--campaign-gated", action="store_true")
     args = parser.parse_args(argv)
     run(
         config_path=args.config,
@@ -603,6 +634,7 @@ def main(argv=None):
         task_id=args.task_id,
         ssh_port=args.ssh_port,
         timeout=args.timeout,
+        campaign_gated=args.campaign_gated,
     )
 
 
