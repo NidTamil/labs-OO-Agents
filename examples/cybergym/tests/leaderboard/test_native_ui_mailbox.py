@@ -94,11 +94,13 @@ def test_submit_requires_launch_and_exact_ui_audit_once(tmp_path):
         box.acknowledge(command.command_id, status="completed")
     audit = canonical_json(
         {
+            "schema_version": 1,
             "event": "ui_send_attempted",
             "launch_id": "launch-1",
             "prompt_sha256": "a" * 64,
             "observed_prompt_sha256": "a" * 64,
             "remote_alias": "cybergym-task-1",
+            "provider_request_observed": False,
         }
     )
     digest = hashlib.sha256(audit).hexdigest()

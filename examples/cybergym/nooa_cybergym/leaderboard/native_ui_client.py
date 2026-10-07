@@ -225,6 +225,22 @@ class NativeUiClient:
                 raw = attempted.read_bytes()
                 if not 0 < len(raw) <= 8192:
                     raise RuntimeError("attempted native Send audit exceeds limit")
+                try:
+                    audit = json.loads(raw)
+                except (UnicodeDecodeError, ValueError):
+                    raise RuntimeError("attempted Send audit differs from signed launch") from None
+                receipt = json.loads(base64.b64decode(command["launch_receipt_base64"]))
+                if (
+                    type(audit) is not dict
+                    or audit.get("schema_version") != 1
+                    or audit.get("event") != "ui_send_attempted"
+                    or audit.get("launch_id") != command["launch_id"]
+                    or audit.get("prompt_sha256") != receipt["prompt_sha256"]
+                    or audit.get("observed_prompt_sha256") != receipt["prompt_sha256"]
+                    or audit.get("remote_alias") != command["remote_host"]
+                    or audit.get("provider_request_observed") is not False
+                ):
+                    raise RuntimeError("attempted Send audit differs from signed launch")
                 return self._ack(command, status="completed", audit=raw)
             return self._ack(
                 command,

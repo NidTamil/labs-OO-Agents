@@ -125,11 +125,13 @@ def test_signed_submit_uses_exact_receipt_and_returns_attempted_audit(tmp_path):
         (kwargs["audit_directory"] / "ui-send-attempted.json").write_bytes(
             canonical_json(
                 {
+                    "schema_version": 1,
                     "event": "ui_send_attempted",
                     "launch_id": "launch-1",
                     "prompt_sha256": "a" * 64,
                     "observed_prompt_sha256": "a" * 64,
                     "remote_alias": "cybergym-task-1",
+                    "provider_request_observed": False,
                 }
             )
         )
@@ -153,6 +155,59 @@ def test_signed_submit_uses_exact_receipt_and_returns_attempted_audit(tmp_path):
     )
     assert len(sends) == 1
     assert not ui.calls
+
+
+def test_changed_attempted_send_audit_cannot_be_acknowledged(tmp_path):
+    key = Ed25519PrivateKey.generate()
+    signer = Ed25519Signer(private_key=key, key_id="controller")
+    verifier = Ed25519Verifier({"controller": key.public_key()})
+    box = NativeUiMailbox(tmp_path, run_id="run-1", signer=signer, verifier=verifier)
+    receipt = canonical_json(
+        {
+            "event": "launch_reserved",
+            "launch_id": "launch-1",
+            "session_id": None,
+            "prompt_sha256": "a" * 64,
+        }
+    )
+    command = box.publish(
+        operation_key="task-submit",
+        action="submit",
+        task_id="synthetic:length-header",
+        remote_host="cybergym-task-1",
+        launch_id="launch-1",
+        launch_receipt=receipt,
+    )
+
+    def changed_audit(**kwargs):
+        kwargs["audit_directory"].mkdir()
+        (kwargs["audit_directory"] / "ui-send-attempted.json").write_bytes(
+            canonical_json(
+                {
+                    "event": "ui_send_attempted",
+                    "launch_id": "wrong-launch",
+                    "prompt_sha256": "a" * 64,
+                    "observed_prompt_sha256": "a" * 64,
+                    "remote_alias": "cybergym-task-1",
+                }
+            )
+        )
+
+    client = NativeUiClient(
+        run_id="run-1",
+        verifier=verifier,
+        transport=Transport(box),
+        ui=Ui(),
+        custody_dir=tmp_path / "host",
+        profiles_dir=tmp_path / "profiles",
+        submit=changed_audit,
+    )
+    import pytest
+
+    with pytest.raises(RuntimeError, match="attempted Send audit differs"):
+        client.poll_once()
+    assert not (tmp_path / "host" / f"{command.command_id}.ack.json").exists()
+    assert box.pending() is not None
 
 
 def test_unsigned_or_changed_command_cannot_reach_ui(tmp_path):

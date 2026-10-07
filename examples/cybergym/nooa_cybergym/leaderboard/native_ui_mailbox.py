@@ -256,11 +256,13 @@ class NativeUiMailbox:
                 receipt = json.loads(base64.b64decode(command.payload["launch_receipt_base64"]))
                 if (
                     type(audit) is not dict
+                    or audit.get("schema_version") != 1
                     or audit.get("event") != "ui_send_attempted"
                     or audit.get("launch_id") != command.payload["launch_id"]
                     or audit.get("prompt_sha256") != receipt["prompt_sha256"]
                     or audit.get("observed_prompt_sha256") != receipt["prompt_sha256"]
                     or audit.get("remote_alias") != command.payload["remote_host"]
+                    or audit.get("provider_request_observed") is not False
                 ):
                     raise ValueError("completed Send audit differs from signed command")
             elif ui_audit_sha256 is not None or ui_audit_bytes is not None:
