@@ -473,3 +473,22 @@ invoked by Claude rather than executed manually, and is not a preflight pass.
 The next gate is actual managed-hook provenance plus per-role probe execution
 and model admission, followed by the idempotent task executor and fresh
 matching synthetic runs.
+
+Commits `3183bd8` and `09b0c52` are pushed, with the latter checked out cleanly
+in the isolated SunChaser worktree. The production native hook route now
+requires a process verifier before accepting any hook event. The synthetic
+driver constructs it only from Docker's inspected running task container at
+the pinned native image ID; each request binds the kernel-observed source port
+to a container descendant, checks its frozen Node/hook identity, and records
+the nonsecret process metadata in the controller's fsynced audit before hook
+custody. A denied or unavailable verification leaves hook custody unchanged.
+The provider-free calibration route has an explicit unverified callback and
+cannot be used as certification evidence. Targeted Linux tests pass 39/39;
+the full Linux component suite at the pre-style-cleanup source passed 992
+with five skips and two deselections. Its JUnit XML is
+`/srv/sunchaser/runs/cybergym-components-20261007-v25d.xml` (SHA-256
+`ad4b11bf3c1c3538cae128fa8f562132d755ec492e63e9ffb095fdc687b5343b`).
+After restoring unrelated formatting, the same targeted 39 tests pass at
+`09b0c52`. No new live synthetic request has exercised this gateway gate;
+native parent/child probes, model-admission ordering and the per-task
+executor remain incomplete.
