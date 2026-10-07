@@ -228,6 +228,56 @@ def test_run_preflight_executes_both_contexts_before_model_and_writes_private_ev
     assert all(len(item["stdout_sha256"]) == 64 for item in saved["probes"])
 
 
+def test_preflight_contexts_are_separate_and_named_in_private_evidence(tmp_path):
+    root = tmp_path / "task"
+    root.mkdir()
+    evidence = tmp_path / "controller-evidence"
+    evidence.mkdir()
+    manifest = evidence / "task-manifest.json"
+    manifest.write_text('{"task_id":"synthetic"}', encoding="utf-8")
+    container = _TaskContainer("container-123", "synthetic", 2222)
+    reports = {}
+    for context in ("parent", "child"):
+        executor = _RecordingExecutor()
+        reports[context] = run_preflight(
+            container=container,
+            workspace_manifest=manifest,
+            workspace_root=root,
+            policy=NetworkPolicy.load(POLICY_PATH),
+            executor=executor,
+            evidence_dir=evidence,
+            contexts=(context,),
+        )
+        assert reports[context].passed
+        assert reports[context].contexts == (context,)
+        assert {spec.context for spec in executor.seen} == {context}
+        assert reports[context].evidence_path == evidence / f"preflight-{context}-report.json"
+        saved = json.loads(reports[context].evidence_path.read_text())
+        assert saved["contexts"] == [context]
+        assert {record["context"] for record in saved["probes"]} == {context}
+    assert reports["parent"].evidence_path != reports["child"].evidence_path
+
+
+@pytest.mark.parametrize("contexts", ((), ("parent", "parent"), ("other",)))
+def test_preflight_rejects_incomplete_or_duplicate_context_selection(tmp_path, contexts):
+    root = tmp_path / "task"
+    root.mkdir()
+    evidence = tmp_path / "controller-evidence"
+    evidence.mkdir()
+    manifest = evidence / "task-manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="context"):
+        run_preflight(
+            container=_TaskContainer("container-123", "synthetic", 2222),
+            workspace_manifest=manifest,
+            workspace_root=root,
+            policy=NetworkPolicy.load(POLICY_PATH),
+            executor=_RecordingExecutor(),
+            evidence_dir=evidence,
+            contexts=contexts,
+        )
+
+
 def test_added_credential_names_are_probed_in_parent_and_child(tmp_path):
     _, executor, _ = _run(tmp_path, _RecordingExecutor())
     seen = {

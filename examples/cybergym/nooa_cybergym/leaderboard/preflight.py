@@ -177,6 +177,7 @@ class PreflightReport:
     passed: bool
     failures: tuple[str, ...]
     probes: tuple[ProbeRecord, ...] = ()
+    contexts: tuple[str, ...] = ()
     execution_mode: str = "evaluation-only"
     container_id: str = ""
     workspace_manifest_sha256: str = ""
@@ -304,8 +305,9 @@ def run_preflight(
     executor: ProbeExecutor,
     evidence_dir: Path,
     prior_task_ids: tuple[str, ...] = (),
+    contexts: tuple[str, ...] = ("parent", "child"),
 ) -> PreflightReport:
-    """Probe parent and child before any model request, then persist private evidence.
+    """Probe the selected native contexts before their model requests.
 
     The caller must wire an executor to the native extension and child process;
     a unit fake yields execution_mode=synthetic and cannot certify isolation.
@@ -339,10 +341,16 @@ def run_preflight(
         for item in prior_task_ids
     ):
         raise ValueError("prior task IDs must be safe immutable identifiers")
+    if type(contexts) is not tuple or contexts not in {
+        ("parent",),
+        ("child",),
+        ("parent", "child"),
+    }:
+        raise ValueError("preflight context selection is incomplete or duplicated")
 
     records = []
     failures = []
-    for context in ("parent", "child"):
+    for context in contexts:
         observed = {
             "forbidden_paths": {},
             "required_paths": {},
@@ -409,11 +417,15 @@ def run_preflight(
             failures.append(f"{context}:direct-provider-api")
 
     failures = list(dict.fromkeys(failures))
-    report_path = evidence_dir / "preflight-report.json"
+    report_name = (
+        f"preflight-{contexts[0]}-report.json" if len(contexts) == 1 else "preflight-report.json"
+    )
+    report_path = evidence_dir / report_name
     report = PreflightReport(
         passed=not failures,
         failures=tuple(failures),
         probes=tuple(records),
+        contexts=contexts,
         execution_mode=executor.mode,
         container_id=container_id,
         workspace_manifest_sha256=hashlib.sha256(workspace_manifest.read_bytes()).hexdigest(),
