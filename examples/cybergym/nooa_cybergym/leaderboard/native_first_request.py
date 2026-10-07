@@ -80,6 +80,7 @@ class NativeFirstRequestWitness:
             raise RuntimeError("native model audit exceeds witness limit")
         completed = raw.rsplit(b"\n", 1)[0] if not raw.endswith(b"\n") else raw[:-1]
         reservations: set[str] = set()
+        admitted = False
         for line in completed.split(b"\n"):
             if not line:
                 continue
@@ -102,5 +103,5 @@ class NativeFirstRequestWitness:
             if event.get("event") == "request_reserved":
                 reservations.add(event["request_id"])
             if event.get("event") == "attempt_started" and event["request_id"] in reservations:
-                return True
-        return False
+                admitted = True
+        return admitted

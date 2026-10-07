@@ -63,6 +63,10 @@ def test_first_primary_request_requires_reserved_launch_and_gateway_start(tmp_pa
     append({**primary, "event": "attempt_started"})
     assert witness.observed("launch-1") is True
     assert witness.observed("launch-1") is True
+    with audit.open("ab") as stream:
+        stream.write(b"{broken\n")
+    with pytest.raises(RuntimeError, match="audit"):
+        witness.observed("launch-1")
     with pytest.raises(ValueError, match="launch"):
         witness.observed("another-launch")
 
