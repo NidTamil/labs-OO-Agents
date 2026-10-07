@@ -555,12 +555,14 @@ class ClangdClient:
                 if name == "references":
                     params["context"] = {"includeDeclaration": True}
                 result = self._request(_METHODS[name], params)
-                self._check_result(result)
-                return result
             except Exception:
                 self._broken = True
                 self._channel.close()
                 raise
+            # An out-of-scope definition is denied for this result only. The
+            # LSP stream remains valid for later in-scope read requests.
+            self._check_result(result)
+            return result
 
     def close(self):
         with self._lock:

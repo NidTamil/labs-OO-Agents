@@ -388,6 +388,10 @@ def test_lsp_result_cannot_introduce_external_source_locations():
     try:
         with pytest.raises(ToolServiceDenied):
             client.invoke("definition", {"path": "/workspace/src/a.cc", "line": 0, "character": 4})
+        wire.response = [{"name": "safe_symbol"}]
+        assert client.invoke("document_symbols", {"path": "/workspace/src/a.cc"}) == [
+            {"name": "safe_symbol"}
+        ]
     finally:
         wire.close()
 
