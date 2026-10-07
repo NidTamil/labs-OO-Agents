@@ -12,6 +12,7 @@ from nooa_cybergym.leaderboard.synthetic_native_driver import (
     _memory_guard_binding,
     _PostOracleMemoryBudget,
     _quiesce_and_stop,
+    _recipe,
     _stopped_tool_dispositions,
     _verified_primary_provider,
     validate_request,
@@ -20,6 +21,13 @@ from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier, SignatureVerificationError
 
 from .test_runtime_config import prepared  # noqa: F401 - register the fixture
+
+
+def test_vulnerable_recipe_runs_binary_from_executable_source_mount():
+    recipe = _recipe()
+    binary = recipe.test_argv[0]
+    assert binary.startswith("/workspace/src/")
+    assert recipe.build_argv[recipe.build_argv.index("-o") + 1] == binary
 
 
 def test_driver_rejects_official_task_before_creating_workspace(prepared):  # noqa: F811
