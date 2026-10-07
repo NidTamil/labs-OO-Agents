@@ -661,3 +661,18 @@ capability freeze, and full native synthetic matching runs remain outstanding.
 The post-change Linux leaderboard suite passed 939 tests, five skipped, two
 deselected in 21.21 seconds. This broad regression still does not establish a
 native UI run or certification.
+
+Ruling: keep the Xeus campaign authority, Docker/task runtime, attempt budget,
+and oracle on the POSIX SunChaser controller, and make the Windows workstation
+an outbound, one-shot UI client — `XeusCampaignAuthority` requires POSIX
+directory durability while `PowerShellNativeUi` and Claude Code's visible VS
+Code window live on Windows. A single-process `run_campaign` cannot directly
+own both without a transport boundary. The transport must carry a frozen
+launch identity and return controller evidence, never provider credentials or
+private evaluator inputs. Cost if wrong: a later controller-host move would
+require a new signed transport and re-certification. Also, official `prepare`
+must not call `NativeServices.start_automatic_lanes` before the campaign's
+durable `started` intent: those lanes can consume a model request before the
+Windows Send action. The current synthetic driver does start automatic lanes
+before UI, so it is evidence of the existing synthetic runtime only, not a
+drop-in campaign `TaskExecutor`.
