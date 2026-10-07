@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -366,3 +367,93 @@ class PowerShellNativeSubmitter:
         ):
             raise RuntimeError("native UI attempt disagrees with reserved launch")
         return True
+
+
+class MailboxNativeSubmitter:
+    """Correlate one signed outbound Send with the first native gateway admission.
+
+    The campaign ledger's started intent must exist before publishing Send.
+    The mailbox operation key is stable across controller restarts, while the
+    Windows client reserves the actual click on disk before executing it. A
+    failed/ambiguous acknowledgement never authorizes another click.
+    """
+
+    def __init__(
+        self,
+        *,
+        launch_authority,
+        mailbox,
+        witness,
+        remote_alias: str,
+        started_intent: Callable[[str], bool],
+        timeout_seconds: float = 120,
+    ):
+        manifest = getattr(launch_authority, "manifest", None)
+        launch_dir = Path(getattr(launch_authority, "launch_dir", ""))
+        if (
+            type(manifest) is not dict
+            or type(manifest.get("task_id")) is not str
+            or type(manifest.get("launch_id")) is not str
+            or not launch_dir.is_absolute()
+            or launch_dir.is_symlink()
+            or not launch_dir.is_dir()
+            or not callable(getattr(launch_authority, "_check_receipt", None))
+            or not callable(getattr(mailbox, "publish", None))
+            or not callable(getattr(mailbox, "wait_ack", None))
+            or not callable(getattr(witness, "observed", None))
+            or type(remote_alias) is not str
+            or re.fullmatch(r"[a-z][a-z0-9-]{1,63}", remote_alias) is None
+            or not callable(started_intent)
+            or type(timeout_seconds) not in {int, float}
+            or not 0 < timeout_seconds <= 600
+        ):
+            raise ValueError("frozen outbound native submission identity required")
+        if manifest.get("run_id", mailbox.run_id) != mailbox.run_id:
+            raise ValueError("mailbox run differs from native launch")
+        self.launch = launch_authority
+        self.mailbox = mailbox
+        self.witness = witness
+        self.remote_alias = remote_alias
+        self.started_intent = started_intent
+        self.timeout = timeout_seconds
+
+    def submit_once(self, request_id: str) -> bool:
+        if request_id != self.launch.manifest["launch_id"]:
+            raise ValueError("campaign launch identity differs from native launch")
+        if self.started_intent(request_id) is not True:
+            raise RuntimeError("verified campaign started intent required before native Send")
+        if self.witness.observed(request_id):
+            return True
+        deadline = time.monotonic() + self.timeout
+        receipt_path = self.launch.launch_dir / "launcher-receipt.json"
+        while not receipt_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.25)
+        receipt_raw = _bytes(receipt_path, "native launch receipt")
+        if len(receipt_raw) > 4096:
+            raise RuntimeError("native launch receipt exceeds outbound command limit")
+        receipt = json.loads(receipt_raw)
+        if canonical_json(receipt) != receipt_raw:
+            raise RuntimeError("native launch receipt is not canonical")
+        self.launch._check_receipt(receipt)
+        command = self.mailbox.publish(
+            operation_key=f"submit-{hashlib.sha256(request_id.encode()).hexdigest()}",
+            action="submit",
+            task_id=self.launch.manifest["task_id"],
+            remote_host=self.remote_alias,
+            launch_id=request_id,
+            launch_receipt=receipt_raw,
+        )
+        remaining = max(0, deadline - time.monotonic())
+        acknowledgement = self.mailbox.wait_ack(
+            command.command_id, timeout_seconds=min(remaining, 600)
+        )
+        while time.monotonic() < deadline:
+            if self.witness.observed(request_id):
+                return True
+            time.sleep(0.25)
+        if self.witness.observed(request_id):
+            return True
+        raise RuntimeError(
+            "native first model request was not observed after Windows UI "
+            f"{acknowledgement.get('status', 'unknown')} acknowledgement"
+        )

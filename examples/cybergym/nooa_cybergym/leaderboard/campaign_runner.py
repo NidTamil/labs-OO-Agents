@@ -21,12 +21,14 @@ The only in-memory state is which window is currently open; run-scoped
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+from uuid import uuid4
 
 from .campaign import CampaignState, next_action
 
@@ -152,6 +154,46 @@ class PowerShellNativeUi:
         )
 
 
+class MailboxNativeUi:
+    """POSIX runner adapter for the outbound signed Windows UI mailbox."""
+
+    def __init__(self, mailbox, *, timeout_seconds: float = 120) -> None:
+        if (
+            not callable(getattr(mailbox, "publish", None))
+            or not callable(getattr(mailbox, "wait_ack", None))
+            or type(getattr(mailbox, "run_id", None)) is not str
+            or type(timeout_seconds) not in {int, float}
+            or not 0 < timeout_seconds <= 600
+        ):
+            raise ValueError("controller-custody UI mailbox required")
+        self.mailbox = mailbox
+        self.timeout = timeout_seconds
+
+    def _dispatch(self, run_id: str, action: str, *, task_id: str | None = None, **inputs) -> None:
+        if run_id != self.mailbox.run_id:
+            raise ValueError("UI command differs from signed campaign run")
+        operation_key = (
+            f"reap-{uuid4().hex}"
+            if action == "reap"
+            else f"{action}-{hashlib.sha256(task_id.encode('utf-8')).hexdigest()}"
+        )
+        command = self.mailbox.publish(
+            operation_key=operation_key, action=action, task_id=task_id, **inputs
+        )
+        acknowledgement = self.mailbox.wait_ack(command.command_id, timeout_seconds=self.timeout)
+        if acknowledgement.get("status") != "completed":
+            raise RuntimeError(f"Windows UI {action} was not completed")
+
+    def reap(self, run_id: str) -> None:
+        self._dispatch(run_id, "reap")
+
+    def open(self, run_id: str, task_id: str, remote_host: str, ssh_port: int) -> None:
+        self._dispatch(run_id, "open", task_id=task_id, remote_host=remote_host, port=ssh_port)
+
+    def close(self, run_id: str, task_id: str, remote_host: str) -> None:
+        self._dispatch(run_id, "close", task_id=task_id, remote_host=remote_host)
+
+
 def _started_request_id(state: CampaignState, task_id: str) -> str:
     """Read the first-request identity from the verified durable ledger."""
     events = state.authority.read_verified_events(state.evidence_root, state.run_id)
@@ -183,8 +225,11 @@ def run_campaign(
 
     open_host: str | None = None
     open_task_id: str | None = None
-    # Clear only resources owned by this run from an earlier interrupted process.
-    ui.reap(state.run_id)
+    # A started task may already have sent its one native prompt and be running
+    # inside an owned window. Preserve it on recovery; the durable UI operation
+    # keys below reconcile open/submit without issuing Send twice.
+    if next_action(state).kind != "observe_started":
+        ui.reap(state.run_id)
     try:
         while True:
             action = next_action(state)

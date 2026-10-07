@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 from nooa_cybergym.leaderboard.campaign import check_go_live, next_action
 from nooa_cybergym.leaderboard.campaign_runner import (
+    MailboxNativeUi,
     NativeUiController,
     PowerShellNativeUi,
     TaskExecutor,
@@ -392,7 +393,40 @@ def test_runner_resumes_started_intent_with_ledger_request_id(tmp_path):
     )
     executor = FakeExecutor(authority)
 
-    run_campaign(state, executor, RecordingUi())
+    ui = RecordingUi()
+    run_campaign(state, executor, ui)
 
     assert (last, f"req:{last}") in executor.submitted
     assert [event["type"] for event in authority.events[-3:]] == ["prepared", "started", "terminal"]
+    # The previous runner may have completed the native Send. Recovery must
+    # reconcile that command without reaping its live Claude window first.
+    assert ui.calls[0][0] == "open"
+
+
+def test_mailbox_ui_uses_stable_task_keys_and_requires_completed_host_ack():
+    from types import SimpleNamespace
+
+    class Box:
+        run_id = "run-1"
+
+        def __init__(self):
+            self.calls = []
+            self.status = "completed"
+
+        def publish(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(command_id="a" * 32)
+
+        def wait_ack(self, command_id, *, timeout_seconds):
+            assert command_id == "a" * 32
+            assert timeout_seconds == 30
+            return {"status": self.status}
+
+    box = Box()
+    ui = MailboxNativeUi(box, timeout_seconds=30)
+    ui.open("run-1", "arvo:1507", "cybergym-task-1", 32355)
+    ui.open("run-1", "arvo:1507", "cybergym-task-1", 32355)
+    assert box.calls[0]["operation_key"] == box.calls[1]["operation_key"]
+    box.status = "ambiguous"
+    with pytest.raises(RuntimeError, match="not completed"):
+        ui.close("run-1", "arvo:1507", "cybergym-task-1")

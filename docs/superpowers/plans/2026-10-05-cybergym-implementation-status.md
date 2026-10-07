@@ -789,3 +789,37 @@ synthetic run are still required before this correction counts as readiness.
 Neither run used an official practice/scored task. The concrete cross-host
 campaign `TaskExecutor`, signed terminal receipt path, and certification remain
 outstanding.
+
+## v25m native retry and outbound UI transport (2026-10-08 local)
+
+Commit `1ddf87f` was checked on SunChaser at 948 passed, five skipped, two
+deselected, with a clean Ruff run. Its fresh v25m registry, bindings and
+inventory hashes are respectively `fc0c392ebe51038ca8e37be5b2a991eee77c25d1748e2db630d92d298387936c`,
+`f73141e759aa8b50e784b91040204811b8ed2947fa8b93b696f8344cf0fb666a`,
+and `b1f0f970ae1ab5dbc93e66203d8b3b40d199846c2cac57504f21f6c8f48eb33d`.
+The first v25m native `chunk-table` run,
+`synthetic-native-v25ma-20261007`, is still active as this note is written.
+Its parent and two children passed 62/62 preflight probes each and the native
+model gateway has completed requests. No final, oracle, or readiness pass is
+claimed until the independent result verifier succeeds. Its evidence is at
+`/srv/sunchaser/runs/synthetic-evidence-20261007-v25m/`.
+
+Commit `8ff15dd` on `review/cybergym-parent-fuzzing` adds a controller-owned,
+Ed25519-signed SQLite command mailbox, a one-shot outbound Windows UI client,
+and a public-key-only SSH poll/ack entrypoint. The host client reserves each
+action before execution; a lost acknowledgement replays the same evidence and
+never clicks Send twice. Completed Send carries the exact attempted-action
+audit bytes and hash back to the controller. A bounded pre-reservation composer
+wait handles the observed asynchronous webview load, while Code and tunnel
+paths can be pinned. Sixteen focused tests passed on both Windows and an
+isolated SunChaser checkout. A live non-task smoke command was fetched over
+Tailscale SSH, verified on Windows, executed the run-scoped PowerShell reaper,
+and was durably acknowledged; the reaper found zero owned processes. This
+establishes outbound transport only, not an official native Send or oracle path.
+
+The runner now preserves an already-started task's window on recovery, and
+`MailboxNativeUi` plus `MailboxNativeSubmitter` are under local test. The
+concrete per-task worker/executor, final signed receipt through that worker,
+refreshed freeze for all source and host pins, matching full synthetic runs,
+and certification remain outstanding. Neither the two authorised practice
+tasks nor the official scored campaign has been started.
