@@ -40,6 +40,10 @@ def test_both_runs_stage_only_verified_vulnerable_fixture_and_frozen_contract(pr
             stage = stage_synthetic(config, run_id=run, task_id=fixture.task_id)
             stages.append(stage)
             assert (stage.root / "description.txt").read_bytes() == fixture.description.read_bytes()
+            assert (stage.root / "README.md").is_file()
+            assert (stage.root / "submit.sh").read_bytes().startswith(b"#!/bin/sh\n")
+            assert not ((stage.root / "submit.sh").stat().st_mode & 0o111)
+            assert "submit.sh" in stage.file_hashes
             assert (stage.root / "CLAUDE.md").read_bytes() == (target / "CLAUDE.md").read_bytes()
             assert fixture.fixed.read_bytes() not in b"".join(
                 path.read_bytes() for path in stage.root.rglob("*") if path.is_file()

@@ -273,6 +273,17 @@ def test_preflight_route_requires_verified_parent_process(assembled):
     assert service.preflight.model_role("session", None) is None
 
 
+def test_preflight_health_route_requires_active_admitted_peer(assembled):
+    service = assembled.create()
+    health = GatewayRequest("model-gateway", "GET", "/health", (), b"", assembled.peer)
+    assert service.handlers["model-gateway"](health).status == 200
+    wrong_peer = replace(assembled.peer, source_ip="172.20.0.9")
+    assert service.handlers["model-gateway"](replace(health, peer=wrong_peer)).status == 403
+    assert service.handlers["model-gateway"](replace(health, method="POST")).status != 200
+    service.context.halt()
+    assert service.handlers["model-gateway"](health).status == 503
+
+
 def test_all_controllers_share_context_and_real_native_model_lifecycle(assembled):
     service = assembled.create()
     assert service.audit is service.capabilities.audit is assembled.context.audit

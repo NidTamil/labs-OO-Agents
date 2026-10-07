@@ -5,14 +5,24 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from nooa_cybergym.leaderboard.native_calibration_driver import _source_files
 from nooa_cybergym.leaderboard.host_boundary_runtime import AdmittedPeer, GatewayRequest
 from nooa_cybergym.leaderboard.native_hook_runtime import NativeHookCollector, project_hook_input
 from nooa_cybergym.leaderboard.native_launcher import NativeLaunchAuthority, build_launch_manifest
 
 from .test_native_launcher import receipt, signed
+
+
+def test_calibration_source_has_required_synthetic_workspace_files():
+    repo = Path(__file__).resolve().parents[4]
+    files = _source_files(repo)
+    assert files["README.md"].startswith(b"Synthetic native certification fixture")
+    assert files["submit.sh"].startswith(b"#!/bin/sh\n")
+    assert b"repo-fix" not in files["submit.sh"]
 
 
 @pytest.fixture
