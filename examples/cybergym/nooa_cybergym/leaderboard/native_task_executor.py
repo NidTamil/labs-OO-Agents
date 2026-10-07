@@ -41,6 +41,40 @@ def _verified(envelope: bytes, verifier, contract):
     return value
 
 
+def _locked_final(
+    evidence_dir: Path, task_id: str, lock: FinalLock, solver_stopped: Callable[[], bool]
+) -> tuple[bytes, bytes]:
+    """Recheck the stopped parent's exact immutable final before private use."""
+    if type(lock) is not FinalLock or lock.task_id != task_id:
+        raise ValueError("matching stopped parent final lock required")
+    final = evidence_dir / "final"
+    if (
+        final.is_symlink()
+        or not final.is_dir()
+        or final.resolve() != final
+        or lock.poc_path != final / "poc"
+        or lock.declaration_path != final / "agent-final.json"
+    ):
+        raise ValueError("controller final custody path required")
+    if not callable(solver_stopped) or solver_stopped() is not True:
+        raise RuntimeError("native solver must be stopped before private final use")
+    candidate = _bytes(lock.poc_path, "locked final candidate")
+    declaration = _bytes(lock.declaration_path, "parent final declaration")
+    declared = _validate_declaration(declaration, task_id)
+    if (
+        len(candidate) != lock.byte_length
+        or hashlib.sha256(candidate).hexdigest() != lock.sha256
+        or declared["sha256"] != lock.sha256
+        or declared["byte_length"] != lock.byte_length
+        or not isinstance(lock.declaration, Mapping)
+        or declared != dict(lock.declaration)
+        or type(lock.parent_event_digest) is not str
+        or _HEX.fullmatch(lock.parent_event_digest) is None
+    ):
+        raise RuntimeError("locked parent final changed")
+    return candidate, declaration
+
+
 class NativeTerminalReceiptPublisher:
     """Publish at most one Xeus campaign receipt from attested evaluator bytes."""
 
@@ -132,33 +166,9 @@ class NativeTerminalReceiptPublisher:
         frozen_bundle: bytes,
         solver_stopped: Callable[[], bool],
     ) -> bytes:
-        if type(lock) is not FinalLock or lock.task_id != self.task_id:
-            raise ValueError("matching stopped parent final lock required")
-        final = self.evidence_dir / "final"
-        if (
-            final.is_symlink()
-            or not final.is_dir()
-            or final.resolve() != final
-            or lock.poc_path != final / "poc"
-            or lock.declaration_path != final / "agent-final.json"
-        ):
-            raise ValueError("controller final custody path required")
-        if not callable(solver_stopped) or solver_stopped() is not True:
-            raise RuntimeError("native solver must be stopped before terminal receipt")
-        candidate = _bytes(lock.poc_path, "locked final candidate")
-        declaration = _bytes(lock.declaration_path, "parent final declaration")
-        declared = _validate_declaration(declaration, self.task_id)
-        if (
-            len(candidate) != lock.byte_length
-            or hashlib.sha256(candidate).hexdigest() != lock.sha256
-            or declared["sha256"] != lock.sha256
-            or declared["byte_length"] != lock.byte_length
-            or not isinstance(lock.declaration, Mapping)
-            or declared != dict(lock.declaration)
-            or type(lock.parent_event_digest) is not str
-            or _HEX.fullmatch(lock.parent_event_digest) is None
-        ):
-            raise RuntimeError("locked parent final changed")
+        candidate, declaration = _locked_final(
+            self.evidence_dir, self.task_id, lock, solver_stopped
+        )
         request = _verified(signed_request, self.kernel_verifier, EvaluationRequest)
         result = _verified(signed_result, self.evaluator_verifier, EvaluationResult)
         if type(frozen_bundle) is not bytes or not 0 < len(frozen_bundle) <= 16 * 1024 * 1024:
