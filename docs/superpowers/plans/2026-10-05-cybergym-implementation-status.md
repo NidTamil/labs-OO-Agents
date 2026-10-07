@@ -191,3 +191,152 @@ has yet exercised them. Re-stage and re-freeze the changed template and image,
 recalibrate the native inventory, and obtain live synthetic model/memory/tool/
 boundary/finalization evidence before promoting this branch. The two authorized
 practice exercises and the official scored campaign remain unstarted.
+
+## v24 recertification and vulnerable-test mount repair (2026-10-07 local)
+
+The clean `43a1542` checkout and final native image completed a new
+provider-free Claude Code schema capture (SHA-256
+`8c8d5731d16e416f604206f81a6059cdaaac1d89da4e73b6966687447df86ec4`)
+with 36 actual native tool schemas. The first live v24 synthetic length-header
+attempt dispatched GLM-5.3, completed DeepSeek reconnaissance, and used parent
+and child GBrain/clangd/documentation tools. It produced candidate inputs and
+two fuzz-stat records; the offline analyzer correctly returned
+`insufficient_telemetry` because agent-written records do not establish CPU
+saturation. That attempt did **not** complete: `run_test` returned 503, so it
+was stopped without an oracle verdict or final selection.
+
+The controller test supervisor compiled to `/tmp/cybergym-parser`, but the
+isolated container mounted `/tmp` as `noexec`. A first path correction to
+`/workspace/src` also failed because that tmpfs is actually `noexec` at
+runtime. A disposable probe of the pinned native image confirmed exit 126 from
+both mounts and successful execution from the existing `/workspace/output`
+bind mount. The final recipe at commit `25d2d7b` builds and runs its test
+binary under `/workspace/output`; the finalizer continues to lock only the
+selected candidate path and hash. The actual controller supervisor in a
+disposable container returned build exit 0 and parser exit 2 on a deliberately
+invalid input. The full Linux component suite passed 978 tests, with five
+skips and two deselections. No failed attempt was reported as certified.
+
+The v24s freeze
+`84a62e6c352531e9c85b6ca7aab81433ea95bd185a4219c1f662bc1587f6729c`
+produced a live, completed `run_test`: build exit 0, vulnerable test exit
+-6, unchanged candidate SHA-256
+`37e870e1f542b90bfe098b054e39e9b39abd05e88dc6db4e15647e62e8b20300`.
+Its DeepSeek critic then failed after a permitted clangd read. The exact
+reproduction showed that clangd correctly denied a `memcpy` definition in a
+system header outside the frozen source root, but the client incorrectly
+closed its whole LSP session after that expected denial. No v24s final/oracle
+was produced, and the attempt was stopped.
+
+Commit `4911ff4` preserves the external-location denial while keeping the
+LSP session usable for later in-scope reads. A regression test failed before
+the change and passed afterward; an actual disposable native-image session
+reproduced `document_symbols` success after the denied definition. The full
+Linux component suite again passed 978 tests, with five skips and two
+deselections. The new v24t controller freeze is
+`f8ebf13c623f23a4d3f0875d56a4efc356643e1b72f197939b6e4fc7f4c8e4ea`;
+its registry is
+`b4179532dc1e2ed404593c2a1783fac1bdaade07180f17f8cbc30996e8f69795`.
+The first v24t live synthetic task is in progress. Certification still
+requires its real final/oracle, post-verdict memory, boundary audit, and
+matching repeat runs. The authorized practice exercises and official scored
+campaign remain unstarted.
+
+During v24t, the parent encountered another container mount mismatch while
+trying to execute its own sanitizer/fuzzing harness under `/workspace/src`.
+Docker mounted that tmpfs `noexec` despite the prior spec omitting `noexec`.
+A disposable probe of the pinned image verified that an explicit `exec` tmpfs
+option permits the intended in-container binaries. Commit `44eeb31` adds that
+option only to `/workspace/src` and makes preflight fail if the resulting mount
+still has `noexec`; the changed 69 mount/preflight tests passed on Windows.
+The v24t task predates this change and cannot certify the corrected mount.
+
+The v24t exploratory task nevertheless reached the full native terminal path:
+one final selection, `oracle_true=true`, `boundary_failed=false`, and a
+controller-only GBrain episode after the signed verdict. Its Ed25519 synthetic
+oracle signature and 161-record runtime hash chain were independently verified;
+DeepSeek reconnaissance and final critic completed. Conditional debugging was
+not triggered because the test produced the expected sanitizer crash. The
+agent used an in-container memfd workaround for the old `noexec` source mount,
+so this run is not the corrected-mount certification evidence. The fuzz-stats
+report found one campaign and a self-reported crash but returned
+`insufficient_telemetry`, with no CPU-saturation or parallel-lane claim.
+
+The corrected `44eeb31` worktree passed 979 Linux component tests, five skips
+and two deselections. A v24u registry additionally pins `container.py` and
+`preflight.py` as controller adapter sources, preventing mount semantics from
+changing outside the freeze. Its registry hash is
+`4e2dd1c0436a0aba26288ac5fce558514c68cad429b03430a0483f6df2972b84`;
+the controller freeze is
+`8e820173b0b19a9bf07b40e42ba12f9c0c7015d225d508a2243e2a44b29421a8`.
+The first live v24u synthetic task is in progress. A short controller-owned
+diagnostic copied and removed `/bin/true` in its source tmpfs to verify
+execution; that out-of-band probe must be disclosed, and a clean repeat is
+still required.
+
+The v24u task was stopped without a final or oracle. GLM selected the native
+`Workflow` tool's inline-script form despite the controller permitting only
+exact frozen workflow files. The inline call was denied, and the following
+provider stream lacked its terminal marker; native stream custody failed
+closed. Its reserved GLM call was charged the full reservation because usage
+was interrupted. The container, VS Code window, and SSH tunnel were removed;
+the diagnostic file and failed run evidence remain. This is a demonstrated
+unreviewed child-fanout attempt, not an accepted capability use.
+
+Commit `3d5877c` tells the native solver to use registered `Agent` children
+even when Ultracode is on, and to avoid the inline `Workflow` form. The
+controller continues to allow only exact frozen workflow files. The v24v
+worktree passed 979 Linux component tests, five skips and two deselections;
+its new harness manifest pins the changed `CLAUDE.md`. The registry hash is
+`0af6a0843b7aff35870dc40ee493bfdc87098701ef30fef190bc897d6b78879e`;
+the controller freeze is
+`cbb9fc1672ca938f5d94a867032a023aee033cb732671edefe2c86be08c2a451`.
+The first clean v24v native synthetic task is in progress. No new readiness
+claim follows from the v24u failure.
+
+The clean v24va `synthetic:length-header` run completed with one GLM parent
+selection, `oracle_true=true`, `boundary_failed=false`, and a controller-only
+GBrain episode after the signed verdict. Independent verification checked the
+Ed25519 oracle signature, exact candidate/freeze identity, all 166 sequential
+runtime-audit records and hash links, DeepSeek reconnaissance and critic
+completion, two native Agent calls, parent/child read-only tool usage, and one
+final selection. The live model-owned Bash path executed the sanitizer/fuzzer
+binary under `/workspace/src` and found a crash. Its fuzz-stats report again
+returns `insufficient_telemetry`; no parallel-lane recommendation is made.
+The isolated VS Code window, tunnel and task container were removed after
+terminal. Matching clean runs on the other fixture and a repeat are pending.
+
+The v24va `synthetic:chunk-table` task also completed with
+`oracle_true=true`, `boundary_failed=false`, one GLM-selected final and a
+post-verdict controller GBrain episode. Its signature, exact freeze/candidate
+identity, all 177 hash-chained runtime events, DeepSeek recon/critic, and
+oracle-before-memory order were independently verified. Both first-pass
+fixtures are now clean under the same freeze. Their isolated windows, tunnels
+and containers were removed. A second run of each fixture remains for the
+matching-repeat gate; no official practice or scored task has started.
+
+The v24vb `synthetic:length-header` repeat also reached an oracle-positive
+terminal result with one final, no boundary failure, and post-verdict memory.
+Its Ed25519 signature, candidate/freeze binding, 145-record audit hash chain,
+single final selection, and oracle-before-memory order were independently
+verified. The isolated window, tunnel and container were removed.
+
+The v24vb `synthetic:chunk-table` repeat did **not** certify. It exercised
+the native parent, registered children, read-only tools and vulnerable test,
+but DeepSeek's final critic used all eight frozen requests on read-only
+investigation without returning advice. The controller marked that role
+failed and forbade an in-attempt retry. The run was stopped before any final
+or oracle; its evidence is retained, and its isolated window, tunnel and
+container were removed. The solver's later waits and retry request did not
+change the durable failed role. A regression test reproduced the quota
+failure. The amended advisory loop now reserves its last two requests for
+advice, denies further read-only tool dispatch with an audited event, and
+gives the model a final corrective prompt. The local advisory suite passes;
+this change requires a new source freeze and live verification before it can
+support readiness.
+
+The native synthetic driver does not invoke `run_preflight`, and the serial
+campaign runner still has only a `TaskExecutor` protocol. Those are explicit
+practice-launch integration gaps. Neither a Docker-exec mount check nor a
+synthetic oracle result is an attestation that the native parent/child
+pre-model preflight or official per-task signed receipt adapter ran.

@@ -336,6 +336,20 @@ class AdvisoryRuntime:
                     )
                     invalid_json = 0
                     for index in range(ROLE_LIMITS[role][1]):
+                        # Preserve two provider requests for a final verdict. A
+                        # read-only tool action on either request is not dispatched.
+                        advice_only = index >= ROLE_LIMITS[role][1] - 2
+                        if advice_only:
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "No further tool actions are available. Return one "
+                                        "advice JSON object now with summary, evidence, and "
+                                        "risks based only on observations already received."
+                                    ),
+                                }
+                            )
                         # The shared callback is idempotent across GLM, memory and advisors.
                         if (
                             index == 0
@@ -374,7 +388,9 @@ class AdvisoryRuntime:
                                 },
                             )
                             if invalid_json > 2:
-                                raise ValueError("advisory JSON protocol failed after repair") from None
+                                raise ValueError(
+                                    "advisory JSON protocol failed after repair"
+                                ) from None
                             messages.append(
                                 {
                                     "role": "user",
@@ -426,6 +442,28 @@ class AdvisoryRuntime:
                             or type(action["arguments"]) is not dict
                         ):
                             raise ValueError("undeclared advisory action")
+                        if advice_only:
+                            self._record(
+                                role,
+                                "tool_denied_for_advice_reserve",
+                                {
+                                    "action": action["action"],
+                                    "response_sha256": hashlib.sha256(
+                                        reply["content"].encode()
+                                    ).hexdigest(),
+                                },
+                            )
+                            messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "The requested tool action was not executed. "
+                                        "No further tool actions are available; return "
+                                        "one advice JSON object now."
+                                    ),
+                                }
+                            )
+                            continue
                         observed_action = AdvisoryAction(
                             action_id="advisory-action-" + uuid4().hex,
                             provider_request_id=reply["provider_request_id"],

@@ -219,6 +219,33 @@ def test_critic_rejects_controller_snapshot_bytes_not_matching_claimed_hash(setu
     assert len(transport.calls) == 1
 
 
+def test_critic_keeps_two_requests_for_advice_after_readonly_tool_budget(setup):
+    runtime, _, _, transport, budget, calls, _ = setup
+    transport.actions = [
+        {"action": "advice", "summary": "Recon complete.", "evidence": [], "risks": []}
+    ]
+    runtime.run_recon()
+    tool_action = {
+        "action": "local_read",
+        "arguments": {"operation": "list", "path": "/workspace/src"},
+    }
+    transport.actions = [
+        *[tool_action for _ in range(7)],
+        {"action": "advice", "summary": "Critic complete.", "evidence": [], "risks": []},
+    ]
+    digest = hashlib.sha256(b"poc").hexdigest()
+    result = runtime.run_critic(
+        candidate_path="/workspace/output/poc.bin",
+        candidate_sha256=digest,
+        candidate_context="Review this candidate",
+    )
+    assert result["summary"] == "Critic complete."
+    assert len(calls) == 6
+    assert len(transport.calls) == 9  # one recon plus eight critic requests
+    assert "no further tool actions" in json.dumps(transport.calls[-1]["messages"]).lower()
+    assert budget.snapshot()["deepseek_requests"] == 9
+
+
 def test_undeclared_action_is_a_terminal_role_failure_without_retry(setup):
     runtime, create, _, transport, budget, calls, _ = setup
     transport.actions = [{"action": "Bash", "arguments": {"command": "curl secret"}}]
