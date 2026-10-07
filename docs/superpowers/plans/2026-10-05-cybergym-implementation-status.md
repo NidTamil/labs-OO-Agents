@@ -676,3 +676,16 @@ durable `started` intent: those lanes can consume a model request before the
 Windows Send action. The current synthetic driver does start automatic lanes
 before UI, so it is evidence of the existing synthetic runtime only, not a
 drop-in campaign `TaskExecutor`.
+
+The native first-request witness is pushed at `edf0f64`. It requires the exact
+reserved launcher receipt plus same-task, same-attempt, policy-pinned primary
+`request_reserved` and `attempt_started` rows in the controller's model gateway
+audit. Auxiliary-only requests do not satisfy it; it scans all complete audit
+rows and rejects malformed trailing evidence. A regression watched a malformed
+row after admission incorrectly pass, then pass after the fix. The real Xeus
+evaluator, terminal receipt, native Send guard, and first-request witness
+targeted suite passes 13/13 on SunChaser. This witness proves gateway admission,
+not provider completion, and has not yet been wired into a concrete campaign
+executor or observed in a new live run. A read-only Windows Computer Use check
+found no VS Code window, so this turn did not launch a calibration container or
+submit any UI action.
