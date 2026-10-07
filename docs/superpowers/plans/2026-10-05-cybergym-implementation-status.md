@@ -576,3 +576,23 @@ has SHA-256 `ad491ee6e78d428e490f463879d092a9a0da19080c456c39a0d73821b47ac6a9`.
 A real calibration run is still required to validate that composition,
 refresh the capability freeze for the new image, and supply native process
 evidence. No practice or scored task has started.
+
+The first disposable v25i calibration started the new image and a real VS Code
+extension host but made no launch reservation or model request. Read-only
+`docker exec` process inspection showed the actual extension-host argv is
+`/opt/sunchaser/vscode-server/node --dns-result-order=ipv4first
+/opt/sunchaser/vscode-server/out/bootstrap-fork --type=extensionHost
+--transformURIs --useHostProxy=false`. The initial parent verifier expected a
+different entry point. A regression using the observed argv failed before the
+fix and passed afterward, including denial of `--type=agentHost`; the full
+Linux component suite then passed 1000 tests, five skipped, two deselected.
+JUnit XML `/srv/sunchaser/runs/cybergym-components-20261007-v25j.xml` has
+SHA-256 `73fa26497bebbaa9cfba03260f126e9e50b43c88c714a387286013ab9f126a8a`.
+This controller process-code change does not alter the image. The calibration
+was stopped before any provider request, and its container/network, local SSH
+tunnel, and dedicated VS Code window were verified closed. Windows Computer
+Use could list the unique Claude Code VS Code window but twice returned
+`failed to activate captured window`; the user was asked asynchronously to
+unlock the desktop if locked. Retry real no-provider calibration from a fresh
+root after window access is restored. No calibration artifact from this
+interrupted attempt may be used as a freeze input.

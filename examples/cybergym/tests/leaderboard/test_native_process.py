@@ -305,7 +305,11 @@ def test_parent_identity_binds_receipt_pid_to_frozen_extension_host(tmp_path: Pa
     )
     (proc / "200/cmdline").write_bytes(
         b"/opt/sunchaser/vscode-server/node\0"
-        b"/opt/sunchaser/vscode-server/out/vs/workbench/api/node/extensionHostProcess\0"
+        b"--dns-result-order=ipv4first\0"
+        b"/opt/sunchaser/vscode-server/out/bootstrap-fork\0"
+        b"--type=extensionHost\0"
+        b"--transformURIs\0"
+        b"--useHostProxy=false\0"
     )
     (proc / "200/fd").mkdir()
     (proc / "200/fd/4").symlink_to("socket:[555]")
@@ -317,6 +321,19 @@ def test_parent_identity_binds_receipt_pid_to_frozen_extension_host(tmp_path: Pa
         "expected_node_sha256": hashlib.sha256(node.read_bytes()).hexdigest(),
     }
     subject.verify_native_parent_process(proc, **kwargs)
+    (proc / "200/cmdline").write_bytes(
+        (proc / "200/cmdline").read_bytes().replace(b"--type=extensionHost", b"--type=agentHost")
+    )
+    with pytest.raises(ValueError, match="command"):
+        subject.verify_native_parent_process(proc, **kwargs)
+    (proc / "200/cmdline").write_bytes(
+        b"/opt/sunchaser/vscode-server/node\0"
+        b"--dns-result-order=ipv4first\0"
+        b"/opt/sunchaser/vscode-server/out/bootstrap-fork\0"
+        b"--type=extensionHost\0"
+        b"--transformURIs\0"
+        b"--useHostProxy=false\0"
+    )
     (proc / "200/status").write_text(
         "Name:\tnode\nPid:\t200\nPPid:\t150\nUid:\t1001\t1001\t1001\t1001\nNSpid:\t200\t351\n"
     )

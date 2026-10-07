@@ -35,7 +35,14 @@ _PARENT_NODE_PATH = "/opt/sunchaser/vscode-server/node"
 _LAUNCHER_PATH = (
     "/opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/extension.js"
 )
-_EXTENSION_HOST_PATH = "/opt/sunchaser/vscode-server/out/vs/workbench/api/node/extensionHostProcess"
+_EXTENSION_HOST_COMMAND = (
+    _PARENT_NODE_PATH,
+    "--dns-result-order=ipv4first",
+    "/opt/sunchaser/vscode-server/out/bootstrap-fork",
+    "--type=extensionHost",
+    "--transformURIs",
+    "--useHostProxy=false",
+)
 FROZEN_NATIVE_IMAGE_ID = "sha256:f42ed4003aec4d693b2ccfda435717c21a1c002073343463cbf0fae713c55d7e"
 FROZEN_HOOK_SHA256 = "79599794a427a44a89ca09f19e6daec5917a5c4c55daeb9c731a2a830140d8c1"
 FROZEN_NODE_SHA256 = "fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48"
@@ -268,13 +275,9 @@ def verify_native_parent_process(
             or nested_pid(parent / "status") != receipt_observed["ppid"]
         ):
             raise ValueError("native parent PID differs from launch receipt")
-        argv = (folder / "cmdline").read_bytes().split(b"\0")
-        if (
-            len(argv) < 3
-            or argv[0] != _PARENT_NODE_PATH.encode()
-            or _EXTENSION_HOST_PATH.encode() not in argv[1:-1]
-            or argv[-1] != b""
-        ):
+        if (folder / "cmdline").read_bytes() != (
+            "\0".join(_EXTENSION_HOST_COMMAND) + "\0"
+        ).encode():
             raise ValueError("native parent command is not the frozen extension host")
         executable = folder / "exe"
         if os.readlink(executable) != _PARENT_NODE_PATH:
