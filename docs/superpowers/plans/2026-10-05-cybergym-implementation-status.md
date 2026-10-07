@@ -640,3 +640,21 @@ Fresh v25i native calibration is still waiting on an interactive Windows
 desktop. Computer Use refreshed and retried activation of the unique ChatGPT
 window in the next turn; both activations returned `failed to activate captured
 window`, so no task container/window was launched and no UI input was sent.
+
+The controller evaluator leg now has one-shot Xeus dispatch in
+`native_evaluator_dispatch.py` at pushed commit `fe5f5c2`. Given an affirmatively
+stopped solver and the exact controller-custody `FinalLock`, it rechecks the
+candidate bytes and declaration, verifies the frozen private evaluator config,
+stores the single PoC and kernel-signed `SubmissionBundle` in the Xeus artifact
+store, then fsyncs a signed `EvaluationRequest` before invoking the isolated
+`xeus_cybergym.evaluator.worker`. It verifies the evaluator-signed result and
+never redispatches an ambiguous request. The Linux venv interpreter's symlink
+is accepted after checking its resolved file; it remains a controller-supplied
+input. The signed-submission media type matches Xeus's own worker fixture.
+An integration test on SunChaser exercised the real worker subprocess against
+harmless synthetic vulnerable/fixed local targets and then published a signed
+terminal receipt; targeted Linux tests passed 11/11. Windows component tests
+passed 10 with the POSIX-only worker test skipped. This is real evaluator
+component evidence, not a live native parent/child run or an official practice
+exercise. The campaign `TaskExecutor`, UI first-request correlation, refreshed
+capability freeze, and full native synthetic matching runs remain outstanding.
