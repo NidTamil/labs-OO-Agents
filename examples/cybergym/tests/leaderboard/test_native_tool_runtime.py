@@ -12,7 +12,15 @@ from nooa_cybergym.leaderboard.native_tool_runtime import NativeToolController
 PEER = AdmittedPeer("a" * 64, "b" * 64, "172.20.0.2")
 
 
-def controller(tmp_path, authorize=lambda _: True, *, parent_tools=None, observed_role=None, captured_schemas=None, task_id="task"):
+def controller(
+    tmp_path,
+    authorize=lambda _: True,
+    *,
+    parent_tools=None,
+    observed_role=None,
+    captured_schemas=None,
+    task_id="task",
+):
     parent_tools = parent_tools or frozenset({"Read", "Bash", "Agent"})
     return NativeToolController(
         tmp_path / "tools.sqlite",
@@ -24,8 +32,11 @@ def controller(tmp_path, authorize=lambda _: True, *, parent_tools=None, observe
         policy_sha256="c" * 64,
         parent_tools=parent_tools,
         child_tools=frozenset({"Read"}),
-        captured_schemas=captured_schemas or {
-            name: hashlib.sha256(json.dumps({"name": name}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        captured_schemas=captured_schemas
+        or {
+            name: hashlib.sha256(
+                json.dumps({"name": name}, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
             for name in (parent_tools | {"Read", "Bash", "Agent"})
         },
         observed_role=observed_role
@@ -40,7 +51,12 @@ def controller(tmp_path, authorize=lambda _: True, *, parent_tools=None, observe
 
 
 def test_native_advertised_denied_tool_is_removed_before_provider(tmp_path):
-    schema = {name: hashlib.sha256(json.dumps({"name": name}, sort_keys=True, separators=(",", ":")).encode()).hexdigest() for name in ("Read", "Bash", "Agent", "DeniedTool")}
+    schema = {
+        name: hashlib.sha256(
+            json.dumps({"name": name}, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        for name in ("Read", "Bash", "Agent", "DeniedTool")
+    }
     c = controller(tmp_path, captured_schemas=schema)
     request = model_request(names=("Read", "DeniedTool"))
     grant = c.begin_request(request)
@@ -54,10 +70,17 @@ def test_pinned_builtin_can_vary_description_and_input_shape_but_mcp_cannot(tmp_
     c = controller(tmp_path, parent_tools=frozenset({"Read", "Bash", "Agent", name}))
     request = model_request(names=("Read", "Bash"))
     payload = json.loads(request.body)
-    payload["tools"][0].update({"description": "Native read", "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}}})
+    payload["tools"][0].update(
+        {
+            "description": "Native read",
+            "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}},
+        }
+    )
     request = replace(request, body=json.dumps(payload).encode())
     grant = c.begin_request(request)
-    assert [tool["name"] for tool in json.loads(c.forward_request(grant, request).body)["tools"]] == ["Read", "Bash"]
+    assert [
+        tool["name"] for tool in json.loads(c.forward_request(grant, request).body)["tools"]
+    ] == ["Read", "Bash"]
     with __import__("sqlite3").connect(c.database) as connection:
         drift = json.loads(connection.execute("SELECT schema_drift FROM requests").fetchone()[0])
     assert [item["name"] for item in drift] == ["Read"]
@@ -163,7 +186,9 @@ def test_child_advertised_writable_tool_is_removed_before_provider(tmp_path):
     c = controller(tmp_path)
     request = model_request(agent="child-1", names=("Read", "Bash"))
     grant = c.begin_request(request)
-    assert [tool["name"] for tool in json.loads(c.forward_request(grant, request).body)["tools"]] == ["Read"]
+    assert [
+        tool["name"] for tool in json.loads(c.forward_request(grant, request).body)["tools"]
+    ] == ["Read"]
     c.observe_stream(grant, tool_frames())
     assert c.authorize_hook(hook(agent="child-1")) is True
     assert c.authorize_hook(hook()) is False
@@ -485,31 +510,128 @@ def test_thinking_only_provider_interruption_allows_at_most_two_fresh_requests(t
             grant,
             sse(
                 {"type": "message_start", "message": {"id": f"msg-{index}", "model": "glm-5.3"}},
-                {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
-                {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "step"}},
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "thinking", "thinking": ""},
+                },
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "thinking_delta", "thinking": "step"},
+                },
             ),
         )
-        assert c.finish_stream(grant, False, "provider_sse_incomplete" if index else "provider_stream_no_terminal") is True
+        assert (
+            c.finish_stream(
+                grant, False, "provider_sse_incomplete" if index else "provider_stream_no_terminal"
+            )
+            is True
+        )
         assert c.authorize_hook(hook()) is False
     third = c.begin_request(model_request())
-    c.observe_stream(third, sse({"type": "message_start", "message": {"id": "msg-3", "model": "glm-5.3"}}))
+    c.observe_stream(
+        third, sse({"type": "message_start", "message": {"id": "msg-3", "model": "glm-5.3"}})
+    )
     assert c.finish_stream(third, False, "provider_stream_no_terminal") is False
     with pytest.raises(PermissionError):
         c.begin_request(model_request())
     with sqlite3.connect(c.database) as connection:
-        assert connection.execute("SELECT status,count(*) FROM request_lifecycle GROUP BY status ORDER BY status").fetchall() == [
-            ("interrupted", 1), ("retryable_interrupted", 2)
-        ]
+        assert connection.execute(
+            "SELECT status,count(*) FROM request_lifecycle GROUP BY status ORDER BY status"
+        ).fetchall() == [("interrupted", 1), ("retryable_interrupted", 2)]
 
 
-@pytest.mark.parametrize("failure_code", [None, "provider_identity_changed", "provider_stream_no_terminal"])
+@pytest.mark.parametrize(
+    "failure_code", [None, "provider_identity_changed", "provider_stream_no_terminal"]
+)
 def test_interrupted_text_or_unapproved_failure_cannot_retry(tmp_path, failure_code):
     c = controller(tmp_path)
     grant = c.begin_request(model_request())
     events = [{"type": "message_start", "message": {"id": "msg", "model": "glm-5.3"}}]
     if failure_code == "provider_stream_no_terminal":
-        events.append({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": "partial"}})
+        events.append(
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": "partial"},
+            }
+        )
     c.observe_stream(grant, sse(*events))
     assert c.finish_stream(grant, False, failure_code) is False
+    with pytest.raises(PermissionError):
+        c.begin_request(model_request())
+
+
+def test_cancelled_thinking_only_child_does_not_halt_parent(tmp_path):
+    c = controller(tmp_path)
+    child = c.begin_request(model_request(agent="child-1"))
+    c.observe_stream(
+        child,
+        sse(
+            {"type": "message_start", "message": {"id": "child-msg", "model": "glm-5.3"}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "private partial"},
+            },
+        ),
+    )
+    assert c.finish_stream(child, False, "client_cancelled") is False
+    with sqlite3.connect(c.database) as connection:
+        assert connection.execute(
+            "SELECT status FROM request_lifecycle WHERE request=?", (child.request_id,)
+        ).fetchone() == ("child_cancelled_no_output",)
+    assert c.begin_request(model_request())
+
+
+@pytest.mark.parametrize("agent,block_type", [(None, "thinking"), ("child-1", "text")])
+def test_cancelled_parent_or_child_text_still_halts(tmp_path, agent, block_type):
+    c = controller(tmp_path)
+    grant = c.begin_request(model_request(agent=agent))
+    c.observe_stream(
+        grant,
+        sse(
+            {"type": "message_start", "message": {"id": "msg", "model": "glm-5.3"}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": block_type, block_type: "partial"},
+            },
+        ),
+    )
+    assert c.finish_stream(grant, False, "client_cancelled") is False
+    with pytest.raises(PermissionError):
+        c.begin_request(model_request())
+
+
+def test_child_thinking_cancellation_is_bounded_to_two(tmp_path):
+    c = controller(tmp_path)
+    for index in range(3):
+        grant = c.begin_request(model_request(agent="child-1"))
+        c.observe_stream(
+            grant,
+            sse(
+                {
+                    "type": "message_start",
+                    "message": {"id": f"child-msg-{index}", "model": "glm-5.3"},
+                },
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "thinking", "thinking": ""},
+                },
+            ),
+        )
+        assert c.finish_stream(grant, False, "client_cancelled") is False
+    with sqlite3.connect(c.database) as connection:
+        assert connection.execute(
+            "SELECT status,count(*) FROM request_lifecycle GROUP BY status ORDER BY status"
+        ).fetchall() == [("child_cancelled_no_output", 2), ("interrupted", 1)]
     with pytest.raises(PermissionError):
         c.begin_request(model_request())

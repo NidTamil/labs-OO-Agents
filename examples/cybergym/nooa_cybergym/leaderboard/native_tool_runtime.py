@@ -160,7 +160,8 @@ class NativeToolController:
                 or request.peer != self.peer
                 or request.endpoint != "model-gateway"
                 or request.method != "POST"
-                or request.path not in {
+                or request.path
+                not in {
                     "/v1/messages",
                     "/v1/messages?beta=true",
                     "/v1/messages/count_tokens",
@@ -220,7 +221,9 @@ class NativeToolController:
                                     "INSERT OR IGNORE INTO child_schema_discovery VALUES(1,?,?)",
                                     (hashlib.sha256(request.body).hexdigest(), discovery),
                                 )
-                    raise PermissionError("native advertised tool schema differs from frozen capture")
+                    raise PermissionError(
+                        "native advertised tool schema differs from frozen capture"
+                    )
                 if observed != frozen:
                     input_schema = tool.get("input_schema", tool.get("inputSchema"))
                     description = tool.get("description")
@@ -232,7 +235,9 @@ class NativeToolController:
                         or input_schema.get("type") != "object"
                         or len(_canonical(tool)) > 128 * 1024
                     ):
-                        raise PermissionError("native advertised tool schema differs from frozen capture")
+                        raise PermissionError(
+                            "native advertised tool schema differs from frozen capture"
+                        )
                     schema_drift.append(
                         {
                             "name": name,
@@ -279,6 +284,7 @@ class NativeToolController:
                 "request_sha256": hashlib.sha256(request.body).hexdigest(),
                 "forwarded_body": _canonical(forwarded),
                 "grant": grant,
+                "role": role,
                 "count_tokens": count_tokens,
                 "started": False,
                 "terminal": False,
@@ -325,7 +331,9 @@ class NativeToolController:
         diagnostic = {
             "model_is_glm_5_3": payload.get("model") == "glm-5.3",
             "stream_is_true": payload.get("stream") is True,
-            "max_tokens": max_tokens if type(max_tokens) is int and 0 <= max_tokens <= 128000 else None,
+            "max_tokens": max_tokens
+            if type(max_tokens) is int and 0 <= max_tokens <= 128000
+            else None,
             "thinking_type": (
                 thinking.get("type")
                 if type(thinking) is dict
@@ -514,17 +522,25 @@ class NativeToolController:
                 else:
                     valid = bool(state["terminal"] and not state["blocks"] and not state["buffer"])
             retryable = False
+            child_cancelled_no_output = False
             try:
                 with self._connect() as c:
-                    if valid and not completed and failure_code in {
-                        "provider_stream_no_terminal",
-                        "provider_sse_incomplete",
-                        "provider_transport_failure",
-                    }:
+                    if (
+                        valid
+                        and not completed
+                        and failure_code
+                        in {
+                            "provider_stream_no_terminal",
+                            "provider_sse_incomplete",
+                            "provider_transport_failure",
+                            "client_cancelled",
+                        }
+                    ):
                         prior = c.execute(
-                            "SELECT count(*) FROM request_lifecycle WHERE status='retryable_interrupted'"
+                            "SELECT count(*) FROM request_lifecycle "
+                            "WHERE status IN ('retryable_interrupted','child_cancelled_no_output')"
                         ).fetchone()[0]
-                        retryable = bool(
+                        no_output = bool(
                             prior < 2
                             and state["started"]
                             and not state["count_tokens"]
@@ -538,14 +554,27 @@ class NativeToolController:
                             )
                             and c.execute(
                                 "SELECT count(*) FROM tools WHERE request=?", (grant.request_id,)
-                            ).fetchone()[0] == 0
+                            ).fetchone()[0]
+                            == 0
                         )
+                        if failure_code == "client_cancelled":
+                            # Claude Code may cancel a long-running child while it
+                            # has received only thinking. The child cannot have
+                            # acted on an output/tool, so preserve the bounded
+                            # attempt without retrying this ambiguous request.
+                            child_cancelled_no_output = no_output and state["role"] == "child"
+                        else:
+                            retryable = no_output
                     changed = c.execute(
                         "UPDATE request_lifecycle SET status=? WHERE request=? AND status='streaming'",
                         (
                             "completed"
                             if completed and valid
-                            else "retryable_interrupted" if retryable else "interrupted",
+                            else "retryable_interrupted"
+                            if retryable
+                            else "child_cancelled_no_output"
+                            if child_cancelled_no_output
+                            else "interrupted",
                             grant.request_id,
                         ),
                     )
@@ -554,7 +583,7 @@ class NativeToolController:
             except Exception:
                 self._halted = True
                 raise PermissionError("native terminal custody failed") from None
-            if not completed and not retryable or not valid:
+            if (not completed and not retryable and not child_cancelled_no_output) or not valid:
                 self._halted = True
             if not valid:
                 raise PermissionError("native provider stream incomplete or invalid")

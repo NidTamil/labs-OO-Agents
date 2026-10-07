@@ -1304,7 +1304,7 @@ class NativeModelGateway:
                         outcome = "transport_error"
                         error = GatewayUpstreamError("provider stream close failed")
             duration = time.monotonic() - started_at
-            failure_code = _failure_code(error)
+            failure_code = "client_cancelled" if outcome == "cancelled" else _failure_code(error)
             retryable = False
             if self._native_stream_finished is not None and route == "primary":
                 try:
@@ -1314,7 +1314,8 @@ class NativeModelGateway:
                     retryable = bool(
                         custody_retry
                         and outcome in {"provider_error", "transport_error"}
-                        and failure_code in {
+                        and failure_code
+                        in {
                             "provider_stream_no_terminal",
                             "provider_sse_incomplete",
                             "provider_transport_failure",

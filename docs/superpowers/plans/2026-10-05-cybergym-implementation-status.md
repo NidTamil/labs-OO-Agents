@@ -764,8 +764,28 @@ recorded `oracle_true: true`, `provider_dispatched: true`,
 `/srv/sunchaser/runs/synthetic-evidence-20261007-v25i/`.
 The owned VS Code window/tunnel and task container were reaped. The second
 distinct v25i synthetic task, `synthetic-native-v25ib-20261007` on
-`synthetic:chunk-table`, is still in progress; its parent and two child
-preflights passed, but no oracle verdict or independent verification exists yet.
+`synthetic:chunk-table`, passed its parent and two child preflights but did not
+reach a final declaration. A child primary-model stream ran for 358 seconds,
+produced 302,609 audited SSE bytes containing only a message start and one
+thinking block, then was canceled by the native client. It emitted no text or
+tool call. The model audit recorded that request as canceled, and the native
+tool gate marked its lifecycle interrupted and halted the whole task. Later
+requests received 403. The task was deliberately stopped before its 3600-second
+wall timeout; the owned container/window/tunnel were removed and its evidence
+preserved. No oracle result was claimed. Built-in tool schema differences in
+the denial diagnostic were incidental: the controller already audits and
+admits bounded built-in drift, while MCP schemas remain exact. The actual
+terminal failure was the canceled child's task-wide halt.
+
+A test-first controller correction now identifies client cancellation explicitly
+in the model audit and permits at most two canceled child streams to leave the
+task alive only when the stream contains no text/tool output, no pending partial
+frame, no terminal marker, and no observed tool call. It never retries that
+ambiguous request and still halts on parent cancellation, any child text/tool
+output, malformed streams, or a third such cancellation. Windows regression
+tests for the native tool gate and model gateway passed 127/127 with the Xeus
+source on `PYTHONPATH`; the next native image/config freeze and live matching
+synthetic run are still required before this correction counts as readiness.
 Neither run used an official practice/scored task. The concrete cross-host
 campaign `TaskExecutor`, signed terminal receipt path, and certification remain
-outstanding; these synthetic results alone do not make the campaign ready.
+outstanding.

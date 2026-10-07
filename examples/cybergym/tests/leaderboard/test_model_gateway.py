@@ -486,18 +486,59 @@ def test_native_custody_receives_exact_checked_stream_and_terminal(tmp_path):
     assert finished == [("req-1", True, None)]
 
 
+def test_client_cancel_is_named_for_native_custody_without_retry(tmp_path):
+    finished = []
+    core, _, _ = gateway(
+        tmp_path,
+        primary_stream(),
+        native_stream_finished=lambda grant, complete, code: (
+            finished.append((complete, code)) or False
+        ),
+    )
+
+    async def cancel_on_chunk(_chunk):
+        raise asyncio.CancelledError
+
+    async def send_headers(_status, _values):
+        return None
+
+    async def invoke():
+        await core.forward(
+            path="/v1/messages",
+            authorization="Bearer " + TASK_TOKEN,
+            body=json.dumps({"model": "glm-5.3", "max_tokens": 128000, "stream": True}).encode(),
+            trusted_connection=object(),
+            send_headers=send_headers,
+            send_chunk=cancel_on_chunk,
+        )
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(invoke())
+    assert finished == [(False, "client_cancelled")]
+    terminal = rows(tmp_path / "model-request.jsonl")[-1]
+    assert terminal["outcome"] == "cancelled"
+    assert terminal["failure_code"] == "client_cancelled"
+    assert terminal["retryable"] is False
+
+
 def test_primary_thinking_only_failure_records_bounded_retry_custody(tmp_path):
     response = StreamResponse(
         lines(
             {"type": "message_start", "message": {"id": "m1", "model": "glm-5.3"}},
-            {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
         )
     )
     finished = []
     core, transport, _ = gateway(
         tmp_path,
         response,
-        native_stream_finished=lambda grant, complete, code: finished.append((complete, code)) or code == "provider_stream_no_terminal",
+        native_stream_finished=lambda grant, complete, code: (
+            finished.append((complete, code)) or code == "provider_stream_no_terminal"
+        ),
     )
     with pytest.raises(GatewayUpstreamError, match="terminal event"):
         run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
@@ -512,7 +553,9 @@ def test_primary_thinking_only_failure_records_bounded_retry_custody(tmp_path):
 
 
 def test_nonretryable_primary_interruption_still_halts_usage(tmp_path):
-    response = StreamResponse(lines({"type": "message_start", "message": {"id": "m1", "model": "glm-5.3"}}))
+    response = StreamResponse(
+        lines({"type": "message_start", "message": {"id": "m1", "model": "glm-5.3"}})
+    )
     core, transport, _ = gateway(
         tmp_path,
         response,
@@ -534,7 +577,9 @@ def test_incomplete_sse_frame_has_distinct_retryable_failure_code(tmp_path):
     core, _, _ = gateway(
         tmp_path,
         response,
-        native_stream_finished=lambda grant, complete, code: finished.append(code) or code == "provider_sse_incomplete",
+        native_stream_finished=lambda grant, complete, code: (
+            finished.append(code) or code == "provider_sse_incomplete"
+        ),
     )
     with pytest.raises(GatewayUpstreamError, match="SSE frame ended incomplete"):
         run(core, "/v1/messages", {"model": "glm-5.3", "max_tokens": 128000, "stream": True})
@@ -545,8 +590,16 @@ def test_incomplete_sse_frame_has_distinct_retryable_failure_code(tmp_path):
 def test_credential_fragment_failure_code_never_allows_retry(tmp_path):
     from nooa_cybergym.leaderboard.model_gateway import _failure_code
 
-    assert _failure_code(GatewayUpstreamError("provider response contains a controller credential fragment")) == "credential_fragment_denied"
-    assert _failure_code(GatewayUpstreamError("provider SSE frame ended incomplete")) == "provider_sse_incomplete"
+    assert (
+        _failure_code(
+            GatewayUpstreamError("provider response contains a controller credential fragment")
+        )
+        == "credential_fragment_denied"
+    )
+    assert (
+        _failure_code(GatewayUpstreamError("provider SSE frame ended incomplete"))
+        == "provider_sse_incomplete"
+    )
 
 
 def test_short_ambiguous_credential_prefix_is_released_at_stream_end():
@@ -556,7 +609,9 @@ def test_short_ambiguous_credential_prefix_is_released_at_stream_end():
     assert raw.feed(b"ordinary text ending in c") == b"ordinary text ending in "
     assert raw.finish() == b"c"
     semantic = _SemanticSSEGuard(("controller-private-key",))
-    frame = lines({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "logic"}})[0]
+    frame = lines(
+        {"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "logic"}}
+    )[0]
     assert semantic.feed(frame) == []
     assert semantic.finish() == [frame]
 
@@ -569,7 +624,14 @@ def test_identifying_credential_prefix_still_fails_closed():
     with pytest.raises(GatewayUpstreamError, match="credential fragment"):
         raw.finish()
     semantic = _SemanticSSEGuard(("controller-private-key",))
-    semantic.feed(lines({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "controller-priva"}})[0])
+    semantic.feed(
+        lines(
+            {
+                "type": "content_block_delta",
+                "delta": {"type": "thinking_delta", "thinking": "controller-priva"},
+            }
+        )[0]
+    )
     with pytest.raises(GatewayUpstreamError, match="credential fragment"):
         semantic.finish()
 
