@@ -99,6 +99,34 @@ def test_proxy_injects_observed_peer_and_hashes_sensitive_request(tmp_path: Path
     assert event["response_bytes"] == 16
 
 
+def test_gateway_exposes_observed_client_port_for_process_correlation(tmp_path: Path):
+    runtime = _runtime()
+    received = []
+    peer = runtime.AdmittedPeer("a" * 64, "b" * 64, "127.0.0.1")
+
+    def handler(request):
+        received.append(request)
+        return runtime.GatewayReply(200, b"{}")
+
+    with runtime.GatewayService(
+        ("127.0.0.1", 0),
+        {"registered-tool-gateway": handler},
+        lambda ip: peer,
+        tmp_path / "audit.jsonl",
+    ) as service:
+        with socket.create_connection(("127.0.0.1", service.port), timeout=3) as connection:
+            local_port = connection.getsockname()[1]
+            connection.sendall(
+                b"POST /native-launch/preflight HTTP/1.1\r\n"
+                b"Host: registered-tool-gateway\r\nContent-Length: 2\r\n\r\n{}"
+            )
+            while connection.recv(4096):
+                pass
+    assert len(received) == 1
+    assert received[0].source_port == local_port
+    assert received[0].peer == peer
+
+
 def test_denied_mcp_request_records_only_bounded_header_names(tmp_path: Path):
     runtime = _runtime()
     peer = runtime.AdmittedPeer("a" * 64, "b" * 64, "127.0.0.1")

@@ -53,6 +53,7 @@ class GatewayRequest:
     body: bytes
     peer: AdmittedPeer
     disconnected: threading.Event | None = field(default=None, compare=False, repr=False)
+    source_port: int | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +194,7 @@ class GatewayService:
                             body,
                             peer,
                             disconnected,
+                            self.client_address[1],
                         )
                         watcher = threading.Thread(
                             target=watch_socket, name="cybergym-client-disconnect", daemon=True
@@ -282,7 +284,8 @@ class GatewayService:
                         denied_mcp_headers = {}
                         if (
                             status in {400, 403}
-                            and endpoint in {
+                            and endpoint
+                            in {
                                 "gbrain-read-gateway",
                                 "registered-tool-gateway",
                             }
