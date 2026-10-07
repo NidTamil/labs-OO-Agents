@@ -27,6 +27,7 @@ param(
     [Parameter(ParameterSetName = 'Open', Mandatory)] [ValidateRange(1,65535)] [int] $Port,
     [Parameter(ParameterSetName = 'Open')] [ValidateRange(1,100)] [int] $MaxConcurrent = 1,
     [Parameter(ParameterSetName = 'Open')] [switch] $Force,
+    [Parameter(ParameterSetName = 'Open')] [string] $TunnelKnownHosts,
     [string] $ProfilesDir = 'D:\GLM\profiles',
     [string] $CodeExe = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe",
     [string] $RemoteHostFqdn = 'sunchaser-20260905'
@@ -155,7 +156,12 @@ function Invoke-Open {
     }
     $userData = Get-UserData $key
     $extDir = Join-Path (Split-Path $userData -Parent) 'extensions'
-    $sshKnown = Join-Path $env:APPDATA 'tailscale\ssh_known_hosts'
+    $sshKnown = if ($TunnelKnownHosts) { $TunnelKnownHosts } else {
+        Join-Path $env:APPDATA 'tailscale\ssh_known_hosts'
+    }
+    if (-not (Test-Path -LiteralPath $sshKnown -PathType Leaf)) {
+        throw "Pinned tunnel host key file is missing: $sshKnown"
+    }
     $tailscale = 'C:\Program Files\Tailscale\tailscale.exe'
     # Start-Process flattens ArgumentList. Quote the entire -o value as well as
     # the executable path so OpenSSH receives one intact ProxyCommand argument.
