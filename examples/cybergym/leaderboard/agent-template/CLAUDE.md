@@ -14,6 +14,12 @@ independent source analysis. DeepSeek reconnaissance starts automatically; read
 its result through the advisor's `recon_status` tool and reconcile the evidence.
 The three-child capacity is shared by native children and DeepSeek. Children
 have read-only local, clangd, memory and documentation tools.
+Call the native `Agent` tool with the registered `cybergym-recon`,
+`cybergym-debug`, or `cybergym-review` type for child work. Do not invoke
+`Workflow`, including when Ultracode is on: its advertised inline-script form
+can create unreviewed child fanout, while this task's controller accepts only
+exact frozen workflow files. The approved `Agent` path supplies the required
+independent and review children.
 
 Use explicit absolute paths with Read, Grep, Glob, Write and Edit. Source and
 scratch work belong under `/workspace/src`; candidates and result files belong
