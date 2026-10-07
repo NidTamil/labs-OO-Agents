@@ -510,3 +510,26 @@ actual extension parent or child hook process or calls the gate with a live
 report. Until that source/protocol is built, the gate correctly blocks all
 native GLM requests. Do not run a synthetic or practice task under this
 incomplete source; next build and verify the exact-context probe transport.
+
+Commits `f66fc21` and `bcfa99f` are pushed; `bcfa99f` is checked out cleanly
+on SunChaser. The immutable launcher source now has a shared Node probe runner:
+the parent invokes it after its one-shot launch reservation but before opening
+Claude, and a `SubagentStart` hook invokes it before reporting that child.
+It accepts only the registered internal gateway, exact one-use probe names,
+and absolute `/usr/bin/python3` commands, executes without a shell or captured
+output, and returns exit codes only. The controller protocol issues a nonce,
+requires the same observed host PID at submission, consumes each attempt once,
+reconstructs the existing `run_preflight` report, and passes it to the model
+gate only after the durable report and audit settle. A process swap, failed
+probe, malformed inventory, or ambiguous retry stays denied. The launcher
+authority now records `preflight_failed` as its one terminal command-result
+event, without leaking probe output. Node launcher tests pass 39/39 and the
+new shared file is present in a locally built VSIX. The full Linux component
+suite passes 997 tests with five skips and two deselections; JUnit XML
+`/srv/sunchaser/runs/cybergym-components-20261007-v25g.xml` has SHA-256
+`f69d7bf19bbcafcff0e2418c06b56c2d653d4819c85ef71bf297d405279d4f1d`.
+This is a tested protocol component, not yet a live native preflight: the
+service route still needs a verified extension-host parent process, wiring
+to `NativeServices`, and a rebuilt/re-frozen image whose installed hook and
+launcher digests match the new source. No synthetic/practice/scored task was
+launched under the incomplete path.
