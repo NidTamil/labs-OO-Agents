@@ -689,3 +689,49 @@ not provider completion, and has not yet been wired into a concrete campaign
 executor or observed in a new live run. A read-only Windows Computer Use check
 found no VS Code window, so this turn did not launch a calibration container or
 submit any UI action.
+
+On 2026-10-07, a fresh v25i provider-free calibration at
+`/srv/sunchaser/runs/native-cal-v25i-20261007-1225` reached the real native
+parent. The earlier attempt at `...-1213` failed preflight because the
+calibration workspace omitted `README.md` and `submit.sh` and its admitted
+gateway routes did not answer the preflight's exact `GET /health`; that
+attempt was stopped and is not a freeze input. Test-first corrections now stage
+the required synthetic files, provide peer-guarded route-reachability health
+responses in calibration and normal task services, and use a separate pinned
+Tailscale host-key file after the Tailscale-managed known-hosts file was
+refreshed. The three targeted Linux regression tests pass at `b73029a`.
+
+The workstation VS Code auto-updated to 1.141.0 during calibration, which did
+not match the v25i frozen 1.140.0 runtime. An official 1.140.0 Windows archive
+was installed under `D:\GLM\bin\VSCode-1.140.0` (archive SHA-256
+`52f47072473375767d63ea5be9ffb96a3092124223fe5ce036834a299715014e`);
+its product commit is the expected `07f806f999227108933c2e30515b26eecc1fda74`.
+The native launcher then reserved launch
+`cal-21642620f45649e299b2688296fce406` inside container
+`0b6d9e09200b3fd3e0da1a7c67cccea8eccc9717e854741555eca10d378b5510`.
+The native parent preflight report passed all 62 probes with no failures,
+report SHA-256 `71802a6a52d4e6d1b907e73e58558ce40bbd5830f2f5a51fdb89f1e9e0caf8a7`.
+
+The old pixel-coordinate Send script stopped before a click when the terminal
+window occluded Code; its failed audit directory contains no Send reservation.
+The host-only script now finds the unique Claude Code accessibility document,
+hashes the actual `Message input` value against the reserved launcher prompt,
+and invokes the unique enabled `Send message` button after fsyncing its
+one-shot reservation. The resulting local UI attempt at
+`D:\GLM\tmp\native-cal-v25i-1225-ui2\ui-send-attempted.json` has SHA-256
+`44d423d8f7f20e2e5b7ca78e50aaa13f33d379fa7c91075d5ebd35079b8cac75`.
+The provider-free gateway captured exactly one real parent request at
+`evidence/capture/request-000001.json` (SHA-256
+`cb062da3231205f9479f25a0b8d2eeb0b8be50ab161d92fe6871ea135bfab28f`),
+with the observed native tool schema, frozen binary/image identity, and
+`provider_dispatched: false`. The calibration inspector accepted that exact
+digest. The owned Code window and SSH tunnel were reaped, and the task
+container was removed. No official practice or scored task was started.
+
+This is parent calibration evidence only. The controller still needs the exact
+new schema freeze, actual child preflight and tool trace, the concrete
+idempotent cross-host `TaskExecutor`, matching full native synthetic runs,
+terminal signed receipts, and certification before the two authorized practice
+exercises. The UI script changed after the capture to recheck the composer
+immediately before Invoke; its final digest must be included in the next
+freeze, and that recheck requires the later full-path run for live verification.

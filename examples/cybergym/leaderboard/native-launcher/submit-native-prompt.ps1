@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 param(
     [Parameter(Mandatory = $true)][string]$RemoteAlias,
     [Parameter(Mandatory = $true)][string]$ProfileDirectory,
@@ -8,7 +10,8 @@ param(
 
 # Claude Code 2.1.289 places initialPrompt in its webview composer. Its public
 # command does not submit the message. This host-only action is deliberately
-# narrow: one pinned VS Code profile, one launch receipt, one calibrated layout.
+# narrow: one pinned VS Code profile, one launch receipt, and the matching
+# accessible Claude Code composer. The prompt is hashed, never copied to audit.
 # A later gateway request, not this UI event, proves that Claude sent anything.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -49,26 +52,62 @@ if (
     throw 'Claude window is not owned by the pinned isolated VS Code profile'
 }
 
-Add-Type -AssemblyName System.Drawing
-Add-Type -TypeDefinition @'
-using System;
-using System.Runtime.InteropServices;
-public static class NativeUi {
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT { public int Left, Top, Right, Bottom; }
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
-    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
-    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::FromHandle($window.MainWindowHandle)
+$documents = $root.FindAll(
+    [System.Windows.Automation.TreeScope]::Descendants,
+    [System.Windows.Automation.AndCondition]::new(@(
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Document),
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, 'Claude Code')
+    ))
+)
+if ($documents.Count -ne 1) { throw 'Exactly one accessible Claude Code document required' }
+$document = $documents[0]
+$inputs = $document.FindAll(
+    [System.Windows.Automation.TreeScope]::Descendants,
+    [System.Windows.Automation.AndCondition]::new(@(
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Edit),
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, 'Message input')
+    ))
+)
+if ($inputs.Count -ne 1) { throw 'Exactly one Claude message input required' }
+$valuePattern = $null
+if (-not $inputs[0].TryGetCurrentPattern(
+        [System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
+    throw 'Claude message input value is inaccessible'
 }
-'@
-$rect = New-Object NativeUi+RECT
-if (-not [NativeUi]::GetWindowRect($window.MainWindowHandle, [ref]$rect)) {
-    throw 'Isolated window geometry unavailable'
+$observedPromptSha256 = [Convert]::ToHexString(
+    [System.Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes($valuePattern.Current.Value)
+    )
+).ToLowerInvariant()
+if ($observedPromptSha256 -cne $receipt.prompt_sha256) {
+    throw 'Visible Claude prompt differs from reserved native launch'
 }
-$width = $rect.Right - $rect.Left
-$height = $rect.Bottom - $rect.Top
-if ($width -ne 1456 -or $height -ne 908) {
-    throw 'Uncalibrated native composer layout'
+$buttons = $document.FindAll(
+    [System.Windows.Automation.TreeScope]::Descendants,
+    [System.Windows.Automation.AndCondition]::new(@(
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button),
+        [System.Windows.Automation.PropertyCondition]::new(
+            [System.Windows.Automation.AutomationElement]::NameProperty, 'Send message')
+    ))
+)
+if ($buttons.Count -ne 1 -or -not $buttons[0].Current.IsEnabled) {
+    throw 'Exactly one enabled Claude Send button required'
+}
+$invokePattern = $null
+if (-not $buttons[0].TryGetCurrentPattern(
+        [System.Windows.Automation.InvokePattern]::Pattern, [ref]$invokePattern)) {
+    throw 'Claude Send button lacks an accessible Invoke action'
 }
 
 $parent = Split-Path -Parent $AuditDirectory
@@ -76,26 +115,6 @@ if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
     throw 'Controller audit parent directory missing'
 }
 New-Item -ItemType Directory -Path $AuditDirectory -ErrorAction Stop | Out-Null
-$screenshot = Join-Path $AuditDirectory 'pre-submit.png'
-$bitmap = [System.Drawing.Bitmap]::new($width, $height)
-$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-try {
-    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
-    $samples = @(
-        $bitmap.GetPixel(1103, 507),
-        $bitmap.GetPixel(1102, 520),
-        $bitmap.GetPixel(1118, 507)
-    )
-    foreach ($pixel in $samples) {
-        if ($pixel.R -lt 170 -or $pixel.R -gt 230 -or $pixel.G -lt 70 -or $pixel.G -gt 130 -or $pixel.B -lt 40 -or $pixel.B -gt 100) {
-            throw 'Enabled Claude Send button was not observed at the calibrated position'
-        }
-    }
-    $bitmap.Save($screenshot, [System.Drawing.Imaging.ImageFormat]::Png)
-} finally {
-    $graphics.Dispose()
-    $bitmap.Dispose()
-}
 
 $event = [ordered]@{
     schema_version = 1
@@ -105,10 +124,9 @@ $event = [ordered]@{
     remote_alias = $RemoteAlias
     vscode_pid = $window.Id
     window_title = $title
-    window_width = $width
-    window_height = $height
-    button_samples_rgb = @($samples | ForEach-Object { @($_.R, $_.G, $_.B) })
-    screenshot_sha256 = (Get-FileHash -LiteralPath $screenshot -Algorithm SHA256).Hash.ToLowerInvariant()
+    composer = 'Claude Code/Message input'
+    observed_prompt_sha256 = $observedPromptSha256
+    action = 'Claude Code/Send message/InvokePattern'
     provider_request_observed = $false
     timestamp_utc = [DateTime]::UtcNow.ToString('o')
 }
@@ -122,23 +140,15 @@ try {
     $stream.Dispose()
 }
 
-$shell = New-Object -ComObject WScript.Shell
-if (-not $shell.AppActivate([int]$window.Id)) {
-    throw 'Could not activate the reserved isolated window'
+$currentPromptSha256 = [Convert]::ToHexString(
+    [System.Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes($valuePattern.Current.Value)
+    )
+).ToLowerInvariant()
+if ($currentPromptSha256 -cne $receipt.prompt_sha256 -or -not $buttons[0].Current.IsEnabled) {
+    throw 'Claude composer changed after UI reservation'
 }
-Start-Sleep -Milliseconds 200
-$current = New-Object NativeUi+RECT
-if (-not [NativeUi]::GetWindowRect($window.MainWindowHandle, [ref]$current) -or
-    $current.Left -ne $rect.Left -or $current.Top -ne $rect.Top -or
-    $current.Right -ne $rect.Right -or $current.Bottom -ne $rect.Bottom) {
-    throw 'Isolated window moved after reservation'
-}
-if (-not [NativeUi]::SetCursorPos($rect.Left + 1112, $rect.Top + 514)) {
-    throw 'Could not position cursor over the calibrated Send button'
-}
-Start-Sleep -Milliseconds 150
-[NativeUi]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
-[NativeUi]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+$invokePattern.Invoke()
 $event.event = 'ui_send_attempted'
 $event.timestamp_utc = [DateTime]::UtcNow.ToString('o')
 $action = Join-Path $AuditDirectory 'ui-send-attempted.json'
