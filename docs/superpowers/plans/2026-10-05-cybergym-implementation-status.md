@@ -735,3 +735,37 @@ terminal signed receipts, and certification before the two authorized practice
 exercises. The UI script changed after the capture to recheck the composer
 immediately before Invoke; its final digest must be included in the next
 freeze, and that recheck requires the later full-path run for live verification.
+
+On 2026-10-07, the refreshed v25i capability inventory at
+`/srv/sunchaser/runs/capability-freeze-20261007/inventory-v25i/` was generated
+from the accepted native parent capture and the pinned v25i image/runtime.
+The registry digest is
+`91c9059b7a551dab32b8cbf78ecbc2eb96224291d342f2251693001a3f3d060f`,
+the bindings digest is
+`52863f4d76f208fb06de8c5d9ae95d7370b16e2da6f71dbcb2e498bde191e4d3`,
+and the inventory digest is
+`fcbc1c369682273893ba9fa79f81ff190d92e83fcfe86602162aa8ea5d778058`.
+The inventory explicitly leaves full native execution uncertified. The
+unchanged captured tool schema is supported by a byte-identical sorted schema
+digest against the v24w capture; it is not a substitute for v25i child execution.
+
+The first full v25i synthetic run, `synthetic-native-v25ia-20261007` on
+`synthetic:length-header`, used the final UI script's prompt recheck and the
+frozen config digest
+`0435baf6a87c520241855ffb4e805c7e60d4b0281f3703d3b1a5dc0ae07b3c64`.
+An independent verifier checked the Ed25519 oracle signature, canonical
+payload, candidate/image/freeze identity, vulnerable-versus-fixed result,
+the complete 312-record runtime audit chain, parent and two child preflight
+reports (each 62 probes passed), 36 completed primary GLM requests, completed
+DeepSeek reconnaissance and final critic, Bash/Read/clangd/documentation/GBrain
+tool use, and post-oracle controller-only GBrain memory. The actual result
+recorded `oracle_true: true`, `provider_dispatched: true`,
+`memory_episode_written: true`, and `boundary_failed: false` under
+`/srv/sunchaser/runs/synthetic-evidence-20261007-v25i/`.
+The owned VS Code window/tunnel and task container were reaped. The second
+distinct v25i synthetic task, `synthetic-native-v25ib-20261007` on
+`synthetic:chunk-table`, is still in progress; its parent and two child
+preflights passed, but no oracle verdict or independent verification exists yet.
+Neither run used an official practice/scored task. The concrete cross-host
+campaign `TaskExecutor`, signed terminal receipt path, and certification remain
+outstanding; these synthetic results alone do not make the campaign ready.
