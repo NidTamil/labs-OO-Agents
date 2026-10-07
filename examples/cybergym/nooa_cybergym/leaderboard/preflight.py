@@ -100,7 +100,11 @@ _UID_SCRIPT = (
     "sys.exit(0 if u!=0 and pwd.getpwuid(u).pw_name=='agent' "
     "and shutil.which('sudo') is None else 1)"
 )
-_ENV_SCRIPT = "import os,sys; sys.exit(0 if sys.argv[1] not in os.environ else 1)"
+_ENV_SCRIPT = (
+    "import os,sys; name=sys.argv[1]; value=os.environ.get(name); "
+    "sys.exit(0 if value is None or "
+    "(name=='ANTHROPIC_AUTH_TOKEN' and value=='xeus-container-peer-auth') else 1)"
+)
 _MOUNT_SCRIPT = (
     "import os,sys; name=sys.argv[1]; entries={}; "
     "[(lambda p: entries.update({p[4]:(set(p[5].split(',')),p[p.index('-')+1])}))"

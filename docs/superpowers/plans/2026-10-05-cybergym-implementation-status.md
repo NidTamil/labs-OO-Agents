@@ -371,3 +371,14 @@ v24w run, not the full matching-repeat set. Remaining integration includes
 real native parent/child preflight and a concrete idempotent per-task
 executor with signed terminal receipts before the two authorised practice
 tasks can be launched. The scored campaign remains unapproved and unstarted.
+
+The next preflight integration review found a concrete mismatch: the frozen
+Claude Code child settings intentionally set `ANTHROPIC_AUTH_TOKEN` to the
+public, nonsecret `xeus-container-peer-auth` gateway sentinel, while the
+preflight script rejected that variable even when it held the sentinel.
+A test-first correction now accepts only absence or the exact sentinel;
+provider credentials and altered values still fail without printing the
+value. The 19 preflight tests and changed-file Ruff checks pass locally.
+This fixes a necessary probe predicate, not the still-missing native
+parent/child probe executor or campaign task adapter. The active readiness
+heartbeat will continue until those are built and verified live.

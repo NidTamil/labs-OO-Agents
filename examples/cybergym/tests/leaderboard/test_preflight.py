@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -15,6 +17,7 @@ import pytest
 from nooa_cybergym.leaderboard.network import NetworkPolicy
 from nooa_cybergym.leaderboard.preflight import (
     _DENIED_ROUTE_SCRIPT,
+    _ENV_SCRIPT,
     _FORBIDDEN_ENV,
     _PATH_SCRIPT,
     ProbeExecution,
@@ -126,6 +129,33 @@ def test_provider_and_github_credential_aliases_are_probed_and_denied(name):
     report = evaluate_probe_results(result, NetworkPolicy.load(POLICY_PATH))
     assert not report.passed
     assert name in report.failures
+
+
+def test_native_gateway_sentinel_is_the_only_admitted_auth_token_value():
+    settings = json.loads(
+        (
+            Path(__file__).parents[2] / "leaderboard/native-launcher/machine-settings.json"
+        ).read_text()
+    )
+    token = next(
+        item["value"]
+        for item in settings["claudeCode.environmentVariables"]
+        if item["name"] == "ANTHROPIC_AUTH_TOKEN"
+    )
+    assert token == "xeus-container-peer-auth"
+    for value, expected in ((None, 0), (token, 0), ("provider-secret", 1), (token + "-changed", 1)):
+        env = os.environ.copy()
+        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        if value is not None:
+            env["ANTHROPIC_AUTH_TOKEN"] = value
+        result = subprocess.run(
+            [sys.executable, "-c", _ENV_SCRIPT, "ANTHROPIC_AUTH_TOKEN"],
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        assert result.returncode == expected
+        assert result.stdout == result.stderr == b""
 
 
 def test_preflight_accepts_supplied_archive_and_approved_routes():
