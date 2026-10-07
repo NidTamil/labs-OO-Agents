@@ -609,3 +609,21 @@ untrusted verdict, a separately signed verdict for a different candidate, and
 changed failure evidence. This is a receipt publisher only: the per-task
 `TaskExecutor` dispatch/recovery and real official evaluator integration still
 need completion. Unit fixtures are not official or synthetic attestations.
+Commit `75efe91` is pushed and checked out cleanly in the isolated SunChaser
+worktree. The full Linux component suite passes 1004 tests, five skipped, two
+deselected; JUnit XML `/srv/sunchaser/runs/cybergym-components-20261007-v25k.xml`
+has SHA-256 `81d10db1dd3ec703a30f9e3c4131525b2a12a35e043c0dae60cf61acd41ec5bb`.
+All 39 Node launcher tests pass on Windows; the SunChaser host shell has no
+`node` command in PATH. This does not alter the native image or promote the
+interrupted calibration to freeze evidence.
+
+The host-side Send path now has a durable one-shot guard in
+`PowerShellNativeSubmitter`. It verifies the frozen script digest and the
+controller's exact launch receipt, writes/fsyncs `ui-submit-intent.json` before
+invoking the existing calibrated PowerShell script, then checks the script's
+`ui-send-attempted.json`. An interrupted/ambiguous attempt remains reserved and
+cannot click Send again; a repeated call returns without dispatch after
+verifying the same intent. Local test-first failure injection covered a crash
+after the UI audit directory had already been created. This only prevents
+duplicate host submission. It does not establish that the provider received a
+request, and it is not yet wired into `TaskExecutor` or a live native run.

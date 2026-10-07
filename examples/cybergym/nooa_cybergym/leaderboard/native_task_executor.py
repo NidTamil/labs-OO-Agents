@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 from xeus_cybergym.canonical import canonical_json
@@ -198,3 +200,141 @@ class NativeTerminalReceiptPublisher:
             "evidence_sha256": hashlib.sha256(evidence).hexdigest(),
         }
         return self._store(payload)
+
+
+class PowerShellNativeSubmitter:
+    """Reserve one host-side Send attempt before invoking the pinned UI script.
+
+    A failed or interrupted subprocess leaves the reservation in place. A later
+    caller may inspect the gateway's first-model-request audit, but this class
+    will never click Send again for the same native launch.
+    """
+
+    def __init__(
+        self,
+        *,
+        launch_authority,
+        script: Path,
+        script_sha256: str,
+        remote_alias: str,
+        profile_directory: Path,
+        audit_directory: Path,
+        pwsh: str = "pwsh",
+        run_command=subprocess.run,
+    ):
+        manifest = getattr(launch_authority, "manifest", None)
+        launch_dir = Path(getattr(launch_authority, "launch_dir", ""))
+        script = Path(script)
+        profile = Path(profile_directory)
+        audit = Path(audit_directory)
+        if (
+            type(manifest) is not dict
+            or type(manifest.get("task_id")) is not str
+            or type(manifest.get("launch_id")) is not str
+            or not callable(getattr(launch_authority, "_check_receipt", None))
+            or not launch_dir.is_absolute()
+            or launch_dir.is_symlink()
+            or not launch_dir.is_dir()
+            or not script.is_absolute()
+            or script.is_symlink()
+            or not script.is_file()
+            or type(script_sha256) is not str
+            or _HEX.fullmatch(script_sha256) is None
+            or type(remote_alias) is not str
+            or re.fullmatch(r"[a-z][a-z0-9-]{1,63}", remote_alias) is None
+            or not profile.is_absolute()
+            or not audit.is_absolute()
+            or audit.parent.is_symlink()
+            or not audit.parent.is_dir()
+            or not callable(run_command)
+            or type(pwsh) is not str
+            or not pwsh
+        ):
+            raise ValueError("frozen native host submission identity required")
+        self.launch = launch_authority
+        self.script = script
+        self.script_sha256 = script_sha256
+        self.remote_alias = remote_alias
+        self.profile = profile
+        self.audit = audit
+        self.pwsh = pwsh
+        self.run_command = run_command
+
+    def submit_once(self, request_id: str) -> bool:
+        """Return True only for this invocation's observed UI attempt."""
+        if request_id != self.launch.manifest["launch_id"]:
+            raise ValueError("campaign first-request identity differs from native launch")
+        if (
+            hashlib.sha256(_bytes(self.script, "native submit script")).hexdigest()
+            != self.script_sha256
+        ):
+            raise RuntimeError("native submit script differs from frozen digest")
+        receipt_path = self.launch.launch_dir / "launcher-receipt.json"
+        raw = _bytes(receipt_path, "native launch receipt")
+        receipt = json.loads(raw)
+        if canonical_json(receipt) != raw:
+            raise RuntimeError("native launch receipt is not canonical")
+        self.launch._check_receipt(receipt)
+        intent = canonical_json(
+            {
+                "schema_version": 1,
+                "event": "ui_submit_intent",
+                "task_id": self.launch.manifest["task_id"],
+                "launch_id": request_id,
+                "prompt_sha256": receipt["prompt_sha256"],
+                "remote_alias": self.remote_alias,
+                "script_sha256": self.script_sha256,
+            }
+        )
+        target = self.launch.launch_dir / "ui-submit-intent.json"
+        if target.exists() or target.is_symlink():
+            if _bytes(target, "native UI submission intent") != intent:
+                raise RuntimeError("native UI submission intent changed")
+            return False
+        if self.audit.exists() or self.audit.is_symlink():
+            raise RuntimeError("unowned native UI audit directory already exists")
+        try:
+            with target.open("xb") as stream:
+                stream.write(intent)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileExistsError:
+            if _bytes(target, "native UI submission intent") != intent:
+                raise RuntimeError("native UI submission intent changed") from None
+            return False
+        if os.name == "posix":
+            directory = os.open(self.launch.launch_dir, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        self.run_command(
+            [
+                self.pwsh,
+                "-NoProfile",
+                "-File",
+                str(self.script),
+                "-RemoteAlias",
+                self.remote_alias,
+                "-ProfileDirectory",
+                str(self.profile),
+                "-ControllerReceipt",
+                str(receipt_path),
+                "-LaunchId",
+                request_id,
+                "-AuditDirectory",
+                str(self.audit),
+            ],
+            check=True,
+        )
+        attempted = json.loads(_bytes(self.audit / "ui-send-attempted.json", "native UI attempt"))
+        if (
+            attempted.get("schema_version") != 1
+            or attempted.get("event") != "ui_send_attempted"
+            or attempted.get("launch_id") != request_id
+            or attempted.get("prompt_sha256") != receipt["prompt_sha256"]
+            or attempted.get("remote_alias") != self.remote_alias
+            or attempted.get("provider_request_observed") is not False
+        ):
+            raise RuntimeError("native UI attempt disagrees with reserved launch")
+        return True

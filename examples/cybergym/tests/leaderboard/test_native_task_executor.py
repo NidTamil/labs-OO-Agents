@@ -272,3 +272,154 @@ def test_failure_receipt_hashes_actual_durable_failure_evidence(tmp_path: Path):
     failure.write_bytes(b"changed")
     with pytest.raises(RuntimeError, match="differs"):
         publisher.publish_failure(status="timeout", evidence_path=failure)
+
+
+def test_native_send_reserves_before_attempt_and_never_retries_ambiguous_click(tmp_path: Path):
+    from nooa_cybergym.leaderboard.native_task_executor import PowerShellNativeSubmitter
+
+    launch_dir = tmp_path / "launch"
+    launch_dir.mkdir()
+    receipt = {"event": "launch_reserved", "launch_id": "launch-1", "prompt_sha256": "a" * 64}
+    (launch_dir / "launcher-receipt.json").write_bytes(canonical_json(receipt))
+    script = tmp_path / "submit.ps1"
+    script.write_bytes(b"frozen script")
+
+    class Authority:
+        manifest = {"task_id": "arvo:1", "launch_id": "launch-1"}
+
+        def _check_receipt(self, value):
+            if value != receipt:
+                raise ValueError("launch receipt changed")
+
+    Authority.launch_dir = launch_dir
+
+    calls = []
+
+    def interrupted(command, *, check):
+        calls.append(command)
+        assert check is True
+        assert (launch_dir / "ui-submit-intent.json").is_file()
+        (tmp_path / "ui-audit").mkdir()
+        (tmp_path / "ui-audit" / "ui-send-reservation.json").write_bytes(
+            canonical_json({"event": "ui_send_reserved"})
+        )
+        raise RuntimeError("desktop unavailable after intent")
+
+    submitter = PowerShellNativeSubmitter(
+        launch_authority=Authority(),
+        script=script,
+        script_sha256=hashlib.sha256(script.read_bytes()).hexdigest(),
+        remote_alias="cybergym-e",
+        profile_directory=tmp_path / "profile",
+        audit_directory=tmp_path / "ui-audit",
+        run_command=interrupted,
+    )
+    with pytest.raises(RuntimeError, match="desktop unavailable"):
+        submitter.submit_once("launch-1")
+    assert submitter.submit_once("launch-1") is False
+    assert len(calls) == 1
+    with pytest.raises(ValueError):
+        submitter.submit_once("another-launch")
+
+
+def test_native_send_requires_matching_attempt_audit(tmp_path: Path):
+    from nooa_cybergym.leaderboard.native_task_executor import PowerShellNativeSubmitter
+
+    launch_dir = tmp_path / "launch"
+    launch_dir.mkdir()
+    receipt = {"event": "launch_reserved", "launch_id": "launch-2", "prompt_sha256": "b" * 64}
+    (launch_dir / "launcher-receipt.json").write_bytes(canonical_json(receipt))
+    script = tmp_path / "submit.ps1"
+    script.write_bytes(b"frozen script")
+
+    class Authority:
+        manifest = {"task_id": "arvo:2", "launch_id": "launch-2"}
+
+        def _check_receipt(self, value):
+            if value != receipt:
+                raise ValueError("launch receipt changed")
+
+    Authority.launch_dir = launch_dir
+    calls = []
+
+    def bad_attempt(command, *, check):
+        calls.append(command)
+        audit = tmp_path / "ui-audit"
+        audit.mkdir()
+        (audit / "ui-send-attempted.json").write_bytes(
+            canonical_json(
+                {
+                    "schema_version": 1,
+                    "event": "ui_send_attempted",
+                    "launch_id": "another-launch",
+                    "prompt_sha256": "b" * 64,
+                    "remote_alias": "cybergym-e",
+                    "provider_request_observed": False,
+                }
+            )
+        )
+
+    submitter = PowerShellNativeSubmitter(
+        launch_authority=Authority(),
+        script=script,
+        script_sha256=hashlib.sha256(script.read_bytes()).hexdigest(),
+        remote_alias="cybergym-e",
+        profile_directory=tmp_path / "profile",
+        audit_directory=tmp_path / "ui-audit",
+        run_command=bad_attempt,
+    )
+    with pytest.raises(RuntimeError, match="attempt disagrees"):
+        submitter.submit_once("launch-2")
+    assert submitter.submit_once("launch-2") is False
+    assert len(calls) == 1
+
+
+def test_native_send_reports_only_a_matching_ui_attempt(tmp_path: Path):
+    from nooa_cybergym.leaderboard.native_task_executor import PowerShellNativeSubmitter
+
+    launch_dir = tmp_path / "launch"
+    launch_dir.mkdir()
+    receipt = {"event": "launch_reserved", "launch_id": "launch-3", "prompt_sha256": "c" * 64}
+    (launch_dir / "launcher-receipt.json").write_bytes(canonical_json(receipt))
+    script = tmp_path / "submit.ps1"
+    script.write_bytes(b"frozen script")
+
+    class Authority:
+        manifest = {"task_id": "arvo:3", "launch_id": "launch-3"}
+
+        def _check_receipt(self, value):
+            if value != receipt:
+                raise ValueError("launch receipt changed")
+
+    Authority.launch_dir = launch_dir
+    calls = []
+
+    def matching_attempt(command, *, check):
+        calls.append(command)
+        audit = tmp_path / "ui-audit"
+        audit.mkdir()
+        (audit / "ui-send-attempted.json").write_bytes(
+            canonical_json(
+                {
+                    "schema_version": 1,
+                    "event": "ui_send_attempted",
+                    "launch_id": "launch-3",
+                    "prompt_sha256": "c" * 64,
+                    "remote_alias": "cybergym-e",
+                    "provider_request_observed": False,
+                }
+            )
+        )
+
+    submitter = PowerShellNativeSubmitter(
+        launch_authority=Authority(),
+        script=script,
+        script_sha256=hashlib.sha256(script.read_bytes()).hexdigest(),
+        remote_alias="cybergym-e",
+        profile_directory=tmp_path / "profile",
+        audit_directory=tmp_path / "ui-audit",
+        run_command=matching_attempt,
+    )
+    assert submitter.submit_once("launch-3") is True
+    assert submitter.submit_once("launch-3") is False
+    assert len(calls) == 1
