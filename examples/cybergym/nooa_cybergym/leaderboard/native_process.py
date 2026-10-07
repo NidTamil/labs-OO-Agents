@@ -30,6 +30,9 @@ _NODE_PATH = "/usr/local/bin/node"
 _HOOK_PATH = (
     "/opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/native-hook.js"
 )
+FROZEN_NATIVE_IMAGE_ID = "sha256:4e3a5c2bdcf860e231e2d5b00840c27d3b3f2c318cdd53c2d48946b88736721e"
+FROZEN_HOOK_SHA256 = "8d20c87cb7083451fd1ecf2425cf05e3b23d0828696f038e0043c487a348e2a3"
+FROZEN_NODE_SHA256 = "fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48"
 
 
 def tcp_socket_inode(table: str, source_ip: str, source_port: int) -> str:
@@ -194,3 +197,99 @@ def verify_native_hook_process(
             raise ValueError("native hook ancestry changed")
     except (OSError, UnicodeError):
         raise ValueError("native hook process identity unavailable") from None
+
+
+class NativeHookRequestVerifier:
+    """Bind a hook gateway request to a verified task-container process."""
+
+    def __init__(
+        self,
+        *,
+        peer,
+        container_init_host_pid: int,
+        expected_hook_sha256: str,
+        expected_node_sha256: str,
+        audit,
+        proc_root: Path = Path("/proc"),
+    ):
+        from .host_boundary_runtime import AdmittedPeer
+
+        if (
+            type(peer) is not AdmittedPeer
+            or type(container_init_host_pid) is not int
+            or container_init_host_pid <= 1
+            or any(
+                re.fullmatch(r"[a-f0-9]{64}", value) is None
+                for value in (expected_hook_sha256, expected_node_sha256)
+            )
+            or not callable(getattr(audit, "record", None))
+            or Path(proc_root).is_symlink()
+            or not Path(proc_root).is_dir()
+        ):
+            raise ValueError("trusted native hook verifier configuration required")
+        self.peer = peer
+        self.container_init_host_pid = container_init_host_pid
+        self.expected_hook_sha256 = expected_hook_sha256
+        self.expected_node_sha256 = expected_node_sha256
+        self.audit = audit
+        self.proc_root = Path(proc_root)
+
+    def __call__(self, request):
+        from .host_boundary_runtime import GatewayRequest
+
+        if type(request) is not GatewayRequest or request.peer != self.peer:
+            raise ValueError("native hook peer differs from task container")
+        if type(request.source_port) is not int or not 1 <= request.source_port <= 65535:
+            raise ValueError("native hook source port is unavailable")
+        process = observe_socket_process(
+            self.proc_root,
+            container_init_host_pid=self.container_init_host_pid,
+            source_ip=request.peer.source_ip,
+            source_port=request.source_port,
+        )
+        verify_native_hook_process(
+            self.proc_root,
+            container_init_host_pid=self.container_init_host_pid,
+            process=process,
+            expected_hook_sha256=self.expected_hook_sha256,
+            expected_node_sha256=self.expected_node_sha256,
+        )
+        self.audit.record(
+            {
+                "event": "native_hook_process_verified",
+                "container_id": request.peer.container_id,
+                "source_ip": request.peer.source_ip,
+                "source_port": request.source_port,
+                "host_pid": process.host_pid,
+                "parent_pid": process.parent_pid,
+                "socket_inode": process.socket_inode,
+                "hook_sha256": self.expected_hook_sha256,
+                "node_sha256": self.expected_node_sha256,
+            }
+        )
+        return process
+
+
+def frozen_hook_verifier(*, inspect: dict, peer, audit, proc_root: Path = Path("/proc")):
+    """Build a verifier only for the inspected, running pinned native image."""
+    from .host_boundary_runtime import AdmittedPeer
+
+    if (
+        type(inspect) is not dict
+        or type(peer) is not AdmittedPeer
+        or inspect.get("Id") != peer.container_id
+        or inspect.get("Image") != FROZEN_NATIVE_IMAGE_ID
+        or type(inspect.get("State")) is not dict
+        or inspect["State"].get("Running") is not True
+        or type(inspect["State"].get("Pid")) is not int
+        or inspect["State"]["Pid"] <= 1
+    ):
+        raise ValueError("running pinned image and daemon container identity required")
+    return NativeHookRequestVerifier(
+        peer=peer,
+        container_init_host_pid=inspect["State"]["Pid"],
+        expected_hook_sha256=FROZEN_HOOK_SHA256,
+        expected_node_sha256=FROZEN_NODE_SHA256,
+        audit=audit,
+        proc_root=proc_root,
+    )

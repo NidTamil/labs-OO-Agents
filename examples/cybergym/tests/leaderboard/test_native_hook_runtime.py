@@ -41,6 +41,52 @@ def observation(subject, kind="SessionStart", **fields):
     }
 
 
+def test_hook_gateway_requires_process_verification_before_custody(subject, tmp_path):
+    from nooa_cybergym.leaderboard.host_boundary_runtime import (
+        AdmittedPeer,
+        GatewayRequest,
+    )
+
+    collector = subject.NativeHookCollector(
+        tmp_path / "hooks.sqlite3",
+        run_id="synthetic-1",
+        task_id="synthetic:overflow",
+        launch_id="launch-1",
+    )
+    peer = AdmittedPeer("c" * 64, "n" * 64, "172.30.0.2")
+    request = GatewayRequest(
+        "registered-tool-gateway",
+        "POST",
+        "/native-launch/hooks",
+        (),
+        json.dumps(observation(subject)).encode(),
+        peer,
+        source_port=42424,
+    )
+    with pytest.raises(TypeError, match="verifier"):
+        subject.native_hook_handler(
+            collector, container_id=peer.container_id, network_id=peer.network_id
+        )
+    seen = []
+    denied = subject.native_hook_handler(
+        collector,
+        container_id=peer.container_id,
+        network_id=peer.network_id,
+        verify_process=lambda item: (_ for _ in ()).throw(ValueError("unverified")),
+    )
+    assert denied(request).status == 403
+    assert collector.summary()["events"] == 0
+    admitted = subject.native_hook_handler(
+        collector,
+        container_id=peer.container_id,
+        network_id=peer.network_id,
+        verify_process=lambda item: seen.append((item.peer.source_ip, item.source_port)),
+    )
+    assert admitted(request).status == 200
+    assert seen == [("172.30.0.2", 42424)]
+    assert collector.summary()["events"] == 1
+
+
 def test_hook_projection_preserves_native_ids_but_omits_tool_and_error_secrets(subject):
     payload = raw(
         "PostToolUseFailure",
@@ -261,7 +307,11 @@ def test_preflight_sessions_are_bounded_and_cannot_leave_pending_tools(subject, 
     )
     first = raw()["session_id"]
     pending.ingest(observation(subject, session_id=first))
-    pending.ingest(observation(subject, "PreToolUse", session_id=first, tool_name="Bash", tool_use_id="toolu_1"))
+    pending.ingest(
+        observation(
+            subject, "PreToolUse", session_id=first, tool_name="Bash", tool_use_id="toolu_1"
+        )
+    )
     pending.ingest(observation(subject, "SessionEnd", session_id=first))
     with pytest.raises(ValueError, match="pending native tool"):
         pending.ingest(observation(subject, session_id=str(uuid4())))

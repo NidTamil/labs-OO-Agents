@@ -258,15 +258,24 @@ class NativeHookCollector:
                     if connection.execute("SELECT session FROM model_session").fetchone():
                         raise ValueError("model session already selected")
                     if (
-                        connection.execute("SELECT count(*) FROM sessions WHERE closed=0").fetchone()[0]
+                        connection.execute(
+                            "SELECT count(*) FROM sessions WHERE closed=0"
+                        ).fetchone()[0]
                         >= _MAX_CONCURRENT_PREFLIGHT_SESSIONS
                     ):
                         raise ValueError("concurrent preflight session bound exceeded")
-                    if connection.execute("SELECT count(*) FROM sessions").fetchone()[0] >= _MAX_NATIVE_SESSIONS:
+                    if (
+                        connection.execute("SELECT count(*) FROM sessions").fetchone()[0]
+                        >= _MAX_NATIVE_SESSIONS
+                    ):
                         raise ValueError("preflight session bound exceeded")
-                    if connection.execute("SELECT count(*) FROM children WHERE closed=0").fetchone()[0]:
+                    if connection.execute(
+                        "SELECT count(*) FROM children WHERE closed=0"
+                    ).fetchone()[0]:
                         raise ValueError("pending native child from preflight session")
-                    if connection.execute("SELECT count(*) FROM tools WHERE closed=0").fetchone()[0]:
+                    if connection.execute("SELECT count(*) FROM tools WHERE closed=0").fetchone()[
+                        0
+                    ]:
                         raise ValueError("pending native tool from preflight session")
                     connection.execute("INSERT INTO sessions(id) VALUES (?)", (session,))
                 elif existing[0]:
@@ -384,8 +393,17 @@ class NativeHookCollector:
             }
 
 
-def native_hook_handler(collector: NativeHookCollector, *, container_id: str, network_id: str):
+def native_hook_handler(
+    collector: NativeHookCollector,
+    *,
+    container_id: str,
+    network_id: str,
+    verify_process=None,
+):
     from .host_boundary_runtime import GatewayReply, GatewayRequest
+
+    if not callable(verify_process):
+        raise TypeError("native hook process verifier required")
 
     def handle(request: GatewayRequest) -> GatewayReply:
         if (
@@ -397,6 +415,12 @@ def native_hook_handler(collector: NativeHookCollector, *, container_id: str, ne
             or not 0 < len(request.body) <= 256 * 1024
         ):
             return GatewayReply(403, b'{"error":"native hook denied"}')
+        try:
+            verify_process(request)
+        except ValueError:
+            return GatewayReply(403, b'{"error":"native hook process denied"}')
+        except Exception:
+            return GatewayReply(503, b'{"error":"native hook process unavailable"}')
         try:
             result = collector.ingest(json.loads(request.body))
         except (ValueError, TypeError, AttributeError):

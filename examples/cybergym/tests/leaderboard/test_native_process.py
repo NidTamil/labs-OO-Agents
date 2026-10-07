@@ -39,6 +39,114 @@ def test_linux_tcp_lookup_requires_one_established_socket_inode():
         subject.tcp_socket_inode(table + _tcp_row(42424, 557) + "\n", "172.30.0.2", 42424)
 
 
+def test_request_verifier_uses_only_kernel_peer_and_writes_audit_after_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from nooa_cybergym.leaderboard.host_boundary_runtime import AdmittedPeer, GatewayRequest
+
+    subject = _subject()
+    peer = AdmittedPeer("c" * 64, "n" * 64, "172.30.0.2")
+    recorded = []
+    process = subject.NativeSocketProcess(200, 150, "555")
+
+    def observe(root, *, container_init_host_pid, source_ip, source_port):
+        recorded.append(("socket", root, container_init_host_pid, source_ip, source_port))
+        return process
+
+    def verify(
+        root, *, container_init_host_pid, process, expected_hook_sha256, expected_node_sha256
+    ):
+        recorded.append(("identity", process, expected_hook_sha256, expected_node_sha256))
+
+    monkeypatch.setattr(subject, "observe_socket_process", observe)
+    monkeypatch.setattr(subject, "verify_native_hook_process", verify)
+
+    class Audit:
+        def record(self, value):
+            recorded.append(("audit", value))
+
+    verifier = subject.NativeHookRequestVerifier(
+        peer=peer,
+        container_init_host_pid=100,
+        expected_hook_sha256="a" * 64,
+        expected_node_sha256="b" * 64,
+        audit=Audit(),
+        proc_root=tmp_path,
+    )
+    request = GatewayRequest(
+        "registered-tool-gateway",
+        "POST",
+        "/native-launch/hooks",
+        (),
+        b"{}",
+        peer,
+        source_port=42424,
+    )
+    assert verifier(request) == process
+    assert recorded[0] == ("socket", tmp_path, 100, "172.30.0.2", 42424)
+    assert recorded[1] == ("identity", process, "a" * 64, "b" * 64)
+    assert recorded[2][0] == "audit"
+    assert recorded[2][1]["event"] == "native_hook_process_verified"
+    assert recorded[2][1]["host_pid"] == 200
+    with pytest.raises(ValueError, match="source port"):
+        verifier(
+            GatewayRequest(
+                "registered-tool-gateway", "POST", "/native-launch/hooks", (), b"{}", peer
+            )
+        )
+    with pytest.raises(ValueError, match="peer"):
+        verifier(
+            GatewayRequest(
+                "registered-tool-gateway",
+                "POST",
+                "/native-launch/hooks",
+                (),
+                b"{}",
+                AdmittedPeer("x" * 64, peer.network_id, peer.source_ip),
+                source_port=42424,
+            )
+        )
+    assert len(recorded) == 3
+
+
+def test_frozen_verifier_requires_daemon_container_identity(tmp_path: Path):
+    from nooa_cybergym.leaderboard.host_boundary_runtime import AdmittedPeer
+
+    subject = _subject()
+    peer = AdmittedPeer("c" * 64, "n" * 64, "172.30.0.2")
+    inspect = {
+        "Id": peer.container_id,
+        "Image": subject.FROZEN_NATIVE_IMAGE_ID,
+        "State": {"Pid": 200, "Running": True},
+    }
+
+    class Audit:
+        def record(self, value):
+            return True
+
+    verifier = subject.frozen_hook_verifier(
+        inspect=inspect,
+        peer=peer,
+        audit=Audit(),
+        proc_root=tmp_path,
+    )
+    assert verifier.container_init_host_pid == 200
+    assert verifier.expected_hook_sha256 == subject.FROZEN_HOOK_SHA256
+    for changed in (
+        inspect | {"Id": "x" * 64},
+        inspect | {"Image": "sha256:" + "f" * 64},
+        inspect | {"State": {"Pid": 200, "Running": False}},
+        inspect | {"State": {"Pid": 0, "Running": True}},
+    ):
+        with pytest.raises(ValueError, match="image|container"):
+            subject.frozen_hook_verifier(
+                inspect=changed,
+                peer=peer,
+                audit=Audit(),
+                proc_root=tmp_path,
+            )
+
+
 @pytest.mark.skipif(os.name != "posix", reason="Linux procfs symlinks required")
 def test_process_observer_binds_socket_to_one_container_descendant(tmp_path: Path):
     subject = _subject()

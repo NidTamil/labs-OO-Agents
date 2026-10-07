@@ -209,6 +209,7 @@ def assembled(tmp_path):
             ("/usr/bin/true",), ("/tmp/vulnerable", "{candidate}"), "/workspace/src", 30, 30
         ),
         "captured_schemas": captured_schemas(built.bindings),
+        "hook_process_verifier": lambda request: None,
         "model_transport": model,
         "deepseek_transport": CancellableDeepSeekTransport(
             transport=httpx.MockTransport(lambda _: provider_answer())

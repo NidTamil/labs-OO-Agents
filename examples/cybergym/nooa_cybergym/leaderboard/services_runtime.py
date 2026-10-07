@@ -182,6 +182,7 @@ class NativeServices:
         structural_terms: tuple[str, ...],
         vulnerable_recipe: VulnerableRecipe,
         captured_schemas: Mapping[str, str],
+        hook_process_verifier,
         compile_commands=(),
         memory_token_counter=_uncertified_token_counter,
         model_transport=None,
@@ -198,6 +199,7 @@ class NativeServices:
             or capabilities.attempt_id != attempt_id
             or capabilities.peer != peer
             or capabilities.registry.digest != model_policy.capability_policy_sha256
+            or not callable(hook_process_verifier)
         ):
             raise ValueError("same-task observed identities and frozen capability policy required")
         if (
@@ -411,7 +413,10 @@ class NativeServices:
             )
             self._launch = native_launch_handler(launch_authority, network_id=peer.network_id)
             self._hooks = native_hook_handler(
-                self.hooks, container_id=peer.container_id, network_id=peer.network_id
+                self.hooks,
+                container_id=peer.container_id,
+                network_id=peer.network_id,
+                verify_process=hook_process_verifier,
             )
             self._advisor = advisory_mcp_handler(
                 self.advisor, peer=peer, resolve_parent_call=self._advisor_caller
