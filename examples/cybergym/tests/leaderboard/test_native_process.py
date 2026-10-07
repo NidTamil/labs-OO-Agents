@@ -73,3 +73,87 @@ def test_process_observer_binds_socket_to_one_container_descendant(tmp_path: Pat
         subject.observe_socket_process(
             tmp_path, container_init_host_pid=100, source_ip="172.30.0.2", source_port=42424
         )
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux procfs symlinks required")
+def test_native_hook_identity_requires_frozen_executable_and_container_namespaces(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    import hashlib
+
+    subject = _subject()
+    proc = tmp_path / "proc"
+    container = tmp_path / "container"
+    hook = (
+        container
+        / "opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/native-hook.js"
+    )
+    hook.parent.mkdir(parents=True)
+    hook.write_bytes(b"frozen native hook")
+    node = container / "usr/local/bin/node"
+    node.parent.mkdir(parents=True)
+    node.write_bytes(b"frozen node")
+    for pid, ppid in ((100, 1), (150, 100), (200, 150)):
+        folder = proc / str(pid)
+        (folder / "ns").mkdir(parents=True)
+        (folder / "status").write_text(
+            f"Name:\tnode\nPid:\t{pid}\nPPid:\t{ppid}\nUid:\t1001\t1001\t1001\t1001\n"
+        )
+        (folder / "root").symlink_to(container)
+        for name in ("pid", "mnt", "net"):
+            (folder / "ns" / name).symlink_to(f"{name}:[1234]")
+    (proc / "200/exe").symlink_to(node)
+    original_readlink = subject.os.readlink
+    monkeypatch.setattr(
+        subject.os,
+        "readlink",
+        lambda path: (
+            "/usr/local/bin/node" if Path(path) == proc / "200/exe" else original_readlink(path)
+        ),
+    )
+    (proc / "200/cmdline").write_bytes(
+        b"/usr/local/bin/node\0"
+        b"/opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/native-hook.js\0"
+    )
+    (proc / "200/fd").mkdir()
+    (proc / "200/fd/4").symlink_to("socket:[555]")
+    observed = subject.NativeSocketProcess(200, 150, "555")
+    kwargs = {
+        "container_init_host_pid": 100,
+        "process": observed,
+        "expected_hook_sha256": hashlib.sha256(hook.read_bytes()).hexdigest(),
+        "expected_node_sha256": hashlib.sha256(node.read_bytes()).hexdigest(),
+    }
+    assert subject.verify_native_hook_process(proc, **kwargs) is None
+
+    (proc / "200/cmdline").write_bytes(b"/usr/local/bin/node\0/tmp/fake-hook.js\0")
+    with pytest.raises(ValueError, match="command"):
+        subject.verify_native_hook_process(proc, **kwargs)
+    (proc / "200/cmdline").write_bytes(
+        b"/usr/local/bin/node\0"
+        b"/opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/native-hook.js\0"
+    )
+    (proc / "200/ns/net").unlink()
+    (proc / "200/ns/net").symlink_to("net:[9999]")
+    with pytest.raises(ValueError, match="namespace"):
+        subject.verify_native_hook_process(proc, **kwargs)
+    (proc / "200/ns/net").unlink()
+    (proc / "200/ns/net").symlink_to("net:[1234]")
+    (proc / "200/status").write_text("Name:\tnode\nPid:\t200\nPPid:\t150\nUid:\t0\t0\t0\t0\n")
+    with pytest.raises(ValueError, match="user"):
+        subject.verify_native_hook_process(proc, **kwargs)
+    (proc / "200/status").write_text(
+        "Name:\tnode\nPid:\t200\nPPid:\t150\nUid:\t1001\t1001\t1001\t1001\n"
+    )
+    node.write_bytes(b"changed executable")
+    with pytest.raises(ValueError, match="digest"):
+        subject.verify_native_hook_process(proc, **kwargs)
+    node.write_bytes(b"frozen node")
+    (proc / "200/fd/4").unlink()
+    with pytest.raises(ValueError, match="socket"):
+        subject.verify_native_hook_process(proc, **kwargs)
+    (proc / "200/fd/4").symlink_to("socket:[555]")
+    hook.write_bytes(b"mutated hook")
+    with pytest.raises(ValueError, match="digest"):
+        subject.verify_native_hook_process(proc, **kwargs)

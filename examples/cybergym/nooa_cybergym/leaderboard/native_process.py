@@ -10,9 +10,11 @@ source before admitting a preflight report.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,6 +24,12 @@ class NativeSocketProcess:
     host_pid: int
     parent_pid: int
     socket_inode: str
+
+
+_NODE_PATH = "/usr/local/bin/node"
+_HOOK_PATH = (
+    "/opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/native-hook.js"
+)
 
 
 def tcp_socket_inode(table: str, source_ip: str, source_port: int) -> str:
@@ -112,3 +120,77 @@ def observe_socket_process(
     except OSError:
         raise ValueError("observed TCP socket closed during process verification") from None
     return NativeSocketProcess(host_pid, parent_pid, inode)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def verify_native_hook_process(
+    proc_root: Path,
+    *,
+    container_init_host_pid: int,
+    process: NativeSocketProcess,
+    expected_hook_sha256: str,
+    expected_node_sha256: str,
+) -> None:
+    """Fail closed unless the socket holder is the frozen hook in this container."""
+    proc_root = Path(proc_root)
+    if (
+        proc_root.is_symlink()
+        or not proc_root.is_dir()
+        or type(container_init_host_pid) is not int
+        or container_init_host_pid <= 1
+        or type(process) is not NativeSocketProcess
+        or any(
+            re.fullmatch(r"[a-f0-9]{64}", value) is None
+            for value in (expected_hook_sha256, expected_node_sha256)
+        )
+    ):
+        raise ValueError("trusted native process inputs required")
+    folder = proc_root / str(process.host_pid)
+    init = proc_root / str(container_init_host_pid)
+    try:
+        if _parent_pid(proc_root, process.host_pid) != process.parent_pid:
+            raise ValueError("native hook ancestry changed")
+        status = (folder / "status").read_text(encoding="ascii")
+        uid = re.findall(
+            r"^Uid:\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s*$",
+            status,
+            re.MULTILINE,
+        )
+        if uid != [("1001",) * 4]:
+            raise ValueError("native hook user differs from task agent")
+        for name in ("pid", "mnt", "net"):
+            if os.readlink(folder / "ns" / name) != os.readlink(init / "ns" / name):
+                raise ValueError("native hook namespace differs from task container")
+        if (folder / "cmdline").read_bytes() != (_NODE_PATH + "\0" + _HOOK_PATH + "\0").encode():
+            raise ValueError("native hook command differs from frozen managed settings")
+        executable = folder / "exe"
+        if os.readlink(executable) != _NODE_PATH:
+            raise ValueError("native hook executable differs from frozen Node")
+        hook = folder / "root" / _HOOK_PATH.lstrip("/")
+        metadata = hook.stat()
+        if (
+            hook.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_mode & 0o022
+        ):
+            raise ValueError("native hook source is not root-owned immutable image content")
+        if (
+            _sha256_file(hook) != expected_hook_sha256
+            or _sha256_file(executable) != expected_node_sha256
+        ):
+            raise ValueError("native hook or Node digest differs from frozen image")
+        socket_link = f"socket:[{process.socket_inode}]"
+        if not any(os.readlink(fd) == socket_link for fd in (folder / "fd").iterdir()):
+            raise ValueError("native hook socket closed during verification")
+        if _parent_pid(proc_root, process.host_pid) != process.parent_pid:
+            raise ValueError("native hook ancestry changed")
+    except (OSError, UnicodeError):
+        raise ValueError("native hook process identity unavailable") from None
