@@ -492,3 +492,21 @@ After restoring unrelated formatting, the same targeted 39 tests pass at
 `09b0c52`. No new live synthetic request has exercised this gateway gate;
 native parent/child probes, model-admission ordering and the per-task
 executor remain incomplete.
+
+Commits `06383a2` and `10e9d5e` are pushed; `10e9d5e` is checked out cleanly
+on SunChaser. A new controller gate validates the full expected probe
+inventory, exact parent/child context, container and policy/manifest bindings,
+all zero-exit probe records, and the unchanged durable report bytes. A report
+can be consumed once for the parent or for one specific child ID. The native
+model dispatcher now uses this gate before its lifecycle role lookup, so
+an unprobed parent/child model request is denied before any provider call.
+The targeted Linux service/gate/synthetic tests pass 22/22, and the full
+component suite passes 994 tests with five skips and two deselections;
+JUnit XML `/srv/sunchaser/runs/cybergym-components-20261007-v25e.xml`
+has SHA-256 `25d87b958c94655b49df37e8b36ad9f480e384d4e0d5383a76aee42bef5769bd`.
+The integration tests mint synthetic native-mode reports as unit fixtures;
+they are not attestations. No runtime route yet executes the probes in the
+actual extension parent or child hook process or calls the gate with a live
+report. Until that source/protocol is built, the gate correctly blocks all
+native GLM requests. Do not run a synthetic or practice task under this
+incomplete source; next build and verify the exact-context probe transport.
