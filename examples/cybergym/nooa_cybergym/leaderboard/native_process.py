@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import json
 import os
 import re
 import stat
@@ -30,9 +31,16 @@ _NODE_PATH = "/usr/local/bin/node"
 _HOOK_PATH = (
     "/opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/native-hook.js"
 )
+_PARENT_NODE_PATH = "/opt/sunchaser/vscode-server/node"
+_LAUNCHER_PATH = (
+    "/opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/extension.js"
+)
+_EXTENSION_HOST_PATH = "/opt/sunchaser/vscode-server/out/vs/workbench/api/node/extensionHostProcess"
 FROZEN_NATIVE_IMAGE_ID = "sha256:4e3a5c2bdcf860e231e2d5b00840c27d3b3f2c318cdd53c2d48946b88736721e"
 FROZEN_HOOK_SHA256 = "8d20c87cb7083451fd1ecf2425cf05e3b23d0828696f038e0043c487a348e2a3"
 FROZEN_NODE_SHA256 = "fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48"
+FROZEN_PARENT_NODE_SHA256 = "e7bb5f506b21993b0192ae9086aaa2fb99593b35ece1512e83364d2feb5172a5"
+FROZEN_LAUNCHER_SHA256 = "de82e490761554927ffbacf93c6bd5c5f4594ab603f77659180d5903b9ef965a"
 
 
 def tcp_socket_inode(table: str, source_ip: str, source_port: int) -> str:
@@ -199,6 +207,101 @@ def verify_native_hook_process(
         raise ValueError("native hook process identity unavailable") from None
 
 
+def verify_native_parent_process(
+    proc_root: Path,
+    *,
+    container_init_host_pid: int,
+    process: NativeSocketProcess,
+    receipt_observed: dict,
+    expected_launcher_sha256: str,
+    expected_node_sha256: str,
+) -> None:
+    """Bind a gateway socket to the extension host that reserved the launch."""
+    proc_root = Path(proc_root)
+    if (
+        proc_root.is_symlink()
+        or not proc_root.is_dir()
+        or type(container_init_host_pid) is not int
+        or container_init_host_pid <= 1
+        or type(process) is not NativeSocketProcess
+        or type(receipt_observed) is not dict
+        or any(
+            type(receipt_observed.get(key)) is not int or receipt_observed[key] <= 1
+            for key in ("pid", "ppid")
+        )
+        or any(
+            re.fullmatch(r"[a-f0-9]{64}", value) is None
+            for value in (expected_launcher_sha256, expected_node_sha256)
+        )
+    ):
+        raise ValueError("trusted native parent process inputs required")
+    folder = proc_root / str(process.host_pid)
+    parent = proc_root / str(process.parent_pid)
+    init = proc_root / str(container_init_host_pid)
+    try:
+        if _parent_pid(proc_root, process.host_pid) != process.parent_pid:
+            raise ValueError("native parent ancestry changed")
+        status = (folder / "status").read_text(encoding="ascii")
+        uid = re.findall(
+            r"^Uid:\s*([0-9]+)\s+([0-9]+)\s+([0-9]+)\s+([0-9]+)\s*$",
+            status,
+            re.MULTILINE,
+        )
+        if uid != [("1001",) * 4]:
+            raise ValueError("native parent user differs from task agent")
+        for name in ("pid", "mnt", "net"):
+            if os.readlink(folder / "ns" / name) != os.readlink(init / "ns" / name):
+                raise ValueError("native parent namespace differs from task container")
+
+        def nested_pid(path: Path) -> int:
+            matches = re.findall(
+                r"^NSpid:\s*([0-9]+(?:\s+[0-9]+)*)\s*$",
+                path.read_text(encoding="ascii"),
+                re.MULTILINE,
+            )
+            if len(matches) != 1:
+                raise ValueError("native parent nested PID unavailable")
+            return int(matches[0].split()[-1])
+
+        if (
+            nested_pid(folder / "status") != receipt_observed["pid"]
+            or nested_pid(parent / "status") != receipt_observed["ppid"]
+        ):
+            raise ValueError("native parent PID differs from launch receipt")
+        argv = (folder / "cmdline").read_bytes().split(b"\0")
+        if (
+            len(argv) < 3
+            or argv[0] != _PARENT_NODE_PATH.encode()
+            or _EXTENSION_HOST_PATH.encode() not in argv[1:-1]
+            or argv[-1] != b""
+        ):
+            raise ValueError("native parent command is not the frozen extension host")
+        executable = folder / "exe"
+        if os.readlink(executable) != _PARENT_NODE_PATH:
+            raise ValueError("native parent executable differs from frozen VS Code Node")
+        launcher = folder / "root" / _LAUNCHER_PATH.lstrip("/")
+        metadata = launcher.stat()
+        if (
+            launcher.is_symlink()
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != 0
+            or metadata.st_mode & 0o022
+        ):
+            raise ValueError("native launcher source is not root-owned immutable image content")
+        if (
+            _sha256_file(launcher) != expected_launcher_sha256
+            or _sha256_file(executable) != expected_node_sha256
+        ):
+            raise ValueError("native launcher or Node digest differs from frozen image")
+        socket_link = f"socket:[{process.socket_inode}]"
+        if not any(os.readlink(fd) == socket_link for fd in (folder / "fd").iterdir()):
+            raise ValueError("native parent socket closed during verification")
+        if _parent_pid(proc_root, process.host_pid) != process.parent_pid:
+            raise ValueError("native parent ancestry changed")
+    except (OSError, UnicodeError):
+        raise ValueError("native parent process identity unavailable") from None
+
+
 class NativeHookRequestVerifier:
     """Bind a hook gateway request to a verified task-container process."""
 
@@ -268,6 +371,127 @@ class NativeHookRequestVerifier:
             }
         )
         return process
+
+
+class NativeParentRequestVerifier:
+    """Require the reserved launch's extension-host PID on this TCP request."""
+
+    def __init__(
+        self,
+        *,
+        peer,
+        container_init_host_pid: int,
+        launch_authority,
+        expected_launcher_sha256: str,
+        expected_node_sha256: str,
+        audit,
+        proc_root: Path = Path("/proc"),
+    ):
+        from .host_boundary_runtime import AdmittedPeer
+        from .native_launcher import NativeLaunchAuthority
+
+        if (
+            type(peer) is not AdmittedPeer
+            or type(launch_authority) is not NativeLaunchAuthority
+            or type(container_init_host_pid) is not int
+            or container_init_host_pid <= 1
+            or any(
+                re.fullmatch(r"[a-f0-9]{64}", value) is None
+                for value in (expected_launcher_sha256, expected_node_sha256)
+            )
+            or not callable(getattr(audit, "record", None))
+            or Path(proc_root).is_symlink()
+            or not Path(proc_root).is_dir()
+        ):
+            raise ValueError("trusted native parent verifier configuration required")
+        self.peer, self.container_init_host_pid = peer, container_init_host_pid
+        self.launch_authority = launch_authority
+        self.expected_launcher_sha256 = expected_launcher_sha256
+        self.expected_node_sha256 = expected_node_sha256
+        self.audit, self.proc_root = audit, Path(proc_root)
+
+    def __call__(self, request):
+        from .host_boundary_runtime import GatewayRequest
+        from .native_launcher import _canonical
+
+        if type(request) is not GatewayRequest or request.peer != self.peer:
+            raise ValueError("native parent peer differs from task container")
+        if type(request.source_port) is not int or not 1 <= request.source_port <= 65535:
+            raise ValueError("native parent source port is unavailable")
+        receipt_path = self.launch_authority.launch_dir / "launcher-receipt.json"
+        if receipt_path.is_symlink() or not receipt_path.is_file():
+            raise ValueError("native parent launch receipt unavailable")
+        try:
+            raw = receipt_path.read_bytes()
+            receipt = json.loads(raw)
+            self.launch_authority._check_receipt(receipt)
+            if _canonical(receipt) != raw:
+                raise ValueError("native parent launch receipt changed")
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            raise ValueError("native parent launch receipt unavailable") from None
+        process = observe_socket_process(
+            self.proc_root,
+            container_init_host_pid=self.container_init_host_pid,
+            source_ip=request.peer.source_ip,
+            source_port=request.source_port,
+        )
+        verify_native_parent_process(
+            self.proc_root,
+            container_init_host_pid=self.container_init_host_pid,
+            process=process,
+            receipt_observed=receipt["observed"],
+            expected_launcher_sha256=self.expected_launcher_sha256,
+            expected_node_sha256=self.expected_node_sha256,
+        )
+        if (
+            self.audit.record(
+                {
+                    "event": "native_parent_process_verified",
+                    "container_id": request.peer.container_id,
+                    "source_ip": request.peer.source_ip,
+                    "source_port": request.source_port,
+                    "host_pid": process.host_pid,
+                    "parent_pid": process.parent_pid,
+                    "socket_inode": process.socket_inode,
+                    "launcher_sha256": self.expected_launcher_sha256,
+                    "node_sha256": self.expected_node_sha256,
+                }
+            )
+            is not True
+        ):
+            raise ValueError("native parent process audit unavailable")
+        return process
+
+
+def frozen_parent_verifier(
+    *, inspect: dict, peer, launch_authority, audit, proc_root: Path = Path("/proc")
+):
+    """Construct the parent verifier only for the pinned running image."""
+    from .host_boundary_runtime import AdmittedPeer
+    from .native_launcher import NativeLaunchAuthority
+
+    if (
+        type(inspect) is not dict
+        or type(peer) is not AdmittedPeer
+        or type(launch_authority) is not NativeLaunchAuthority
+        or launch_authority.manifest.get("container_id") != peer.container_id
+        or inspect.get("Id") != peer.container_id
+        or inspect.get("Image") != FROZEN_NATIVE_IMAGE_ID
+        or type(inspect.get("State")) is not dict
+        or inspect["State"].get("Running") is not True
+        or type(inspect["State"].get("Pid")) is not int
+        or inspect["State"]["Pid"] <= 1
+    ):
+        raise ValueError("running pinned image and signed parent launch required")
+    return NativeParentRequestVerifier(
+        peer=peer,
+        container_init_host_pid=inspect["State"]["Pid"],
+        launch_authority=launch_authority,
+        expected_launcher_sha256=FROZEN_LAUNCHER_SHA256,
+        expected_node_sha256=FROZEN_PARENT_NODE_SHA256,
+        audit=audit,
+        proc_root=proc_root,
+    )
 
 
 def frozen_hook_verifier(*, inspect: dict, peer, audit, proc_root: Path = Path("/proc")):

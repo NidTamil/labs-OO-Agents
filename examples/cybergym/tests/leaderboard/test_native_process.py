@@ -265,3 +265,125 @@ def test_native_hook_identity_requires_frozen_executable_and_container_namespace
     hook.write_bytes(b"mutated hook")
     with pytest.raises(ValueError, match="digest"):
         subject.verify_native_hook_process(proc, **kwargs)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Linux procfs symlinks required")
+def test_parent_identity_binds_receipt_pid_to_frozen_extension_host(tmp_path: Path, monkeypatch):
+    import hashlib
+
+    subject = _subject()
+    proc, container = tmp_path / "proc", tmp_path / "container"
+    launcher = (
+        container
+        / "opt/sunchaser/vscode-extensions/xeus.sunchaser-cybergym-launcher-0.1.0/extension.js"
+    )
+    launcher.parent.mkdir(parents=True)
+    launcher.write_bytes(b"frozen extension")
+    node = container / "opt/sunchaser/vscode-server/node"
+    node.parent.mkdir(parents=True)
+    node.write_bytes(b"frozen vscode node")
+    for pid, ppid, nested in ((100, 1, 1), (150, 100, 281), (200, 150, 350)):
+        folder = proc / str(pid)
+        (folder / "ns").mkdir(parents=True)
+        (folder / "status").write_text(
+            f"Name:\tnode\nPid:\t{pid}\nPPid:\t{ppid}\n"
+            f"Uid:\t1001\t1001\t1001\t1001\nNSpid:\t{pid}\t{nested}\n"
+        )
+        (folder / "root").symlink_to(container)
+        for name in ("pid", "mnt", "net"):
+            (folder / "ns" / name).symlink_to(f"{name}:[1234]")
+    (proc / "200/exe").symlink_to(node)
+    original_readlink = subject.os.readlink
+    monkeypatch.setattr(
+        subject.os,
+        "readlink",
+        lambda path: (
+            "/opt/sunchaser/vscode-server/node"
+            if Path(path) == proc / "200/exe"
+            else original_readlink(path)
+        ),
+    )
+    (proc / "200/cmdline").write_bytes(
+        b"/opt/sunchaser/vscode-server/node\0"
+        b"/opt/sunchaser/vscode-server/out/vs/workbench/api/node/extensionHostProcess\0"
+    )
+    (proc / "200/fd").mkdir()
+    (proc / "200/fd/4").symlink_to("socket:[555]")
+    kwargs = {
+        "container_init_host_pid": 100,
+        "process": subject.NativeSocketProcess(200, 150, "555"),
+        "receipt_observed": {"pid": 350, "ppid": 281},
+        "expected_launcher_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(),
+        "expected_node_sha256": hashlib.sha256(node.read_bytes()).hexdigest(),
+    }
+    subject.verify_native_parent_process(proc, **kwargs)
+    (proc / "200/status").write_text(
+        "Name:\tnode\nPid:\t200\nPPid:\t150\nUid:\t1001\t1001\t1001\t1001\nNSpid:\t200\t351\n"
+    )
+    with pytest.raises(ValueError, match="receipt"):
+        subject.verify_native_parent_process(proc, **kwargs)
+    (proc / "200/status").write_text(
+        "Name:\tnode\nPid:\t200\nPPid:\t150\nUid:\t1001\t1001\t1001\t1001\nNSpid:\t200\t350\n"
+    )
+    launcher.write_bytes(b"mutated extension")
+    with pytest.raises(ValueError, match="digest"):
+        subject.verify_native_parent_process(proc, **kwargs)
+
+
+def test_parent_request_verifier_requires_reserved_receipt_and_observed_socket(
+    tmp_path: Path, monkeypatch
+):
+    from nooa_cybergym.leaderboard.host_boundary_runtime import AdmittedPeer, GatewayRequest
+    from nooa_cybergym.leaderboard.native_launcher import NativeLaunchAuthority
+
+    subject = _subject()
+    peer = AdmittedPeer("c" * 64, "n" * 64, "172.30.0.2")
+    authority = NativeLaunchAuthority.__new__(NativeLaunchAuthority)
+    authority.launch_dir = tmp_path / "launch"
+    authority.launch_dir.mkdir()
+    monkeypatch.setattr(NativeLaunchAuthority, "_check_receipt", lambda self, receipt: None)
+    calls = []
+    monkeypatch.setattr(
+        subject,
+        "observe_socket_process",
+        lambda *args, **kwargs: (
+            calls.append("socket") or subject.NativeSocketProcess(200, 150, "555")
+        ),
+    )
+    monkeypatch.setattr(
+        subject,
+        "verify_native_parent_process",
+        lambda *args, **kwargs: calls.append("identity"),
+    )
+
+    class Audit:
+        def record(self, event):
+            calls.append(event["event"])
+            return True
+
+    verifier = subject.NativeParentRequestVerifier(
+        peer=peer,
+        container_init_host_pid=100,
+        launch_authority=authority,
+        expected_launcher_sha256="a" * 64,
+        expected_node_sha256="b" * 64,
+        audit=Audit(),
+        proc_root=tmp_path,
+    )
+    request = GatewayRequest(
+        "registered-tool-gateway",
+        "POST",
+        "/native-launch/preflight/begin",
+        (),
+        b"{}",
+        peer,
+        source_port=42424,
+    )
+    with pytest.raises(ValueError, match="receipt"):
+        verifier(request)
+    assert calls == []
+    (authority.launch_dir / "launcher-receipt.json").write_text(
+        '{"observed":{"pid":350,"ppid":281}}'
+    )
+    assert verifier(request) == subject.NativeSocketProcess(200, 150, "555")
+    assert calls == ["socket", "identity", "native_parent_process_verified"]

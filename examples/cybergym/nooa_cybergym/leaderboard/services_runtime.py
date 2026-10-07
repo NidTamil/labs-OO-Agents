@@ -39,6 +39,7 @@ from .model_gateway import GatewayAudit, ModelPolicy
 from .native_hook_runtime import NativeHookCollector, native_hook_handler
 from .native_launcher import NativeLaunchAuthority, native_launch_handler
 from .native_preflight_gate import NativePreflightAdmission
+from .native_preflight_protocol import NativePreflightProtocol
 from .native_runtime import NativeModelDispatcher
 from .native_tool_runtime import NativeToolController
 from .native_workflows import frozen_workflows, reserve_workflow
@@ -184,7 +185,9 @@ class NativeServices:
         vulnerable_recipe: VulnerableRecipe,
         captured_schemas: Mapping[str, str],
         workspace_manifest: Path,
+        workspace_root: Path,
         hook_process_verifier,
+        parent_process_verifier,
         compile_commands=(),
         memory_token_counter=_uncertified_token_counter,
         model_transport=None,
@@ -202,6 +205,7 @@ class NativeServices:
             or capabilities.peer != peer
             or capabilities.registry.digest != model_policy.capability_policy_sha256
             or not callable(hook_process_verifier)
+            or not callable(parent_process_verifier)
         ):
             raise ValueError("same-task observed identities and frozen capability policy required")
         if (
@@ -266,6 +270,20 @@ class NativeServices:
                 workspace_manifest=workspace_manifest,
                 evidence_root=self.evidence,
                 observed_role=self.hooks.model_role,
+                audit=self.audit.record,
+            )
+            self.preflight_protocol = NativePreflightProtocol(
+                peer=peer,
+                run_id=run_id,
+                task_id=task_id,
+                launch_id=launch_id,
+                policy=network_policy,
+                workspace_root=workspace_root,
+                workspace_manifest=workspace_manifest,
+                evidence_root=self.evidence,
+                gate=self.preflight,
+                verify_parent=parent_process_verifier,
+                verify_child=hook_process_verifier,
                 audit=self.audit.record,
             )
             parent_tools, child_tools = set(), set()
@@ -623,6 +641,8 @@ class NativeServices:
             return self._launch(request)
         if request.path == "/native-launch/hooks":
             return self._hooks(request)
+        if request.path in {"/native-launch/preflight/begin", "/native-launch/preflight/submit"}:
+            return self.preflight_protocol(request)
         if request.path in {"/native-tools/authorize", "/native-tools/result"}:
             return self.tools.handle(request)
         if request.path == "/advisor/mcp":

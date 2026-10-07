@@ -533,3 +533,22 @@ service route still needs a verified extension-host parent process, wiring
 to `NativeServices`, and a rebuilt/re-frozen image whose installed hook and
 launcher digests match the new source. No synthetic/practice/scored task was
 launched under the incomplete path.
+
+The native service now routes parent and child preflight begin/submit to the
+one-shot protocol, and the synthetic driver supplies separate observed parent
+and hook verifiers. The parent verifier requires the controller's durable
+launch receipt, binds the live gateway socket to one container descendant,
+checks the container PID and parent PID from the receipt against kernel NSpid,
+and checks task UID, namespaces, VS Code extension-host command and executable,
+root-owned launcher source digest, and the still-open socket before recording
+an audit event. This binds the request to the reserved extension-host process;
+it does not prove which JavaScript module in that process made the request.
+The current launcher digest is the source intended for the next image build,
+not a claim that the old pinned image contains it. Unit tests watched the
+missing verifier fail first; targeted Linux service/process/protocol/driver
+tests pass 30/30. The full Linux component suite at this uncommitted source
+passes 1000 tests, five skipped, two deselected; JUnit XML
+`/srv/sunchaser/runs/cybergym-components-20261007-v25h.xml` has SHA-256
+`e701510f59b2d90244d7925b0d45530eb1b735e9ab9a61495f50fdd5b6e2ef48`.
+The image rebuild, exact frozen digest updates, a live native preflight,
+idempotent per-task executor, and matching live synthetic runs remain open.

@@ -35,7 +35,7 @@ from .gbrain_writer import OracleMemoryWriter
 from .host_boundary_runtime import HostBoundaryRuntime
 from .memory import SOURCE_ID
 from .native_launcher import NativeLaunchAuthority, build_launch_manifest
-from .native_process import frozen_hook_verifier
+from .native_process import frozen_hook_verifier, frozen_parent_verifier
 from .native_workflows import frozen_workflows
 from .runtime_config import NativeRuntimeConfig, load_runtime_config
 from .runtime_custody import TaskRuntimeContext
@@ -168,13 +168,16 @@ class _PostOracleMemoryBudget:
                 self._audit.record({"event": "post_oracle_memory_model_denied"})
                 raise PermissionError("post-oracle memory budget exhausted")
             number = self._prior_requests + self._reserved + 1
-            if self._audit.record(
-                {
-                    "event": "post_oracle_memory_model_reserved",
-                    "request_number": number,
-                    "allocation": "glm_and_memory_auxiliary",
-                }
-            ) is not True:
+            if (
+                self._audit.record(
+                    {
+                        "event": "post_oracle_memory_model_reserved",
+                        "request_number": number,
+                        "allocation": "glm_and_memory_auxiliary",
+                    }
+                )
+                is not True
+            ):
                 raise PermissionError("post-oracle memory audit unavailable")
             self._reserved += 1
             return number
@@ -439,9 +442,16 @@ def run(
                 vulnerable_recipe=_recipe(),
                 captured_schemas=captured_schemas,
                 workspace_manifest=stage.evidence / "task-manifest.json",
+                workspace_root=stage.root,
                 hook_process_verifier=frozen_hook_verifier(
                     inspect=client.api.inspect_container(container.id),
                     peer=peer,
+                    audit=context.audit,
+                ),
+                parent_process_verifier=frozen_parent_verifier(
+                    inspect=client.api.inspect_container(container.id),
+                    peer=peer,
+                    launch_authority=launch,
                     audit=context.audit,
                 ),
             )
@@ -496,7 +506,9 @@ def run(
         )
         native_hooks = services.hooks.summary()
         if native_hooks["pending_tools"] != sum(
-            count for name, count in stopped_dispositions.items() if name != "sessions_closed_by_controller_stop"
+            count
+            for name, count in stopped_dispositions.items()
+            if name != "sessions_closed_by_controller_stop"
         ):
             raise RuntimeError("native hook terminal reconciliation differs from raw observations")
         context.audit.record({"event": "controller_stop_hook_dispositions", **stopped_dispositions})

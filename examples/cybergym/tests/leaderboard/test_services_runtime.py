@@ -214,6 +214,8 @@ def assembled(tmp_path):
         "captured_schemas": captured_schemas(built.bindings),
         "workspace_manifest": workspace_manifest,
         "hook_process_verifier": lambda request: None,
+        "parent_process_verifier": lambda request: None,
+        "workspace_root": output.parent,
         "model_transport": model,
         "deepseek_transport": CancellableDeepSeekTransport(
             transport=httpx.MockTransport(lambda _: provider_answer())
@@ -244,6 +246,31 @@ def request(peer, endpoint="registered-tool-gateway", path="/mcp/clangd"):
         b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
         peer,
     )
+
+
+def test_preflight_route_requires_verified_parent_process(assembled):
+    service = assembled.create()
+    body = {
+        "schema_version": 1,
+        "run_id": "run",
+        "task_id": TASK,
+        "launch_id": "launch",
+        "context": "parent",
+        "agent_id": None,
+    }
+    attempted = GatewayRequest(
+        "registered-tool-gateway",
+        "POST",
+        "/native-launch/preflight/begin",
+        (),
+        json.dumps(body).encode(),
+        assembled.peer,
+        source_port=42424,
+    )
+    reply = service.handlers["registered-tool-gateway"](attempted)
+    assert reply.status == 403
+    assert b"native preflight denied" in reply.body
+    assert service.preflight.model_role("session", None) is None
 
 
 def test_all_controllers_share_context_and_real_native_model_lifecycle(assembled):
