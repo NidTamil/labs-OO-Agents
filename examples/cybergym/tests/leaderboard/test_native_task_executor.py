@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -50,7 +51,9 @@ def _evidence(tmp_path: Path):
     evaluator_signer, evaluator_key = _signer("evaluator")
     controller_signer, controller_key = _signer("controller")
     task_digest = "sha256:" + "3" * 64
-    candidate = tmp_path / "candidate"
+    final_dir = tmp_path / "final"
+    final_dir.mkdir()
+    candidate = final_dir / "poc"
     candidate.write_bytes(b"one locked candidate")
     candidate_digest = "sha256:" + hashlib.sha256(candidate.read_bytes()).hexdigest()
     bundle = SubmissionBundle(
@@ -110,15 +113,26 @@ def _evidence(tmp_path: Path):
         official_scoring_form=OfficialScoringForm.EFFECTIVE,
         official_solved=True,
     )
-    declaration = tmp_path / "agent-final.json"
-    declaration.write_bytes(b'{"final_declaration":true}')
+    declaration = final_dir / "agent-final.json"
+    declared = {
+        "schema_version": 1,
+        "task_id": "arvo:1",
+        "candidate_path": "/workspace/output/poc",
+        "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+        "byte_length": candidate.stat().st_size,
+        "selected_at": datetime.now(UTC).isoformat(),
+        "selection_reason": "selected final candidate",
+        "final_declaration": True,
+        "selected_by": "glm_parent",
+    }
+    declaration.write_bytes(canonical_json(declared))
     lock = FinalLock(
         task_id="arvo:1",
         sha256=hashlib.sha256(candidate.read_bytes()).hexdigest(),
         byte_length=candidate.stat().st_size,
         poc_path=candidate,
         declaration_path=declaration,
-        declaration={},
+        declaration=declared,
         parent_event_digest="8" * 64,
     )
     return {
@@ -159,12 +173,14 @@ def test_terminal_receipt_verifies_evaluator_and_is_idempotent(tmp_path: Path):
         signed_request=evidence["request"],
         signed_result=evidence["result"],
         frozen_bundle=evidence["bundle"],
+        solver_stopped=lambda: True,
     )
     second = publisher.publish_oracle(
         lock=evidence["lock"],
         signed_request=evidence["request"],
         signed_result=evidence["result"],
         frozen_bundle=evidence["bundle"],
+        solver_stopped=lambda: True,
     )
     assert first == second
     payload = json.loads(
@@ -198,6 +214,7 @@ def test_terminal_receipt_rejects_changed_final_and_untrusted_verdict(tmp_path: 
             signed_request=evidence["request"],
             signed_result=evidence["request"],
             frozen_bundle=evidence["bundle"],
+            solver_stopped=lambda: True,
         )
     evidence["lock"].poc_path.write_bytes(b"changed candidate")
     with pytest.raises((ValueError, RuntimeError)):
@@ -206,6 +223,7 @@ def test_terminal_receipt_rejects_changed_final_and_untrusted_verdict(tmp_path: 
             signed_request=evidence["request"],
             signed_result=evidence["result"],
             frozen_bundle=evidence["bundle"],
+            solver_stopped=lambda: True,
         )
 
 
@@ -241,6 +259,70 @@ def test_terminal_receipt_rejects_a_verdict_for_another_candidate(tmp_path: Path
             signed_request=_signed(evidence["kernel_signer"], other_request),
             signed_result=_signed(evidence["evaluator_signer"], other_result),
             frozen_bundle=canonical_json(other),
+            solver_stopped=lambda: True,
+        )
+
+
+def test_terminal_receipt_requires_stopped_parent_and_unchanged_declaration(tmp_path: Path):
+    from nooa_cybergym.leaderboard.native_task_executor import NativeTerminalReceiptPublisher
+
+    evidence = _evidence(tmp_path)
+    publisher = NativeTerminalReceiptPublisher(
+        run_id="run-1",
+        epoch="epoch-1",
+        task_id="arvo:1",
+        task_digest=evidence["task_digest"],
+        submission_file_path="poc",
+        evidence_dir=tmp_path,
+        kernel_verifier=evidence["kernel_verifier"],
+        evaluator_verifier=evidence["evaluator_verifier"],
+        controller_signer=evidence["controller_signer"],
+        controller_verifier=evidence["controller_verifier"],
+    )
+    with pytest.raises(RuntimeError, match="stopped"):
+        publisher.publish_oracle(
+            lock=evidence["lock"],
+            signed_request=evidence["request"],
+            signed_result=evidence["result"],
+            frozen_bundle=evidence["bundle"],
+            solver_stopped=lambda: False,
+        )
+    evidence["lock"].declaration_path.write_bytes(b'{"final_declaration":true}')
+    with pytest.raises(ValueError, match="declaration"):
+        publisher.publish_oracle(
+            lock=evidence["lock"],
+            signed_request=evidence["request"],
+            signed_result=evidence["result"],
+            frozen_bundle=evidence["bundle"],
+            solver_stopped=lambda: True,
+        )
+
+
+def test_terminal_receipt_requires_controller_final_custody_path(tmp_path: Path):
+    from nooa_cybergym.leaderboard.native_task_executor import NativeTerminalReceiptPublisher
+
+    evidence = _evidence(tmp_path)
+    outside = tmp_path / "outside-poc"
+    outside.write_bytes(evidence["lock"].poc_path.read_bytes())
+    publisher = NativeTerminalReceiptPublisher(
+        run_id="run-1",
+        epoch="epoch-1",
+        task_id="arvo:1",
+        task_digest=evidence["task_digest"],
+        submission_file_path="poc",
+        evidence_dir=tmp_path,
+        kernel_verifier=evidence["kernel_verifier"],
+        evaluator_verifier=evidence["evaluator_verifier"],
+        controller_signer=evidence["controller_signer"],
+        controller_verifier=evidence["controller_verifier"],
+    )
+    with pytest.raises(ValueError, match="custody"):
+        publisher.publish_oracle(
+            lock=replace(evidence["lock"], poc_path=outside),
+            signed_request=evidence["request"],
+            signed_result=evidence["result"],
+            frozen_bundle=evidence["bundle"],
+            solver_stopped=lambda: True,
         )
 
 

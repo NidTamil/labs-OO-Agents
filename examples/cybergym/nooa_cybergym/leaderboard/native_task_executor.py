@@ -9,6 +9,7 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from xeus_cybergym.canonical import canonical_json
@@ -16,7 +17,7 @@ from xeus_cybergym.contracts import EvaluationRequest, EvaluationResult
 from xeus_cybergym.contracts.artifacts import SubmissionBundle
 from xeus_cybergym.ledger import SignedEnvelope
 
-from .finalize import FinalLock
+from .finalize import FinalLock, _validate_declaration
 
 _HEX = re.compile(r"[a-f0-9]{64}\Z")
 
@@ -129,14 +130,31 @@ class NativeTerminalReceiptPublisher:
         signed_request: bytes,
         signed_result: bytes,
         frozen_bundle: bytes,
+        solver_stopped: Callable[[], bool],
     ) -> bytes:
         if type(lock) is not FinalLock or lock.task_id != self.task_id:
             raise ValueError("matching stopped parent final lock required")
+        final = self.evidence_dir / "final"
+        if (
+            final.is_symlink()
+            or not final.is_dir()
+            or final.resolve() != final
+            or lock.poc_path != final / "poc"
+            or lock.declaration_path != final / "agent-final.json"
+        ):
+            raise ValueError("controller final custody path required")
+        if not callable(solver_stopped) or solver_stopped() is not True:
+            raise RuntimeError("native solver must be stopped before terminal receipt")
         candidate = _bytes(lock.poc_path, "locked final candidate")
         declaration = _bytes(lock.declaration_path, "parent final declaration")
+        declared = _validate_declaration(declaration, self.task_id)
         if (
             len(candidate) != lock.byte_length
             or hashlib.sha256(candidate).hexdigest() != lock.sha256
+            or declared["sha256"] != lock.sha256
+            or declared["byte_length"] != lock.byte_length
+            or not isinstance(lock.declaration, Mapping)
+            or declared != dict(lock.declaration)
             or type(lock.parent_event_digest) is not str
             or _HEX.fullmatch(lock.parent_event_digest) is None
         ):

@@ -627,3 +627,16 @@ verifying the same intent. Local test-first failure injection covered a crash
 after the UI audit directory had already been created. This only prevents
 duplicate host submission. It does not establish that the provider received a
 request, and it is not yet wired into `TaskExecutor` or a live native run.
+
+The terminal receipt publisher now also requires an affirmative stopped-solver
+check at publication time, exact controller custody paths
+`evidence/final/{poc,agent-final.json}`, and the copied parent declaration's
+task, selected-by role, final flag, candidate digest and byte length to agree
+with the locked final. Test-first negative cases for a still-running solver,
+altered declaration, and an otherwise identical candidate outside final
+custody failed before the checks and pass afterward. This strengthens the
+receipt boundary but remains component evidence; no new live oracle has run.
+Fresh v25i native calibration is still waiting on an interactive Windows
+desktop. Computer Use refreshed and retried activation of the unique ChatGPT
+window in the next turn; both activations returned `failed to activate captured
+window`, so no task container/window was launched and no UI input was sent.
