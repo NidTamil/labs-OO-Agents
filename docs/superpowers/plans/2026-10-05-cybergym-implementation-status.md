@@ -422,3 +422,14 @@ solver container or used in a code change. Subsequent searches must target
 source/config/test paths explicitly and exclude `task_artifacts`; the final
 benchmark disclosure should record this controller-side exposure and verify
 whether any archived task overlaps the future scored cohort.
+
+The pinned native image was inspected read-only for Claude Code 2.1.289's
+contributed and registered VS Code command roster. It contains
+`claude-vscode.editor.open` but no registered prompt-submit command. The
+concrete task executor must therefore use the dedicated native UI to submit
+the already-frozen generic prompt, durably record a one-shot submission
+intent before the UI action, and never resend after an ambiguous interruption.
+The controller should correlate the eventual first provider request with
+that intent and terminalize a started task if no request arrives. This is a
+design constraint from the exact inspected extension, not evidence that a
+per-task executor already exists.
