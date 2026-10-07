@@ -83,8 +83,9 @@ INTERFACE_CONTRACTS = {
         "alone is insufficient."
     ),
     "native_parent_child_preflight": (
-        "Supply ProbeExecutor.mode=native from actual parent and local-child processes "
-        "in the same container before the first model request."
+        "Supply ProbeExecutor.mode=native from the actual parent and each local-child "
+        "context in the same container; gate the parent's first model request on its "
+        "parent report and each child's first model request on that child's report."
     ),
     "authenticated_model_connection": (
         "Mount ModelHTTPService on a listener that injects the opaque "

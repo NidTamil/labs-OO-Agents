@@ -398,3 +398,27 @@ should execute parent checks before the parent model request and child
 checks before each child's first model request, with model admission
 blocked until the corresponding context has passed. No new synthetic or
 practice attempt was started for this predicate-only fix.
+
+Commit `8fb24f5` is pushed and installed in the isolated SunChaser checkout.
+`run_preflight` now accepts either the parent context, one child context, or
+both in the legacy joint call; the report explicitly names the contexts and
+single-context evidence uses distinct exclusive files. This prevents a
+parent-only pass from being silently read as two-context evidence. The new
+tests failed against the prior API and pass after the change. The full Linux
+component suite at this commit passes 985 tests, with five skips and two
+deselections; JUnit XML:
+`/srv/sunchaser/runs/cybergym-components-20261007-v24y.xml`, SHA-256
+`50474603d2dec23fa05a2391490999e0949dfca60126216a56fc552a98240d62`.
+The native-readiness contract now states the enforceable ordering precisely:
+parent before its first request and each child before that child's first
+request. The next implementation step is to bind actual native hook process
+provenance and probe execution to each report, then make model admission
+depend on the matching report. No live run under this new source exists yet.
+
+Boundary audit note: a broad source-search command also matched a pre-existing
+archived `examples/cybergym/task_artifacts/` trajectory and displayed some
+historical target-specific text in the controller chat. It was not sent to a
+solver container or used in a code change. Subsequent searches must target
+source/config/test paths explicitly and exclude `task_artifacts`; the final
+benchmark disclosure should record this controller-side exposure and verify
+whether any archived task overlaps the future scored cohort.
