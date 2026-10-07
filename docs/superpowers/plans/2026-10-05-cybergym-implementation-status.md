@@ -382,3 +382,19 @@ value. The 19 preflight tests and changed-file Ruff checks pass locally.
 This fixes a necessary probe predicate, not the still-missing native
 parent/child probe executor or campaign task adapter. The active readiness
 heartbeat will continue until those are built and verified live.
+
+Commit `2bb3578` is pushed and checked out in the isolated SunChaser v24w
+worktree. The full Linux component suite at this commit passes 981 tests,
+with five skips and two deselections. Its JUnit XML is
+`/srv/sunchaser/runs/cybergym-components-20261007-v24x.xml` (SHA-256
+`bdcf37652d452f8f4f99e932f25fa2de56faa87cf669d1a1f4889bf9c87c4bf3`).
+Read-only inspection of the prior synthetic native-hook ledger shows one
+parent `SessionStart` and `SubagentStart` events for both registered child
+types before their tool activity. This establishes available lifecycle
+hooks, but their order relative to first parent/child model requests and
+their process provenance still need a live verified gate; hook presence
+alone is not a native preflight attestation. The preflight integration
+should execute parent checks before the parent model request and child
+checks before each child's first model request, with model admission
+blocked until the corresponding context has passed. No new synthetic or
+practice attempt was started for this predicate-only fix.
