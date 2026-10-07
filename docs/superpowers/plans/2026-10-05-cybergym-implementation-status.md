@@ -596,3 +596,16 @@ Use could list the unique Claude Code VS Code window but twice returned
 unlock the desktop if locked. Retry real no-provider calibration from a fresh
 root after window access is restored. No calibration artifact from this
 interrupted attempt may be used as a freeze input.
+
+Controller-only terminal receipt publishing is being implemented separately
+from the UI dispatch. It now verifies the kernel-signed Xeus evaluation request,
+the evaluator-signed result, canonical frozen submission bundle bytes, the
+bundle's named PoC file digest and size against the stopped parent's `FinalLock`,
+and the official scoring result before signing a campaign terminal receipt.
+The receipt is written once with fsync; conflicting retries fail closed.
+Failure/timeout receipts require an existing controller evidence file and hash
+its actual bytes. Local test-first cases cover idempotence, changed final,
+untrusted verdict, a separately signed verdict for a different candidate, and
+changed failure evidence. This is a receipt publisher only: the per-task
+`TaskExecutor` dispatch/recovery and real official evaluator integration still
+need completion. Unit fixtures are not official or synthetic attestations.
