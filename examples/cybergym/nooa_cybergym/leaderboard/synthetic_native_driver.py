@@ -168,16 +168,13 @@ class _PostOracleMemoryBudget:
                 self._audit.record({"event": "post_oracle_memory_model_denied"})
                 raise PermissionError("post-oracle memory budget exhausted")
             number = self._prior_requests + self._reserved + 1
-            if (
-                self._audit.record(
-                    {
-                        "event": "post_oracle_memory_model_reserved",
-                        "request_number": number,
-                        "allocation": "glm_and_memory_auxiliary",
-                    }
-                )
-                is not True
-            ):
+            if self._audit.record(
+                {
+                    "event": "post_oracle_memory_model_reserved",
+                    "request_number": number,
+                    "allocation": "glm_and_memory_auxiliary",
+                }
+            ) is not True:
                 raise PermissionError("post-oracle memory audit unavailable")
             self._reserved += 1
             return number
@@ -498,9 +495,7 @@ def run(
         )
         native_hooks = services.hooks.summary()
         if native_hooks["pending_tools"] != sum(
-            count
-            for name, count in stopped_dispositions.items()
-            if name != "sessions_closed_by_controller_stop"
+            count for name, count in stopped_dispositions.items() if name != "sessions_closed_by_controller_stop"
         ):
             raise RuntimeError("native hook terminal reconciliation differs from raw observations")
         context.audit.record({"event": "controller_stop_hook_dispositions", **stopped_dispositions})
