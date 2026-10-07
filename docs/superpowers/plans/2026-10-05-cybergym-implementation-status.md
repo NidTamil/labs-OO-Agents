@@ -433,3 +433,21 @@ The controller should correlate the eventual first provider request with
 that intent and terminalize a started task if no request arrives. This is a
 design constraint from the exact inspected extension, not evidence that a
 per-task executor already exists.
+
+Commits `84b357d` and `bc35f39` are pushed. The gateway now retains the
+kernel-observed TCP source port in its private request object, and the new
+controller-only Linux `/proc` observer can map that port to one established
+socket inode and one process descended from the task container init PID.
+It fails closed on an absent/ambiguous socket or a process outside that
+ancestry. The Linux unit tests pass, and the full component suite passes
+988 tests, with five skips and two deselections; JUnit XML:
+`/srv/sunchaser/runs/cybergym-components-20261007-v25a.xml`, SHA-256
+`48a8a1fb2968151f593da05c1080b0e7dd21eefaa046970888b5d68bf67b6bea`.
+A no-model, network-disabled container test resolved a real loopback client
+socket to its descendant PID and parent, then removed the container. A
+separate temporary internal bridge connection to its host gateway timed out
+under the existing firewall; its container/network were removed and no
+firewall rule was changed. The exact approved task-gateway path remains to
+be tested with this observer. Socket correlation alone does not verify the
+hook executable/source or constitute a preflight pass; next bind it to the
+frozen hook and per-role model-admission gate.
