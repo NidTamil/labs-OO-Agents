@@ -658,3 +658,6 @@ passed 10 with the POSIX-only worker test skipped. This is real evaluator
 component evidence, not a live native parent/child run or an official practice
 exercise. The campaign `TaskExecutor`, UI first-request correlation, refreshed
 capability freeze, and full native synthetic matching runs remain outstanding.
+The post-change Linux leaderboard suite passed 939 tests, five skipped, two
+deselected in 21.21 seconds. This broad regression still does not establish a
+native UI run or certification.
