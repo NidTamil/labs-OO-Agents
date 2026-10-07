@@ -340,3 +340,34 @@ campaign runner still has only a `TaskExecutor` protocol. Those are explicit
 practice-launch integration gaps. Neither a Docker-exec mount check nor a
 synthetic oracle result is an attestation that the native parent/child
 pre-model preflight or official per-task signed receipt adapter ran.
+
+Commit `2d43760` is pushed and checked out cleanly at
+`/srv/sunchaser/labs-OO-Agents-fuzzrt-v24w`. A test-first regression for
+the critic request schedule failed against the old loop (seven tool calls
+were dispatched) and passed after the change (only six; the seventh was
+withheld for the final advice window). All 10 advisory runtime tests pass on
+Windows; the full Linux component suite passes 980 tests with five skips and
+two deselections. The fresh JUnit XML is
+`/srv/sunchaser/runs/cybergym-components-20261007-v24w.xml` (SHA-256
+`6da600a07b462e71faa078e3a07e330fc55c3d6609a58b80a408320971ffb3fd`).
+The SPDX check passes all 1047 source Python files. The changed advisory
+source is pinned in the v24w inventory: registry
+`d3c272483cba45c7e18699d5c1fbbffb96687eaab519aff8511001a2cf4b6e23`,
+bindings `06d38074d97398b76433b56e8085c4e74db109fb2731013e231fb7c5102a0e69`,
+controller freeze
+`5298af05c5c90575f1b73539da8a97128e5d5b38351d49aa1a179c28a3191a69`.
+
+The first v24w native `synthetic:length-header` task reached terminal with
+`oracle_true=true`, `boundary_failed=false`, a controller GBrain episode
+after the signed verdict, one final selection and two registered children.
+Independent verification checked its Ed25519 signature, exact candidate and
+freeze binding, 155 sequential audit records with tail
+`1bf5b1d5c3bbbf157c5f5eb2303ed2876daa66396eb208991870a383198b4a21`,
+and oracle-before-memory order. DeepSeek reconnaissance and critic completed;
+the critic needed four responses, including one protocol repair, so the
+advice-reserve denial path has unit-test rather than live evidence so far.
+The isolated window, tunnel and container were removed. This is one clean
+v24w run, not the full matching-repeat set. Remaining integration includes
+real native parent/child preflight and a concrete idempotent per-task
+executor with signed terminal receipts before the two authorised practice
+tasks can be launched. The scored campaign remains unapproved and unstarted.
