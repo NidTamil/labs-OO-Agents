@@ -90,7 +90,14 @@ class PowerShellNativeUi:
     -RemoteHost <h>``.
     """
 
-    def __init__(self, script: str | None = None, *, pwsh: str = "pwsh") -> None:
+    def __init__(
+        self,
+        script: str | None = None,
+        *,
+        pwsh: str = "pwsh",
+        code_exe: str | None = None,
+        tunnel_known_hosts: str | None = None,
+    ) -> None:
         resolved = script or os.environ.get("CYBERGYM_NATIVE_UI_SCRIPT")
         if not resolved:
             raise ValueError(
@@ -98,6 +105,13 @@ class PowerShellNativeUi:
             )
         self._script = resolved
         self._pwsh = pwsh
+        if any(
+            value is not None and (type(value) is not str or not value)
+            for value in (code_exe, tunnel_known_hosts)
+        ):
+            raise ValueError("pinned native UI paths must be nonempty strings")
+        self._code_exe = code_exe
+        self._tunnel_known_hosts = tunnel_known_hosts
 
     def _run(self, *args: str) -> None:
         subprocess.run(
@@ -109,15 +123,32 @@ class PowerShellNativeUi:
         self._run("-Reap", "-RunId", run_id)
 
     def open(self, run_id: str, task_id: str, remote_host: str, ssh_port: int) -> None:
-        self._run(
-            "-Open", "-RunId", run_id, "-TaskId", task_id,
-            "-RemoteHost", remote_host, "-Port", str(ssh_port),
-        )
+        args = [
+            "-Open",
+            "-RunId",
+            run_id,
+            "-TaskId",
+            task_id,
+            "-RemoteHost",
+            remote_host,
+            "-Port",
+            str(ssh_port),
+        ]
+        if self._code_exe is not None:
+            args.extend(("-CodeExe", self._code_exe))
+        if self._tunnel_known_hosts is not None:
+            args.extend(("-TunnelKnownHosts", self._tunnel_known_hosts))
+        self._run(*args)
 
     def close(self, run_id: str, task_id: str, remote_host: str) -> None:
         self._run(
-            "-Close", "-RunId", run_id, "-TaskId", task_id,
-            "-RemoteHost", remote_host,
+            "-Close",
+            "-RunId",
+            run_id,
+            "-TaskId",
+            task_id,
+            "-RemoteHost",
+            remote_host,
         )
 
 

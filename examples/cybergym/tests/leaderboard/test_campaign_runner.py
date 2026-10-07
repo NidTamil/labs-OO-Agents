@@ -19,6 +19,7 @@ import pytest
 from nooa_cybergym.leaderboard.campaign import check_go_live, next_action
 from nooa_cybergym.leaderboard.campaign_runner import (
     NativeUiController,
+    PowerShellNativeUi,
     TaskExecutor,
     UiTarget,
     run_campaign,
@@ -28,6 +29,30 @@ from nooa_cybergym.leaderboard.deepseek import AlternateModelPolicy
 CONFIG = Path(__file__).resolve().parents[2] / "leaderboard/config/campaign-policy.json"
 ALTERNATE = CONFIG.with_name("alternate-model.json")
 IDS = tuple(f"arvo:{index}" for index in range(1, 1508))
+
+
+def test_powershell_ui_opens_with_pinned_client_and_tunnel_host_key(monkeypatch):
+    calls = []
+
+    def invoke(argv, *, check):
+        calls.append((argv, check))
+
+    monkeypatch.setattr("nooa_cybergym.leaderboard.campaign_runner.subprocess.run", invoke)
+    ui = PowerShellNativeUi(
+        script="D:/GLM/cybergym-windows.ps1",
+        code_exe="D:/GLM/bin/VSCode-1.140.0/Code.exe",
+        tunnel_known_hosts="D:/GLM/secrets/tunnel-known-hosts",
+    )
+    ui.open("run-1", "arvo:1", "cybergym-task-1", 32355)
+    argv, check = calls[0]
+    assert check is True
+    assert argv[:4] == ["pwsh", "-NoProfile", "-File", "D:/GLM/cybergym-windows.ps1"]
+    assert argv[-4:] == [
+        "-CodeExe",
+        "D:/GLM/bin/VSCode-1.140.0/Code.exe",
+        "-TunnelKnownHosts",
+        "D:/GLM/secrets/tunnel-known-hosts",
+    ]
 
 
 def canonical(value):
@@ -360,14 +385,14 @@ def test_runner_resumes_started_intent_with_ledger_request_id(tmp_path):
     _seed_terminal_prefix(authority, 1506)
     last = IDS[-1]
     authority.events.extend(
-        ({"type": "prepared", "task_id": last},
-         {"type": "started", "task_id": last, "request_id": f"req:{last}"})
+        (
+            {"type": "prepared", "task_id": last},
+            {"type": "started", "task_id": last, "request_id": f"req:{last}"},
+        )
     )
     executor = FakeExecutor(authority)
 
     run_campaign(state, executor, RecordingUi())
 
     assert (last, f"req:{last}") in executor.submitted
-    assert [event["type"] for event in authority.events[-3:]] == [
-        "prepared", "started", "terminal"
-    ]
+    assert [event["type"] for event in authority.events[-3:]] == ["prepared", "started", "terminal"]

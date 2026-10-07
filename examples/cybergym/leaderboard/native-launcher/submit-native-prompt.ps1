@@ -5,7 +5,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ProfileDirectory,
     [Parameter(Mandatory = $true)][string]$ControllerReceipt,
     [Parameter(Mandatory = $true)][string]$LaunchId,
-    [Parameter(Mandatory = $true)][string]$AuditDirectory
+    [Parameter(Mandatory = $true)][string]$AuditDirectory,
+    [ValidateRange(1, 120)][int]$ReadyTimeoutSeconds = 120
 )
 
 # Claude Code 2.1.289 places initialPrompt in its webview composer. Its public
@@ -37,23 +38,25 @@ if (
     throw 'Controller launch receipt is not the expected pre-model reservation'
 }
 
-$title = "Claude Code - workspace [SSH: $RemoteAlias] - Visual Studio Code"
-$windows = @(Get-Process Code -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -ceq $title })
-if ($windows.Count -ne 1) {
-    throw 'Exactly one isolated Claude composer window is required'
-}
-$window = $windows[0]
-$process = Get-CimInstance Win32_Process -Filter "ProcessId=$($window.Id)"
-if (
-    $null -eq $process -or
-    [string]::IsNullOrWhiteSpace($process.CommandLine) -or
-    -not $process.CommandLine.Contains($ProfileDirectory, [StringComparison]::OrdinalIgnoreCase)
-) {
-    throw 'Claude window is not owned by the pinned isolated VS Code profile'
-}
-
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+$title = "Claude Code - workspace [SSH: $RemoteAlias] - Visual Studio Code"
+# Remote-SSH and the webview load asynchronously. Wait only before the
+# durable one-shot UI reservation; a post-reservation retry could click twice.
+$readyDeadline = [DateTime]::UtcNow.AddSeconds($ReadyTimeoutSeconds)
+while ($true) {
+try {
+    $windows = @(Get-Process Code -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -ceq $title })
+    if ($windows.Count -eq 0) { throw 'Claude UI not ready: window' }
+    if ($windows.Count -ne 1) { throw 'Exactly one isolated Claude composer window is required' }
+    $window = $windows[0]
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($window.Id)"
+    if ($null -eq $process -or [string]::IsNullOrWhiteSpace($process.CommandLine)) {
+        throw 'Claude UI not ready: window process'
+    }
+    if (-not $process.CommandLine.Contains($ProfileDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Claude window is not owned by the pinned isolated VS Code profile'
+    }
 $root = [System.Windows.Automation.AutomationElement]::FromHandle($window.MainWindowHandle)
 $documents = $root.FindAll(
     [System.Windows.Automation.TreeScope]::Descendants,
@@ -65,6 +68,7 @@ $documents = $root.FindAll(
             [System.Windows.Automation.AutomationElement]::NameProperty, 'Claude Code')
     ))
 )
+if ($documents.Count -eq 0) { throw 'Claude UI not ready: document' }
 if ($documents.Count -ne 1) { throw 'Exactly one accessible Claude Code document required' }
 $document = $documents[0]
 $inputs = $document.FindAll(
@@ -77,11 +81,12 @@ $inputs = $document.FindAll(
             [System.Windows.Automation.AutomationElement]::NameProperty, 'Message input')
     ))
 )
+if ($inputs.Count -eq 0) { throw 'Claude UI not ready: message input' }
 if ($inputs.Count -ne 1) { throw 'Exactly one Claude message input required' }
 $valuePattern = $null
 if (-not $inputs[0].TryGetCurrentPattern(
         [System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
-    throw 'Claude message input value is inaccessible'
+    throw 'Claude UI not ready: message input value'
 }
 $observedPromptSha256 = [Convert]::ToHexString(
     [System.Security.Cryptography.SHA256]::HashData(
@@ -89,7 +94,7 @@ $observedPromptSha256 = [Convert]::ToHexString(
     )
 ).ToLowerInvariant()
 if ($observedPromptSha256 -cne $receipt.prompt_sha256) {
-    throw 'Visible Claude prompt differs from reserved native launch'
+    throw 'Claude UI not ready: reserved prompt'
 }
 $buttons = $document.FindAll(
     [System.Windows.Automation.TreeScope]::Descendants,
@@ -101,13 +106,25 @@ $buttons = $document.FindAll(
             [System.Windows.Automation.AutomationElement]::NameProperty, 'Send message')
     ))
 )
-if ($buttons.Count -ne 1 -or -not $buttons[0].Current.IsEnabled) {
-    throw 'Exactly one enabled Claude Send button required'
-}
+if ($buttons.Count -eq 0) { throw 'Claude UI not ready: Send button' }
+if ($buttons.Count -ne 1) { throw 'Exactly one Claude Send button required' }
+if (-not $buttons[0].Current.IsEnabled) { throw 'Claude UI not ready: enabled Send button' }
 $invokePattern = $null
 if (-not $buttons[0].TryGetCurrentPattern(
         [System.Windows.Automation.InvokePattern]::Pattern, [ref]$invokePattern)) {
-    throw 'Claude Send button lacks an accessible Invoke action'
+    throw 'Claude UI not ready: Send Invoke action'
+}
+    break
+} catch {
+    if ($_.Exception.Message.StartsWith('Claude UI not ready:', [StringComparison]::Ordinal)) {
+        if ([DateTime]::UtcNow -ge $readyDeadline) {
+            throw "Claude composer did not become ready within $ReadyTimeoutSeconds seconds"
+        }
+        Start-Sleep -Milliseconds 750
+        continue
+    }
+    throw
+}
 }
 
 $parent = Split-Path -Parent $AuditDirectory
