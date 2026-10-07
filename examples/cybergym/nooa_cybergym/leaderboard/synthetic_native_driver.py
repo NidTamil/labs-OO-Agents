@@ -438,6 +438,7 @@ def run(
                 structural_terms=terms,
                 vulnerable_recipe=_recipe(),
                 captured_schemas=captured_schemas,
+                workspace_manifest=stage.evidence / "task-manifest.json",
                 hook_process_verifier=frozen_hook_verifier(
                     inspect=client.api.inspect_container(container.id),
                     peer=peer,

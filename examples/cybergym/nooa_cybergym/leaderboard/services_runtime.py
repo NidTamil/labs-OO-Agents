@@ -38,6 +38,7 @@ from .memory_runtime import build_memory_gateway, build_signed_memory_bundle
 from .model_gateway import GatewayAudit, ModelPolicy
 from .native_hook_runtime import NativeHookCollector, native_hook_handler
 from .native_launcher import NativeLaunchAuthority, native_launch_handler
+from .native_preflight_gate import NativePreflightAdmission
 from .native_runtime import NativeModelDispatcher
 from .native_tool_runtime import NativeToolController
 from .native_workflows import frozen_workflows, reserve_workflow
@@ -182,6 +183,7 @@ class NativeServices:
         structural_terms: tuple[str, ...],
         vulnerable_recipe: VulnerableRecipe,
         captured_schemas: Mapping[str, str],
+        workspace_manifest: Path,
         hook_process_verifier,
         compile_commands=(),
         memory_token_counter=_uncertified_token_counter,
@@ -258,6 +260,14 @@ class NativeServices:
                 launch_id=launch_id,
                 capacity=self.capacity,
             )
+            self.preflight = NativePreflightAdmission(
+                container_id=peer.container_id,
+                policy=network_policy,
+                workspace_manifest=workspace_manifest,
+                evidence_root=self.evidence,
+                observed_role=self.hooks.model_role,
+                audit=self.audit.record,
+            )
             parent_tools, child_tools = set(), set()
             for binding in capabilities.bindings:
                 if binding.native_name.startswith("advisory__"):
@@ -283,7 +293,7 @@ class NativeServices:
                 parent_tools=frozenset(parent_tools),
                 child_tools=frozenset(child_tools),
                 captured_schemas=captured_schemas,
-                observed_role=self.hooks.model_role,
+                observed_role=self.preflight.model_role,
                 authorize=self._authorize,
                 redact=self.audit.redact,
             )

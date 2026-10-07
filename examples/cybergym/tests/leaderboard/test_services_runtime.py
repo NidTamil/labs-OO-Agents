@@ -36,6 +36,7 @@ from xeus_cybergym.canonical import canonical_json
 from .test_capability_runtime import TASK, bundle
 from .test_memory_runtime import NativePeer, authority
 from .test_model_service import CONFIG, PRIMARY_CHUNKS, StreamResponse, Transport
+from .test_native_preflight_gate import _report
 from .test_native_tool_runtime import model_request
 
 
@@ -116,6 +117,8 @@ def assembled(tmp_path):
     )
     for path in (evidence, output, assets):
         path.mkdir(mode=0o700, parents=True)
+    workspace_manifest = evidence / "task-manifest.json"
+    workspace_manifest.write_bytes(b'{"synthetic":true}')
     context = TaskRuntimeContext(
         evidence,
         task_id=TASK,
@@ -209,6 +212,7 @@ def assembled(tmp_path):
             ("/usr/bin/true",), ("/tmp/vulnerable", "{candidate}"), "/workspace/src", 30, 30
         ),
         "captured_schemas": captured_schemas(built.bindings),
+        "workspace_manifest": workspace_manifest,
         "hook_process_verifier": lambda request: None,
         "model_transport": model,
         "deepseek_transport": CancellableDeepSeekTransport(
@@ -285,6 +289,16 @@ def test_all_controllers_share_context_and_real_native_model_lifecycle(assembled
                 }
             ),
         }
+    )
+    assert service.handlers["model-gateway"](model).status == 403
+    service.preflight.record(
+        _report(
+            assembled.args["evidence"],
+            context="parent",
+            container_id=assembled.peer.container_id,
+            manifest=assembled.args["workspace_manifest"],
+            policy=service.preflight.policy,
+        )
     )
     reply = service.handlers["model-gateway"](model)
     assert reply.status == 200
