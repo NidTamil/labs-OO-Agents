@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from nooa_cybergym.leaderboard.container import build_container_kwargs
 from nooa_cybergym.leaderboard.runtime_config import load_runtime_config
 from nooa_cybergym.leaderboard.synthetic_native_driver import (
     _memory_guard_binding,
@@ -23,11 +24,26 @@ from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier, SignatureVerifi
 from .test_runtime_config import prepared  # noqa: F401 - register the fixture
 
 
-def test_vulnerable_recipe_runs_binary_from_executable_source_mount():
+def test_vulnerable_recipe_runs_binary_from_output_bind_mount(tmp_path):
     recipe = _recipe()
     binary = recipe.test_argv[0]
-    assert binary.startswith("/workspace/src/")
+    assert binary.startswith("/workspace/output/")
     assert recipe.build_argv[recipe.build_argv.index("-o") + 1] == binary
+    workspace = tmp_path / "workspace"
+    output = workspace / "output"
+    output.mkdir(parents=True)
+    kwargs = build_container_kwargs(
+        image="sha256:fixture",
+        workspace=workspace,
+        output=output,
+        network="isolated",
+        ssh_port=38377,
+    )
+    assert kwargs["volumes"][str(output.resolve())] == {
+        "bind": "/workspace/output",
+        "mode": "rw",
+    }
+    assert "/workspace/output" not in kwargs["tmpfs"]
 
 
 def test_driver_rejects_official_task_before_creating_workspace(prepared):  # noqa: F811
