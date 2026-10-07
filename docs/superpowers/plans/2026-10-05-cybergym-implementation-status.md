@@ -451,3 +451,25 @@ firewall rule was changed. The exact approved task-gateway path remains to
 be tested with this observer. Socket correlation alone does not verify the
 hook executable/source or constitute a preflight pass; next bind it to the
 frozen hook and per-role model-admission gate.
+
+Commit `990f91f` is pushed and checked out cleanly in the isolated SunChaser
+worktree. The socket observer now has a separate fail-closed native-hook
+identity verifier: it requires the task agent UID, the container's PID/mount/
+network namespaces, the exact managed Node command, the frozen Node and
+root-owned hook digests, an open observed socket, and stable immediate parent.
+Read-only inspection of the pinned native image established the installed
+hook path under the `xeus.sunchaser-cybergym-launcher-0.1.0` extension and
+SHA-256 `8d20c87cb7083451fd1ecf2425cf05e3b23d0828696f038e0043c487a348e2a3`;
+the installed Node SHA-256 is
+`fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48`.
+A test-first Linux regression failed before the verifier existed and now passes,
+including command, namespace, UID, digest, and socket mutation cases. Changed
+files pass Ruff check/format and the full Linux component suite passes 989
+tests with five skips and two deselections; JUnit XML
+`/srv/sunchaser/runs/cybergym-components-20261007-v25c.xml` has SHA-256
+`458b31948bc87144cf6503a39145167c6d311c25786b2ff702365b2940018bd9`.
+This verifier is not yet wired to the gateway, does not prove the hook was
+invoked by Claude rather than executed manually, and is not a preflight pass.
+The next gate is actual managed-hook provenance plus per-role probe execution
+and model admission, followed by the idempotent task executor and fresh
+matching synthetic runs.
