@@ -73,6 +73,7 @@ _MOUNTS = (
     "workspace_readonly",
     "output_writable",
     "src_tmpfs",
+    "src_executable",
     "home_tmpfs",
     "tmp_tmpfs",
     "no_host_processes",
@@ -107,6 +108,7 @@ _MOUNT_SCRIPT = (
     "checks={'workspace_readonly':lambda:'ro' in entries['/workspace'][0],"
     "'output_writable':lambda:'rw' in entries['/workspace/output'][0],"
     "'src_tmpfs':lambda:entries['/workspace/src'][1]=='tmpfs',"
+    "'src_executable':lambda:'noexec' not in entries['/workspace/src'][0],"
     "'home_tmpfs':lambda:entries['/home/agent'][1]=='tmpfs',"
     "'tmp_tmpfs':lambda:entries['/tmp'][1]=='tmpfs',"
     "'no_host_processes':lambda:open('/proc/1/comm').read().strip()=='sshd'}; "

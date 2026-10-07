@@ -69,6 +69,7 @@ def _positive_results():
                 "workspace_readonly",
                 "output_writable",
                 "src_tmpfs",
+                "src_executable",
                 "home_tmpfs",
                 "tmp_tmpfs",
                 "no_host_processes",
@@ -87,6 +88,14 @@ def test_preflight_fails_closed_on_any_forbidden_path_or_route():
     assert report.passed is False
     assert "/var/run/docker.sock" in report.failures
     assert "external-target-patch" in report.failures
+
+
+def test_preflight_requires_executable_source_mount_for_fuzzing():
+    result = _positive_results()
+    result["mounts"]["src_executable"] = False
+    report = evaluate_probe_results(result, NetworkPolicy.load(POLICY_PATH))
+    assert not report.passed
+    assert "src_executable" in report.failures
 
 
 def test_missing_probe_or_credential_in_child_environment_fails_closed():

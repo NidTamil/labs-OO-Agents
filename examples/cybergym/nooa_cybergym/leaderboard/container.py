@@ -150,7 +150,8 @@ def build_container_kwargs(
             "/tmp": "rw,noexec,nosuid,size=4g",
             "/run": "rw,nosuid,size=64m",
             "/home/agent": "rw,nosuid,size=8g",
-            "/workspace/src": "rw,nosuid,nodev,size=12g",
+            # Docker defaults this tmpfs to noexec unless exec is explicit.
+            "/workspace/src": "rw,exec,nosuid,nodev,size=12g",
         },
         "volumes": volumes,
         "environment": environment,

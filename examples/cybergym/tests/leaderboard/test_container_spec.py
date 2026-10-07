@@ -113,7 +113,7 @@ def test_container_has_only_reviewed_host_interfaces(tmp_path: Path) -> None:
         "/tmp": "rw,noexec,nosuid,size=4g",
         "/run": "rw,nosuid,size=64m",
         "/home/agent": "rw,nosuid,size=8g",
-        "/workspace/src": "rw,nosuid,nodev,size=12g",
+        "/workspace/src": "rw,exec,nosuid,nodev,size=12g",
     }
     assert kwargs["volumes"] == {
         str((tmp_path / "workspace").resolve()): {"bind": "/workspace", "mode": "ro"},
