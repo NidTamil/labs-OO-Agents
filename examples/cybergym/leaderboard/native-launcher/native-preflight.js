@@ -22,7 +22,7 @@ async function runNativePreflight(manifest,context,agentId,post,spawn=spawnSync)
   for(const probe of issued.probes) {
     if(!probe||typeof probe.name!=='string'||!PROBE.test(probe.name)||seen.has(probe.name)||
         !Array.isArray(probe.command)||probe.command.length<3||probe.command.length>8||
-        probe.command[0]!=='python3'||probe.command[1]!=='-c'||
+        probe.command[0]!=='/usr/bin/python3'||probe.command[1]!=='-c'||
         probe.command.some(part=>typeof part!=='string'||part.length>16384||part.includes('\0'))) {
       throw Error('native preflight probe invalid');
     }

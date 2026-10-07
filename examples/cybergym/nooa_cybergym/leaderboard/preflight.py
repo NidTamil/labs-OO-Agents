@@ -236,7 +236,7 @@ def _specs(
                 context,
                 "forbidden_paths",
                 path,
-                ("python3", "-c", _PATH_SCRIPT, path, "0"),
+                ("/usr/bin/python3", "-c", _PATH_SCRIPT, path, "0"),
             )
         )
     for path in _REQUIRED_PATHS:
@@ -246,10 +246,10 @@ def _specs(
                 context,
                 "required_paths",
                 path,
-                ("python3", "-c", _PATH_SCRIPT, path, "1"),
+                ("/usr/bin/python3", "-c", _PATH_SCRIPT, path, "1"),
             )
         )
-    specs.append(ProbeSpec("uid", context, "uid", "uid", ("python3", "-c", _UID_SCRIPT)))
+    specs.append(ProbeSpec("uid", context, "uid", "uid", ("/usr/bin/python3", "-c", _UID_SCRIPT)))
     for endpoint in sorted(policy.allowed_logical_endpoints):
         specs.append(
             ProbeSpec(
@@ -257,7 +257,7 @@ def _specs(
                 context,
                 "network",
                 endpoint,
-                ("python3", "-c", _ALLOWED_ROUTE_SCRIPT, f"http://{endpoint}/health"),
+                ("/usr/bin/python3", "-c", _ALLOWED_ROUTE_SCRIPT, f"http://{endpoint}/health"),
             )
         )
     for route in sorted(policy.required_denied_routes | {"direct-provider-api"}):
@@ -269,19 +269,19 @@ def _specs(
                 context,
                 "forbidden_routes",
                 route,
-                ("python3", "-c", _DENIED_ROUTE_SCRIPT, _DENIED_ROUTE_URLS[route]),
+                ("/usr/bin/python3", "-c", _DENIED_ROUTE_SCRIPT, _DENIED_ROUTE_URLS[route]),
             )
         )
     for name in _FORBIDDEN_ENV:
         specs.append(
             ProbeSpec(
-                f"env:{name}", context, "forbidden_env", name, ("python3", "-c", _ENV_SCRIPT, name)
+                f"env:{name}", context, "forbidden_env", name, ("/usr/bin/python3", "-c", _ENV_SCRIPT, name)
             )
         )
     for name in _MOUNTS:
         specs.append(
             ProbeSpec(
-                f"mount:{name}", context, "mounts", name, ("python3", "-c", _MOUNT_SCRIPT, name)
+                f"mount:{name}", context, "mounts", name, ("/usr/bin/python3", "-c", _MOUNT_SCRIPT, name)
             )
         )
     specs.append(
@@ -290,7 +290,7 @@ def _specs(
             context,
             "registered_tools",
             "clangd",
-            ("python3", "-c", _TOOL_SCRIPT, "clangd"),
+            ("/usr/bin/python3", "-c", _TOOL_SCRIPT, "clangd"),
         )
     )
     return tuple(specs)

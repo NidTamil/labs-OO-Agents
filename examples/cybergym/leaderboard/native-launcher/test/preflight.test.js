@@ -10,8 +10,8 @@ test('native preflight executes exact controller probes with no captured output'
   const post=async(url,body)=>{
     calls.push([url,body]);
     if(url.endsWith('/begin')) return {nonce:'a'.repeat(32),probes:[
-      {name:'uid',command:['python3','-c','raise SystemExit(0)']},
-      {name:'tool:clangd',command:['python3','-c','raise SystemExit(0)']},
+      {name:'uid',command:['/usr/bin/python3','-c','raise SystemExit(0)']},
+      {name:'tool:clangd',command:['/usr/bin/python3','-c','raise SystemExit(0)']},
     ]};
     return {passed:true,report_sha256:'b'.repeat(64)};
   };
@@ -31,7 +31,7 @@ test('native preflight executes exact controller probes with no captured output'
 test('native preflight never admits an incomplete or failed controller receipt',async()=>{
   const manifest={run_id:'r1',task_id:'synthetic:1',launch_id:'l1',native_launch_url:'http://registered-tool-gateway/native-launch'};
   const post=async(url)=>url.endsWith('/begin')
-    ? {nonce:'a'.repeat(32),probes:[{name:'uid',command:['python3','-c','pass']}]}
+    ? {nonce:'a'.repeat(32),probes:[{name:'uid',command:['/usr/bin/python3','-c','pass']}]}
     : {passed:false};
   await assert.rejects(runNativePreflight(manifest,'parent',null,post,()=>({status:1})),/preflight/);
 });

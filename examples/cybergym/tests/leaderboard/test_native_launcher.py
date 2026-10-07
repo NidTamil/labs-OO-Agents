@@ -188,6 +188,22 @@ def test_events_are_bound_to_one_reserved_launch_and_never_assert_started(
         authority.record({**event, "error": "secret"})
 
 
+@pytest.mark.skipif(os.name != "posix", reason="controller authority requires POSIX directory fsync")
+def test_failed_parent_preflight_has_one_durable_terminal_launch_event(subject, manifest, tmp_path):
+    envelope, keys = signed(manifest)
+    authority = subject.NativeLaunchAuthority.from_signed_envelope(envelope, keys, tmp_path)
+    authority.reserve(receipt(manifest))
+    event = {
+        key: receipt(manifest)[key]
+        for key in ("schema_version", "run_id", "task_id", "launch_id", "manifest_sha256", "timestamp")
+    }
+    event["event"] = "preflight_failed"
+    assert authority.record(event)["status"] == "recorded"
+    assert json.loads((authority.launch_dir / "command-result.json").read_bytes()) == event
+    with pytest.raises(FileExistsError):
+        authority.record({**event, "event": "command_returned"})
+
+
 def test_python_and_javascript_frozen_prompt_match(subject):
     import shutil
     import subprocess

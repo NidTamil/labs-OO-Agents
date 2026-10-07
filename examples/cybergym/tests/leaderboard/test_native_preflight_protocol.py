@@ -79,6 +79,7 @@ def test_native_protocol_runs_one_exact_parent_report_before_model_admission(tmp
     issued = json.loads(started.body)
     assert len(issued["nonce"]) == 32
     assert len(issued["probes"]) > 30
+    assert all(item["command"][0] == "/usr/bin/python3" for item in issued["probes"])
     assert protocol(request("begin", identity)).status == 403
     assert gate.model_role("session", None) is None
     submitted = protocol(

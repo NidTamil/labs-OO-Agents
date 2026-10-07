@@ -315,7 +315,9 @@ class NativeLaunchAuthority:
 
     def record(self, event: Mapping[str, Any]) -> dict[str, str]:
         self._check_event(event)
-        if event["event"] not in {"command_returned", "command_failed", "reconnect_observed"}:
+        if event["event"] not in {
+            "command_returned", "command_failed", "preflight_failed", "reconnect_observed"
+        }:
             raise ValueError("unsupported native launcher event")
         if not (self.launch_dir / "launcher-receipt.json").is_file():
             raise RuntimeError("native launch not reserved")
