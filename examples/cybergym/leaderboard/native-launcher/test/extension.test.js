@@ -44,6 +44,7 @@ if (fs.existsSync(subject)) {
         reserve: async receipt => {if (claimed) throw Error('already reserved'); assert.equal(calls.length, 0); claimed = true; receipts.push(receipt); return {status: 'reserved', launch_id: manifest.launch_id};},
         record: async event => events.push(event),
       },
+      preflight: async () => {assert.equal(claimed,true);assert.equal(calls.length,0);},
       writeReceipt: async receipt => {assert.equal(calls.length, 0); assert.equal(claimed, true);},
       now: () => '2026-10-05T00:00:00.000Z',
     };
@@ -83,6 +84,13 @@ if (fs.existsSync(subject)) {
     await assert.rejects(launchCertifiedTask(f.options), /disk full/);
     assert.equal(f.calls.length, 0);
     await assert.rejects(launchCertifiedTask(f.options), /already reserved/);
+  });
+  test('parent preflight failure consumes reservation before any model command', async () => {
+    const f=fixture();f.options.preflight=async()=>{throw Error('probe failed');};
+    await assert.rejects(launchCertifiedTask(f.options),/preflight failed/);
+    assert.equal(f.calls.length,0);
+    assert.equal(f.events[0].event,'preflight_failed');
+    await assert.rejects(launchCertifiedTask(f.options),/already launched/);
   });
   test('command failure is recorded once without logging its secret-bearing error', async () => {
     const f = fixture(); f.options.vscode.commands.executeCommand = async () => {f.calls.push('attempt'); throw Error('secret-token');};

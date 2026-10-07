@@ -30,6 +30,7 @@ def main() -> None:
         "package.json",
         "extension.js",
         "native-hook.js",
+        "native-preflight.js",
         "hooks-settings.json",
         "machine-settings.json",
         "README.md",

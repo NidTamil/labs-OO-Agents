@@ -34,4 +34,16 @@ if(fs.existsSync(file)) {
     assert.deepEqual(calls[0][1].hook_input,raw);
     await assert.rejects(processNativeHook(raw,manifest,async()=>({recorded:false})),/result custody/);
   });
+  test('SubagentStart preflights its own child before lifecycle custody',async()=>{
+    const raw={session_id:'session-1',hook_event_name:'SubagentStart',agent_id:'agent-1',agent_type:'cybergym-recon',cwd:'/workspace',transcript_path:'/home/agent/.claude/projects/-workspace/session-1.jsonl'};
+    const manifest={run_id:'r1',task_id:'synthetic:1',launch_id:'l1',native_launch_url:'http://registered-tool-gateway/native-launch'};
+    const order=[];
+    const post=async(url)=>{order.push(url.endsWith('/hooks')?'hook':'other');return {status:'recorded'};};
+    const preflight=async(_manifest,context,agentId)=>{assert.equal(context,'child');assert.equal(agentId,'agent-1');order.push('preflight');};
+    await processNativeHook(raw,manifest,post,preflight);
+    assert.deepEqual(order,['preflight','hook']);
+    order.length=0;
+    await assert.rejects(processNativeHook(raw,manifest,post,async()=>{throw Error('preflight failed');}),/preflight/);
+    assert.deepEqual(order,[]);
+  });
 }

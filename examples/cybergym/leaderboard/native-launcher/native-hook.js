@@ -1,6 +1,7 @@
 'use strict';
 const fs=require('node:fs'); const crypto=require('node:crypto'); const path=require('node:path');
 const {canonical,verifyEnvelope,postJson}=require('./extension');
+const {runNativePreflight}=require('./native-preflight');
 const EVENTS=new Set(['SessionStart','SessionEnd','SubagentStart','SubagentStop','PreToolUse','PostToolUse','PostToolUseFailure','Stop','StopFailure']);
 function text(value,optional=false) {if(value==null&&optional)return null;if(typeof value!=='string'||!/^[A-Za-z0-9][A-Za-z0-9:_.\[\]/-]{0,255}$/.test(value))throw Error('invalid hook identifier');return value;}
 function transcript(value,optional=false) {if(value==null&&optional)return null;if(typeof value!=='string'||value.length>1024||!value.startsWith('/home/agent/.claude/projects/')||!value.endsWith('.jsonl')||path.posix.normalize(value)!==value||value.split('/').includes('..')||!/^[A-Za-z0-9/_.-]+$/.test(value))throw Error('invalid hook transcript path');return value;}
@@ -26,9 +27,10 @@ async function main() {
     } else {process.stderr.write('Native telemetry is unavailable.\n');process.exitCode=2;}
   }
 }
-async function processNativeHook(raw,manifest,post=postJson) {
+async function processNativeHook(raw,manifest,post=postJson,preflight=runNativePreflight) {
   const identity={schema_version:1,run_id:manifest.run_id,task_id:manifest.task_id,launch_id:manifest.launch_id};
   const projection=projectHookInput(raw);
+  if(raw.hook_event_name==='SubagentStart') await preflight(manifest,'child',projection.agent_id,post);
   let decision;
   if(raw.hook_event_name==='PreToolUse') {
     const result=await post('http://registered-tool-gateway/native-tools/authorize',{...identity,hook_input:raw});
