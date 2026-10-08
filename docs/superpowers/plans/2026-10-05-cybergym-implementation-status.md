@@ -1732,3 +1732,46 @@ changes frozen fixture bytes, so v26o cannot be reused for certification;
 a new exact-source inventory/freeze and fresh repeated live synthetic runs
 are required. The local runtime-config test passed 21 with one skip using a
 D: basetemp. No official practice or scored task has been started.
+
+## v26p exact-source freeze and first live fixture (2026-10-09)
+
+The fixture correction is commit
+`534ba613b588dd76dafcb21423fb97cef7faeca6` on the pushed review branch.
+Its isolated clean SunChaser checkout is
+`/srv/sunchaser/labs-OO-Agents-cert-v26p`. The exact-source Linux leaderboard
+suite passed 990 tests, with five skipped and two deselected; JUnit SHA-256
+is `da1f9da934183d7bd21c1dc3e9c43f2479429e92e15b9ad64c16ed9136659e0b`.
+The 35-entry v26p inventory registry SHA-256 is
+`322e8a867ee46fa1280aff3c0a3b6c3ff11483913161f78d6bf47c2aac3a74dc`;
+bindings SHA-256 is
+`4d4e8887050a991b1eaf7157136cd6e7bf896a38dcc87d853370807871072b32`.
+The first-repeat controller config file SHA-256 is
+`2d2e24756d20c24052f60b41f8eeb735048e2e1ede917bef892973341e1195df`;
+loaded freeze SHA-256 is
+`9c21998bfcfbd168c979a790603e111ae1a6416f0816aa11040e0843450abcc6`.
+The second-repeat config has the same source/image/registry and certification
+epoch but distinct run IDs and roots: file SHA-256
+`452e85beaa38878dd2b617274930b5a63ad48443d163ddf077ec8e5cc0d7334a`,
+loaded freeze SHA-256
+`88b5c8551a1dd85807004b402d421144d2f5851b84ca7dd2f611deca0129b2f0`.
+Both preserve the verified bypass image ID
+`sha256:aeb50f0c03458d6d00a71eba9ce2ddecfe5496b20dfc03ab533abe3d19637239`.
+The amended chunk-table and length-header description SHA-256 values are
+`cf291250b86585ddf3368e25d3fb85d03e6fefc115785f4e125d805f6047da3d`
+and `30eebd0a3ecdaf1ca64640786fa2c6a38ecf9a4b477f47cbbce5c4db599b3288`.
+
+The first v26p live chunk-table fixture is active: run
+`synthetic-native-v26p1a-20261009`, attempt
+`attempt-05d78eeb9bac4d94b024624bf787877e`, launch
+`synthetic-75ac18d7fd964c55878921d3229891f4`, SSH port 22501, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261009-v26p-cert-epoch-one/synthetic-native-v26p1a-20261009-synthetic-chunk-table`.
+The isolated pinned VS Code 1.140.0 window and tunnel are open under alias
+`cybergym-v26p1a`. The audited one-shot submitter sent the reserved prompt
+once under `D:\GLM\tmp\native-v26p1a-ui-send-20261009`, and a GLM request
+was reserved. Do not resend. On terminal, close the owned UI/tunnel and
+independently attest with
+`/srv/sunchaser/runs/capability-freeze-20261008/cybergym-v26p-attest.py`.
+The remaining fresh fixtures, negative/interruption probes and formal
+certification records remain open. Official practice and scored tasks remain
+unstarted.
