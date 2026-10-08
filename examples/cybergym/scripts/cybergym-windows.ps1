@@ -27,10 +27,10 @@ param(
     [Parameter(ParameterSetName = 'Open', Mandatory)] [ValidateRange(1,65535)] [int] $Port,
     [Parameter(ParameterSetName = 'Open')] [ValidateRange(1,100)] [int] $MaxConcurrent = 1,
     [Parameter(ParameterSetName = 'Open')] [switch] $Force,
-    [Parameter(ParameterSetName = 'Open')] [string] $TunnelKnownHosts,
     [string] $ProfilesDir = 'D:\GLM\profiles',
     [string] $CodeExe = "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe",
-    [string] $RemoteHostFqdn = 'sunchaser-20260905'
+    [string] $RemoteHostFqdn = 'sunchaser-20260905',
+    [string] $TunnelKnownHosts = "$env:APPDATA\tailscale\ssh_known_hosts"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,6 +45,9 @@ if ($RunId) {
 }
 function Get-UserData([string] $key) {
     return Join-Path $ProfilesDir "cybergym-${RunKey}-${key}\user-data"
+}
+function Get-TunnelConfig([string] $key) {
+    return Join-Path (Split-Path (Get-UserData $key) -Parent) 'tunnel-ssh-config'
 }
 function Read-Manifest {
     if (-not (Test-Path -LiteralPath $Manifest)) { return @() }
@@ -74,7 +77,8 @@ function Test-Owned($proc, [string] $kind, [string] $key, [int] $port) {
     if ($proc.Name -ne 'ssh.exe' -or
         $line -notmatch [regex]::Escape("CYBERGYM_RUN_KEY=$RunKey") -or
         $line -notmatch [regex]::Escape("CYBERGYM_TASK_KEY=$key") -or
-        $line -notmatch [regex]::Escape("root@$RemoteHostFqdn.cinnamon-gamut.ts.net")) {
+        $line -notmatch [regex]::Escape((Get-TunnelConfig $key)) -or
+        $line -notmatch [regex]::Escape("root@cybergym-tunnel-$key")) {
         return $false
     }
     return ($port -eq 0 -or
@@ -156,16 +160,23 @@ function Invoke-Open {
     }
     $userData = Get-UserData $key
     $extDir = Join-Path (Split-Path $userData -Parent) 'extensions'
-    $sshKnown = if ($TunnelKnownHosts) { $TunnelKnownHosts } else {
-        Join-Path $env:APPDATA 'tailscale\ssh_known_hosts'
-    }
-    if (-not (Test-Path -LiteralPath $sshKnown -PathType Leaf)) {
-        throw "Pinned tunnel host key file is missing: $sshKnown"
-    }
+    $sshKnown = $TunnelKnownHosts
     $tailscale = 'C:\Program Files\Tailscale\tailscale.exe'
-    # Start-Process flattens ArgumentList. Quote the entire -o value as well as
-    # the executable path so OpenSSH receives one intact ProxyCommand argument.
-    $proxyOption = '"ProxyCommand=\"' + $tailscale + '\" nc %h %p"'
+    if (-not (Test-Path -LiteralPath $sshKnown -PathType Leaf)) { throw "Pinned tunnel host key file is missing: $sshKnown" }
+    $tunnelConfig = Get-TunnelConfig $key
+    New-Item -ItemType Directory -Force -Path (Split-Path $tunnelConfig -Parent) | Out-Null
+    @(
+        "Host cybergym-tunnel-$key"
+        "    HostName $RemoteHostFqdn.cinnamon-gamut.ts.net"
+        "    HostKeyAlias $RemoteHostFqdn.cinnamon-gamut.ts.net."
+        '    User root'
+        "    ProxyCommand `"$($tailscale.Replace('\','/'))`" nc %h %p"
+        "    UserKnownHostsFile $($sshKnown.Replace('\','/'))"
+        '    StrictHostKeyChecking yes'
+        '    BatchMode yes'
+        '    CanonicalizeHostname no'
+        '    UpdateHostKeys no'
+    ) | Set-Content -LiteralPath $tunnelConfig -Encoding ascii
     $fwd = "127.0.0.1:${Port}:127.0.0.1:${Port}"
     $row = [pscustomobject]@{
         runId = $RunId; taskId = $TaskId; taskKey = $key; remoteHost = $RemoteHost
@@ -176,10 +187,9 @@ function Invoke-Open {
     Write-Manifest @($rows + $row)
     try {
         $sshArgs = @(
-            '-o', "UserKnownHostsFile=$sshKnown", '-o', 'UpdateHostKeys=no', '-o', 'StrictHostKeyChecking=yes',
-            '-o', 'CanonicalizeHostname=no', '-o', $proxyOption,
+            '-F', $tunnelConfig,
             '-o', "SetEnv=CYBERGYM_RUN_KEY=$RunKey", '-o', "SetEnv=CYBERGYM_TASK_KEY=$key",
-            "root@$RemoteHostFqdn.cinnamon-gamut.ts.net", '-N', '-L', $fwd
+            "root@cybergym-tunnel-$key", '-N', '-L', $fwd
         )
         $ssh = Start-Process -FilePath "$env:WINDIR\System32\OpenSSH\ssh.exe" -ArgumentList $sshArgs -PassThru -WindowStyle Hidden
         $row.tunnelPid = $ssh.Id

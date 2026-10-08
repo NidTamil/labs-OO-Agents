@@ -56,6 +56,15 @@ def test_powershell_ui_opens_with_pinned_client_and_tunnel_host_key(monkeypatch)
     ]
 
 
+def test_owned_tunnel_config_uses_pinned_tailscale_host_key_alias():
+    script = (Path(__file__).resolve().parents[2] / "scripts/cybergym-windows.ps1").read_text()
+    assert "HostKeyAlias $RemoteHostFqdn.cinnamon-gamut.ts.net." in script
+    assert "UserKnownHostsFile $($sshKnown.Replace('\\','/'))" in script
+    assert "StrictHostKeyChecking yes" in script
+    assert "'-F', $tunnelConfig" in script
+    assert "[regex]::Escape((Get-TunnelConfig $key))" in script
+
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
