@@ -1883,3 +1883,12 @@ reserved. **Do not resend.** The remote driver is active in unified session
 90643. On terminal, close this run's owned UI/tunnel, independently attest
 with `cybergym-v26q-attest.py`, and inspect native hover coverage. Official
 practice and scored tasks remain unstarted.
+
+During the active v26q1a run, the native tool ledger recorded one completed
+`mcp__clangd__hover` on the synthetic source and separate completed native
+GBrain recall and search calls. A controlled close/reopen of only this run's
+owned VS Code window and tunnel produced one durable
+`reconnect_observed` event under its existing launch directory; model
+requests continued afterward. The reconnect has not yet been independently
+attested as same-attempt terminal evidence. Do not treat this active run as
+passed certification.
