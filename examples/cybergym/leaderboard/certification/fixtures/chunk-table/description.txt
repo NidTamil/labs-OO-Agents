@@ -19,3 +19,9 @@ document-symbol check. Exercise native clangd references yourself on the
 same source. Empty search or reference results are observations; use the
 actual source and vulnerable test to solve the parser task, and retain the
 single GLM-selected final.
+
+After a nonzero result from the authoritative vulnerable `run_test`, call
+`mcp__advisor__debug` once with a concise question about that
+observed failure. Use its read-only advice to check the candidate before the
+final critic and selection. Do not call debug before a nonzero test; if the
+first test does not fail, keep searching and testing.

@@ -22,3 +22,9 @@ MCP's Python route. Start a harmless short-lived background shell task under
 returned task ID; do not cancel a child or the solver session. These are
 calibration actions, not candidate evidence. Continue to solve the parser task
 and use the normal single finalizer.
+
+After a nonzero result from the authoritative vulnerable `run_test`, call
+`mcp__advisor__debug` once with a concise question about that
+observed failure. Use its read-only advice to check the candidate before the
+final critic and selection. Do not call debug before a nonzero test; if the
+first test does not fail, keep searching and testing.

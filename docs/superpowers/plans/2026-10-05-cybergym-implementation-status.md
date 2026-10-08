@@ -1081,3 +1081,59 @@ runtime probe without changing its fixture source. The Windows Computer Use
 helper listed the VS Code window but could not bind it, returning `window id
 3933928 no longer belongs to Microsoft.VisualStudioCode; current owner is
 Microsoft.VisualStudioCode`; per its recovery guidance, no input was issued.
+
+## v26g diagnostic and compiler-ready v26h candidate (2026-10-08)
+
+The provisional v26g `synthetic:length-header` run reached a real VS Code-owned
+Claude Code 2.1.289 session in `bypassPermissions`. Its production
+`/native-tools/authorize` hook denied a model-initiated read under
+`/tmp/claude-1001/`; the tool row remained `denied` with no PostToolUse
+completion. This is a live bypass-mode boundary observation, not a formal
+negative-probe record. Two Workflow calls were denied because provider
+JSON-string `args` did not compare to the hook's object; commit `254da60`
+normalizes that one schema for semantic authorization. The same run exposed a
+separate v26g image regression: it lacked `libclang-rt-14-dev`, so the real
+vulnerable test could not link ASan. The diagnostic controller, owned window
+and tunnel were stopped without an oracle verdict.
+
+The verified compiler-ready base ID remains
+`sha256:97dae9c525f644bdfa10b0419e822ff691a82652bceb65f0921ecba98cdb198d`.
+Commit `6dc1417` adds an overlay-build gate that links and runs a Clang
+ASan/libFuzzer probe. A fresh overlay from that exact base passed and has ID
+`sha256:aeb50f0c03458d6d00a71eba9ce2ddecfe5496b20dfc03ab533abe3d19637239`.
+Its native-runtime SHA-256 is
+`3a1c0e125ce528078260085a3f39efe54554bf71e15f9925e100d0b94695f018`;
+the pinned VS Code/Claude/launcher bytes are unchanged. Commit `605384f`
+pins the new image in native process verification. Commit `1072f38` tracks
+the owned Windows tunnel repair: an explicit SSH config uses the trailing-dot
+Tailscale host key alias and strict checking. The exact-source SunChaser
+leaderboard suite passed 983 tests, with five skips and two deselections.
+
+Provider-free v26h calibration captured 36 real parent tool schemas at
+`/srv/sunchaser/runs/native-cal-v26h-20261008-a/evidence/capture/request-000001.json`
+(SHA-256 `bd731fff7e59c661cf419a12416ce21b4e1804db76472051c38e4fdf978805a7`),
+with no provider dispatch. The fresh component JUnit SHA-256 is
+`e54664203cad38ea70ed49d66b61e35248c8c63071dfd78be8fa6364143ac266`.
+The provisional 35-capability registry, bindings and inventory hashes are
+`ad72a46e0ad693b7b84587e81e2c20fb7932a184e47754737fc7b1968e325885`,
+`cddcb3c4493a024f4efd6330768cbaab2f3ff27e088e84c23bcc0f11570a66f1`,
+and `68fce76a493dd05346caaab9fb16482079aae42b6bc594a9a6796caa8ab2aaae`.
+The v26h synthetic probe config passed `load_runtime_config` and binds these
+artifacts at freeze hash
+`6576938478f79ab41d6cacca8257a9746338a01ca0a6c70c1ed4206301184f61`.
+
+The first v26h `synthetic:length-header` run at
+`/srv/sunchaser/runs/synthetic-evidence-20261008-v26h-probe/synthetic-native-v26ha-probe-20261008-synthetic-length-header`
+returned signed `oracle_true=true`, `boundary_failed=false`, and a
+controller-only post-oracle GBrain episode. Native Workflow, TaskStop,
+clangd, documentation, VS Code diagnostics and GBrain recall/search completed;
+the real vulnerable `run_test` built with exit 0 and tested with exit -6.
+The independent raw verifier accepted the signature, candidate/final hashes,
+launcher receipt, preflights and audit chain, then rejected the run because
+DeepSeek's conditional debug role was absent. Recon and critic completed.
+This is a synthetic oracle success and a certification coverage failure, not
+an accepted full fixture attestation. The fixture briefs now explicitly ask
+for the debug lane only after an observed nonzero vulnerable test; that source
+change requires a new harness manifest, config and live runs. Both fixtures,
+formal negative/interruption probes and two full comparator epochs remain
+outstanding. Official practice and scored tasks remain unstarted.
