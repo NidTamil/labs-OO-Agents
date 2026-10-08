@@ -1256,3 +1256,22 @@ Tailscale login tab was handed off to the operator; do not claim this second
 fixture as independently attested until raw verification succeeds. Formal
 negative/interruption probes and two complete comparator records remain open.
 Official practice and scored tasks remain unstarted.
+
+## Per-invocation capability provenance checkpoint (2026-10-08)
+
+Commit `720d1ff` adds a controller-audited `invocation_id` to capability
+requests. Native calls now carry the provider's individual tool-use ID, while
+DeepSeek advisory actions carry their action ID. This permits an independent
+attestor to join each allowed capability event to a completed native tool row
+or advisory action, rather than infer completion from an allowed event for the
+same model request. A test first failed on the missing field; the relevant
+Windows capability, native-tool, service, advisory and custody suites then
+passed 218 tests with three skips. Ruff check and format passed. This is a
+required source change for completed-use provenance, so the v26l freeze is
+historical synthetic evidence, not a current formal-certification candidate.
+The new source has not yet been re-staged, re-frozen, built into a native image,
+or live-tested on SunChaser. Tailscale SSH continues to require operator web
+reauthentication; do not claim the v26l length-header run as independently
+attested, and do not produce a formal comparator record until the raw evidence
+and remaining live probes are verified. Official practice and scored tasks
+remain unstarted.
