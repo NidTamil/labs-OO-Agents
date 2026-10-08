@@ -1296,3 +1296,15 @@ affected certification and preflight tests passed 86/86 on Windows; Ruff
 check and format passed. This still does not prove the separate personal
 GBrain/agent-write denial or interruption/version-drift gates and has not
 been exercised on a newly frozen native run.
+
+Commit `37a8917` adds a read-only GLM accounting attestor. It pairs each
+reserved primary request with exactly one terminal and usage row, checks the
+configured/returned model and provider request ID, sums observed input,
+output and cache tokens, and separately counts incomplete requests. It also
+rejects inconsistent provider version/fingerprint metadata across the
+request and usage logs or across completed responses. A request-ID/metadata
+tamper test failed before implementation; the affected raw-attestor,
+certification-report and model-gateway suites passed 139/139 on Windows,
+with Ruff check and format clean. This is not DeepSeek accounting or a
+complete live certification record; exact-source Linux and live native
+verification await restored SunChaser access and a new freeze.
