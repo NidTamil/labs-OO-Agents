@@ -1333,3 +1333,66 @@ certification record. The source changes after v26l still require an exact
 source/image re-freeze and two new live synthetic fixtures per epoch, followed
 by independent capability, interruption, negative-boundary, and model/tool/
 token evidence checks. Official practice and scored tasks remain unstarted.
+
+## v26m exact-source freeze and first UI handoff (2026-10-08)
+
+SunChaser Tailscale SSH is restored. The isolated clean checkout
+`/srv/sunchaser/labs-OO-Agents-cert-v26m` pins pushed commit
+`bbd76dd91d0be39e48beba087ecf34f959499e7d`. Its exact-source Linux
+leaderboard suite passed 990 tests, five skipped, two deselected. The fresh
+component JUnit SHA-256 is
+`1312a58501811fd3e4c805a7a2b41db9cc9c0a15e769bb847701bcd867d55608`.
+The new freeze candidate changes only the expected
+`capability_runtime.py` adapter bytes among service pins, updates all source
+paths to the v26m checkout, and pins that JUnit; candidate SHA-256 is
+`776b40c65ca783e21dc81a51c69a45cd16ca57fccf1e61a99cab04fc4b10ae1d`.
+The recalibrated 35-entry registry, bindings and inventory SHA-256 values are
+`c515179d688dd2efeb3735c21e043979eb3ac9a9f9c6ce4f66f7a219e790d855`,
+`0d62104a3c90a046f676bf25b824b2c400b182270a5efdd9056d16b43413efef`,
+and `7bf46d2d8d69bea2e75d9c6ea4ecab516969c8660788a4ce25bb4d09e3aec680`.
+The validated epoch-one synthetic controller config at
+`/srv/sunchaser/runs/capability-freeze-20261008/synthetic-controller-config-v26m-cert-epoch-one.json`
+has loaded freeze SHA-256
+`189404d6b11530a4af9d6ef79168f8aec3f9997b71eb74cb920baed27f5f12be`.
+It preserves the verified bypass native image ID
+`sha256:aeb50f0c03458d6d00a71eba9ce2ddecfe5496b20dfc03ab533abe3d19637239`;
+no native image source changed.
+
+The first v26m `synthetic:chunk-table` run
+`synthetic-native-v26m1a-20261008` is **active, not attested**. The driver
+created attempt `attempt-7efc499504c242b7aec0444b3be14662` in container
+`114356b2342742799a836573de0fe049ae43ddef6d47e82b611759e0df701746`,
+SSH port 22493, and evidence root
+`/srv/sunchaser/runs/synthetic-evidence-20261008-v26m-cert-epoch-one/synthetic-native-v26m1a-20261008-synthetic-chunk-table`.
+The owned Windows VS Code window/tunnel is managed by
+`D:\GLM\cybergym-windows.ps1` under run ID above, task ID
+`synthetic:chunk-table`, and alias `cybergym-v26m1a`. The first window used
+unfrozen VS Code 1.141.0 and was closed before a Send. It was reopened with
+the pinned `D:\GLM\bin\VSCode-1.140.0\Code.exe`, which established the SSH
+workspace. The launcher reserved launch
+`synthetic-9a75ae6e5d864c608e69422ebce7b9d3`, the native parent
+preflight was admitted, and the Claude Code extension spawned in
+`bypassPermissions`. Three empty-body model-peer denials were logged during
+startup; they do not count as provider requests. The controller receipt was
+copied to `D:\GLM\cybergym-v26m1a-launcher-receipt.json`; the existing
+one-shot host-only
+`examples/cybergym/leaderboard/native-launcher/submit-native-prompt.ps1`
+then verified the exact reserved composer prompt and invoked Send under the
+pinned profile
+`D:\GLM\profiles\cybergym-e8251b42362e6c2217340b05-fa731f8170d17b0926cf63e3`,
+remote alias `cybergym-v26m1a`, and launch ID above. The durable
+`D:\GLM\tmp\native-v26m1a-ui-send-20261008\ui-send-attempted.json` has
+SHA-256 `d27e3cfe38c09092564ce678900228dec1bae5451003bd59f7bdfdbec935b0cd`.
+The provider gateway subsequently recorded completed primary GLM requests;
+the run remains active without a final result. Do not click or resend. The Computer Use
+helper failed to bind the new VS Code window with `window id 1049298 no longer
+belongs to Microsoft.VisualStudioCode; current owner is
+Microsoft.VisualStudioCode`, so stop attempting that helper for this window.
+Await the driver terminal, close the owned UI/tunnel, then independently attest
+raw evidence with `/srv/sunchaser/runs/capability-freeze-20261008/cybergym-v26m-attest.py`
+(script SHA-256 `78b6e0cd5d9da2e44f86b96c05c887cead259166dbf15134d158d71b3e8cbb49`).
+The new DeepSeek accounting verifier independently read the older v26l
+chunk-table evidence and recovered completed recon/debug/critic requests
+and token totals without source modification. Epoch two and formal negative/interruption/model/tool/token
+comparator work remain open. Official practice and scored tasks remain
+unstarted.
