@@ -1671,3 +1671,39 @@ and loaded freeze SHA-256 is
 `7b79219bcee927c0b6c9e937642ecd41df07f0df92363cf9360607a70f47a206`.
 Boundary/interruption probes and formal comparator remain open. Official
 practice and scored tasks remain unstarted.
+
+## v26o complete first pair and independent repeat start (2026-10-08)
+
+The second v26o length-header driver returned `oracle_true=true`,
+`boundary_failed=false`, `provider_dispatched=true`, and a post-oracle
+controller memory episode. Its owned VS Code window and tunnel were closed.
+The exact-source raw attestor independently verified 396 chained audit rows,
+41 completed GLM requests and one incomplete request, DeepSeek recon/debug/
+critic requests (5/3/7), and signed oracle payload SHA-256
+`8ae5b4f514cf86dfa138a826c18580beda1225fe30ff56be40413efe6fe2fc31`.
+Its raw attestation at
+`/srv/sunchaser/runs/capability-freeze-20261008/v26o1b-raw-attestation.json`
+has SHA-256
+`5cf1c0b0357782dc675997dfd4148b2ed23d4bf56946ff570a4718f989f6dc06`.
+An independent pairwise check against the frozen 35-entry registry found a
+completed-use union of 35/35, no missing approved ID, and no undeclared
+completed ID. This is one complete synthetic fixture pair, not a formal
+certification record or scored result.
+
+The independent second repeat uses the same certification epoch label and
+same v26o source/image/registry, with distinct run IDs and evidence roots.
+Its first chunk-table fixture is active: run
+`synthetic-native-v26or2a-20261008`, attempt
+`attempt-7bd77437754d46f59c88ce978975af93`, launch
+`synthetic-95c3e34de9654cfc99e6a6248b3ac9bc`, SSH port 22499, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261008-v26o-cert-repeat-two/synthetic-native-v26or2a-20261008-synthetic-chunk-table`.
+The isolated pinned VS Code 1.140.0 window and task-specific tunnel are open
+under alias `cybergym-v26or2a`. The audited one-shot submitter sent the
+reserved prompt once under
+`D:\GLM\tmp\native-v26or2a-ui-send-20261008`; a GLM request was reserved.
+Do not resend. On terminal, close this run's owned UI/tunnel, independently
+attest with the repeat-two pinned attestor, and continue the second fixture
+serially. Negative-boundary and interruption probes, complete attested
+certification records, and the comparator remain open. Official practice and
+scored tasks remain unstarted.
