@@ -1217,3 +1217,42 @@ Allowed events are only a lower-bound use audit; completed-use provenance,
 declared negative and interruption probes, and two complete independently
 attested comparator records still need work. The v26k pair cannot be labeled
 formally certified. Official practice and scored tasks remain unstarted.
+
+## v26l live capability follow-up and Tailscale attestation hold (2026-10-08)
+
+Commit `7e1f4b8` updates only the two frozen synthetic fixture briefs to request
+the five approved capabilities absent from both v26k runs: native Agent recon,
+debug and review; native Edit on a harmless task-local scratch note; and native
+clangd definition. The exact-source Linux leaderboard suite passed 984 tests,
+five skipped, two deselected. The fresh component JUnit SHA-256 is
+`13ac8b126f447e71453931343da4e452472ec796bae7b6e11234b5068ae93d5e`.
+The new 35-entry registry, bindings and inventory hashes are
+`d4e7fd9139a0b426d715ec3bc48d2e0440931af57be5f367e1802926d0c289e1`,
+`6c5b0c0ce379de680b698dac5655132bf2c7a2fdb1717360c6fee7f762f00ba1`,
+and `cdea68a8912fda5805da00371615a282178e6edb8c9a3330ff84d977f0d86eec`.
+The v26l input config file SHA-256 is
+`9500086995027cc746216b0e91bffeda0a09f77dda54431bef100e495b95d98b`;
+the actual loaded freeze SHA-256 is
+`e5fea2453e9636a818e800f0e5793d10083a92eedd38756e979aa140fabebe77`.
+The native image and provider-free schema capture are unchanged.
+
+The first v26l `synthetic:chunk-table` run
+`synthetic-native-v26la-probe-20261008` returned signed `oracle_true=true`,
+`boundary_failed=false`. Its independent public-key-only raw attestor verified
+the candidate/final hash, launcher receipt, four preflight reports, 47
+completed GLM requests, and all 383 audit rows. The raw tool ledger showed
+completed native Agent calls for `cybergym-recon`, `cybergym-debug`, and
+`cybergym-review`, plus native clangd definition. Its owned UI and tunnel were
+closed.
+
+The second v26l `synthetic:length-header` run
+`synthetic-native-v26lb-probe-20261008` returned controller terminal
+`oracle_true=true`, `boundary_failed=false`, with a post-oracle memory episode.
+Its owned UI and tunnel were closed. During this run, new SunChaser SSH
+connections began requiring Tailscale web reauthentication. The pre-existing
+SSH stream delivered the terminal result, but independent raw attestation and
+the combined 35-entry completed-use audit have not yet been performed. The
+Tailscale login tab was handed off to the operator; do not claim this second
+fixture as independently attested until raw verification succeeds. Formal
+negative/interruption probes and two complete comparator records remain open.
+Official practice and scored tasks remain unstarted.
