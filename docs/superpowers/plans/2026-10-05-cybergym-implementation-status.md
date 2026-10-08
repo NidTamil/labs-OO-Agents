@@ -1810,3 +1810,34 @@ Do not resend. On terminal, close the owned UI/tunnel, independently attest
 with `cybergym-v26p-attest.py`, and compute exact 35-ID completed-use union.
 The second full repeat and formal boundary/interruption/comparator gates
 remain open. Official practice and scored tasks remain unstarted.
+
+## Operator-side search boundary incident (2026-10-09)
+
+While inspecting harness certification code, a repo-wide `rg` search also
+matched an archived official-task trajectory under `examples/cybergym/task_artifacts`
+and returned a truncated excerpt to the controller operator context. No
+archived-task content was used to change the frozen v26p fixture, supplied to
+the isolated native solver, or used in any official attempt; official practice
+and scored tasks remain unstarted. This is recorded as an operator-side
+boundary mistake, not a passing negative-boundary probe. Subsequent source
+searches must be confined to explicit harness source/test paths and exclude
+`task_artifacts`.
+
+## v26p first pair: raw-pass, coverage shortfall (2026-10-09)
+
+The second v26p length-header fixture returned `oracle_true=true`,
+`boundary_failed=false`, `provider_dispatched=true`, and a post-oracle
+controller memory episode. Its owned VS Code window and tunnel were closed.
+The exact-source independent raw attestor passed and wrote
+`/srv/sunchaser/runs/capability-freeze-20261008/v26p1b-raw-attestation.json`
+with SHA-256
+`1b206a31447dde3cca2dda60199f01295dde0a85aa639940914c51ada27b5ec8`.
+The two raw attestations cover 34 of 35 approved capability IDs, with no
+undeclared completed ID; the only missing ID is `native.clangd.hover`.
+This pair cannot satisfy formal capability coverage. The frozen length-header
+description named references and diagnostics but did not directly require a
+native hover call. The source description now explicitly requires that call
+on the synthetic `little_endian_u32` symbol. This changes frozen fixture
+bytes and requires a new exact-source inventory/freeze and fresh repeated
+synthetic runs; v26p evidence remains historical, not certification. Official
+practice and scored tasks remain unstarted.

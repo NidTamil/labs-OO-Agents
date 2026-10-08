@@ -22,7 +22,11 @@ For this synthetic capability check, also call the exact frozen recon Workflow
 with `scriptPath` `/workspace/.claude/workflows/recon.js` and a source-analysis
 `question` in `args`. Await its result before starting other children. Exercise
 native clangd references and the VS Code diagnostics tool on
-`/workspace/src/parser.c`. Fetch the generic Python `struct` reference at
+`/workspace/src/parser.c`. Separately call the native
+`mcp__clangd__hover` tool yourself on the `little_endian_u32` symbol in
+that source file and wait for its result; a hover result without type
+information is still a valid plumbing observation. Fetch the generic Python
+`struct` reference at
 `https://docs.python.org/3/library/struct.html` through the documentation
 MCP's Python route. Start a harmless short-lived background shell task under
 `/workspace/src` and cancel only that local task with `TaskStop` using the
