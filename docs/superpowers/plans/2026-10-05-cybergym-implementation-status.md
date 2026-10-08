@@ -1961,3 +1961,154 @@ was reserved. **Do not resend or interrupt this fixture.** The remote driver
 is active in unified session 58934. On terminal, close the owned UI/tunnel,
 independently attest with `cybergym-v26q-retry-attest.py`, and only then
 launch the chunk-table fixture serially.
+
+## v26q first fresh pair: length header attested, chunk table active (2026-10-09)
+
+The v26q1c length-header fixture reached a native terminal result with a true
+private-oracle verdict and controller-only memory episode. Its owned VS Code
+window and tunnel were closed. Independent raw attestation passed against the
+frozen v26q source, config, image, registry, bindings, signed oracle, model
+usage, DeepSeek roles and tool ledger. Attestation JSON SHA-256 is
+`0549a04f377e12319e227490ad4a4443434635e13643252ba4ca0c280c6767a8`.
+It reports 29 completed capability IDs, including two native clangd hover
+calls. This is one fixture, not a complete certification pair.
+
+The serial chunk-table fixture is now active: run
+`synthetic-native-v26q1d-20261009`, attempt
+`attempt-9ee474fe8926419684867d2d3a747962`, launch
+`synthetic-c8662114f84f499da1cf7e4713614024`, SSH port 22508, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261009-v26q-cert-epoch-one-retry/synthetic-native-v26q1d-20261009-synthetic-chunk-table`.
+Its pinned VS Code 1.140.0 window and task-owned tunnel are open under alias
+`cybergym-v26q1d`; the audited submitter sent the reserved prompt once under
+`D:\GLM\tmp\native-v26q1d-ui-send-20261009`, and actual GLM requests are
+recorded. **Do not resend or interrupt this fixture.** Remote driver unified
+session is 46342. On terminal, close only this run's owned UI/tunnel, attest
+with `cybergym-v26q-retry-attest.py`, then run the v26q retry pair checker for
+35/35 capability coverage. Official practice and scored tasks remain
+unstarted.
+
+## v26q first fresh pair independently verified (2026-10-09)
+
+The v26q1d chunk-table fixture reached a true private-oracle native terminal
+result. Its owned VS Code window and tunnel were closed. Independent raw
+attestation passed with JSON SHA-256
+`a57de64ae6f6b0b1c13d23609153a02ddc233a3131a6527003c3e3efb26af656`.
+The pair checker recomputed the union from the two independently verified raw
+fixture attestations: **35 approved IDs, 35 completed IDs, zero missing and
+zero undeclared**. v26q1c had 41 completed GLM and 16 DeepSeek role requests;
+v26q1d had 49 completed GLM, one incomplete GLM request at controller stop,
+and 18 completed DeepSeek role requests. The incomplete request is disclosed,
+not counted as completed. This is a complete first synthetic fixture pair,
+not a formal certification comparator pass. The second independent pair and
+the negative/interruption/version-drift/report gates remain outstanding.
+
+The second independently frozen pair has begun under controller config SHA-256
+`ffaf2a7bd001f6d744367e315a21fe738c4e57a01ffd80257c012948f26b20f9`
+and loaded freeze SHA-256
+`73603191d2e6b074bd24e4026710b5b20d9f55bd9ea7aea656cf34e1463895fd`.
+Its length-header run `synthetic-native-v26qr2a-20261009`, attempt
+`attempt-b3d5d06cdfff478d98967be728843c60`, launch
+`synthetic-51e1798aa4a846c8a2b2197b91b463f0`, SSH port 22509, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261009-v26q-cert-repeat-two/synthetic-native-v26qr2a-20261009-synthetic-length-header`,
+is active in remote driver session 43407. Pinned VS Code 1.140.0 window and
+task-owned tunnel are open under alias `cybergym-v26qr2a` (window PID 24780,
+tunnel PID 11228). The audited one-shot submitter sent once under
+`D:\GLM\tmp\native-v26qr2a-ui-send-20261009` and real GLM requests are
+recorded. **Do not resend or interrupt.** On terminal close the owned UI and
+tunnel, then run `cybergym-v26q-repeat-two-attest.py` before launching its
+chunk-table mate serially.
+
+## v26q repeat-two recon failure and replacement pair (2026-10-09)
+
+Repeat-two length-header run `synthetic-native-v26qr2a-20261009` reached a
+true private-oracle native result. Its owned UI/tunnel were closed, and
+independent raw attestation passed (SHA-256
+`3d6df4036d01e9d544d860c4365358d200164c20c008a1e0bbc71a35d43cc17e`).
+It exercised 28 capabilities including three native clangd hovers and all
+three DeepSeek roles. This is only one fixture, not a complete repeat pair.
+
+Its chunk-table mate `synthetic-native-v26qr2b-20261009` failed before a
+launcher receipt or GLM request. The independent DeepSeek reconnaissance lane
+made five real model responses; its last action requested `local_read` search
+without the required `path`. The controller rejected the malformed action,
+recorded the lane as failed without retry, halted the shared context and
+stopped the task. VS Code saw an SSH banner reset because the container had
+already been removed. The owned UI/tunnel were closed. This is a genuine
+fail-closed runtime failure and **is excluded from certification**. The
+remote filesystem was also 100% utilized by rounding (1.4 GB free); it was
+not established as the cause. A read-only Docker inventory showed 244.9 GB
+reclaimable images and 12.33 GB reclaimable build cache. Only unused build
+cache older than 24 hours was pruned, recovering 8.7 GB; the frozen image and
+all run evidence remain intact. Filesystem free space afterward was 8.9 GB.
+
+A fresh complete replacement pair was configured with separate roots and
+run IDs `synthetic-native-v26qr3a-20261009` and
+`synthetic-native-v26qr3b-20261009`. Controller config file SHA-256 is
+`75d0fcf4adaa52dd5077d38f0af0a79f12cbd590e49465202408475122486b60`;
+loaded freeze SHA-256 is
+`c101436a0f49ec1f0d7fc5373ab1f126be9829d351b4778bc9af4aed0a93a6c6`.
+The exact-source, image and registry pins remain unchanged. New external
+attestor and pair-check scripts are SHA-256
+`8a3ebad37bf871d670b051a5c99fc5e6b3989c87c5fa142c5a6b974073ed4f4e`
+and `bc4028fb51d542e4f25abf4dec4364734f27b8de3e4fda36a17d651acf83ffe8`.
+
+Replacement length-header run `synthetic-native-v26qr3a-20261009`, attempt
+`attempt-f4d59784f1ab49dd95b934d1f733a298`, launch
+`synthetic-5eab70d57900420ab058fc95a21dede3`, SSH port 22511, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261009-v26q-cert-repeat-three/synthetic-native-v26qr3a-20261009-synthetic-length-header`,
+is active in remote driver session 72639. Pinned VS Code 1.140.0 window and
+task-owned tunnel are open under alias `cybergym-v26qr3a` (window PID 37628,
+tunnel PID 22212). The audited submitter sent once under
+`D:\GLM\tmp\native-v26qr3a-ui-send-20261009`; real GLM requests were
+recorded. **Do not resend or interrupt.** On terminal close its owned UI and
+tunnel, independently attest with `cybergym-v26q-repeat-three-attest.py`,
+then launch its chunk-table mate serially. Official practice and scored tasks
+remain unstarted.
+
+The controller-only official cohort source was rehydrated on D: at
+`D:\GLM\official-benchmark-controller-20261009`, with Git LFS smudge disabled.
+Both clean official HEADs exactly match the prior benchmark/dataset commits
+(`c6fe2027d39471375920b92cf1025e23a99ffda5` and
+`bde190ded494e52bc684b66073b436c9d992c7c6`). Current `freeze_cohort`
+produced an **unsigned** 1,507-task lock at
+`D:\GLM\cohort-lock-20261009-v26q`: cohort SHA-256
+`a708e62a91d3abf179621961926f9ab15ae8de9f8a99307448a41f4a58ddfa57`,
+asset-manifest SHA-256
+`6d517c6f930a7ae22231d12aa32687e808492c912118663fc4b0e97e6c6ea0fb`,
+generator SHA-256
+`ed7ffeef7be4f2b49d0fe9e4a031725ac205349b77894dd01fbe28b262c42ae2`,
+generic harness-manifest SHA-256
+`74df8d30a6dc882281aed8448e6297c0f320a7db80419fb2a6390b76c7568dd5`.
+An independent field comparison against the old controller manifest found
+zero SHA/byte-size or order mismatches across 1,507 task assets; 26 LFS
+pointer booleans differ because the old checkout had materialized those 26
+assets, whereas this metadata-only checkout retains all pointers. The
+synthetic staging manifest has the same nine generic file hashes but uses
+repo-root relative paths, hence its manifest SHA differs. This new cohort
+lock still needs Xeus signing/binding before a campaign decision; no official
+task asset was materialized or shown to a solver.
+
+Replacement length-header run `synthetic-native-v26qr3a-20261009` reached a
+true private-oracle terminal result under the unchanged image and registry.
+Its owned UI/tunnel were closed. The exact-source independent raw attestor
+passed; its output SHA-256 is
+`545c78f4eea0a26d6479f683a96992eabaf04f80bf19cfea927b015d93e7557c`.
+It exercised 26 completed capability IDs including native clangd hover and
+all three DeepSeek roles. The serial chunk-table mate
+`synthetic-native-v26qr3b-20261009`, attempt
+`attempt-410d1dd4f3664e8c8c262f87c12b99d7`, launch
+`synthetic-bc15058ea0ba470d839601c70c90637a`, SSH port 22512, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261009-v26q-cert-repeat-three/synthetic-native-v26qr3b-20261009-synthetic-chunk-table`,
+is active in remote driver session 64239. Pinned VS Code 1.140.0 window and
+task-owned tunnel are open under alias `cybergym-v26qr3b` (window PID 35336,
+tunnel PID 6296). The audited submitter sent once under
+`D:\GLM\tmp\native-v26qr3b-ui-send-20261009`; real GLM requests are
+recorded. **Do not resend or interrupt.** On terminal close only this run's
+owned UI/tunnel, independently attest with
+`cybergym-v26q-repeat-three-attest.py`, then run the repeat-three pair
+checker for 35/35 coverage. Official practice and scored tasks remain
+unstarted.
