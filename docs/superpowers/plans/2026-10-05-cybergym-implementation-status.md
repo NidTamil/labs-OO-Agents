@@ -1275,3 +1275,13 @@ reauthentication; do not claim the v26l length-header run as independently
 attested, and do not produce a formal comparator record until the raw evidence
 and remaining live probes are verified. Official practice and scored tasks
 remain unstarted.
+
+Commit `7db6a2a` adds a read-only raw evidence check that joins an allowed
+authorization to the exact completed native tool row or DeepSeek advisory
+`tool_result` by `invocation_id`, model request, tool name and role. A failed
+tool call no longer counts merely because another call of the same tool in
+the same model request completed. The check rejects missing or ambiguous
+invocation IDs. Its synthetic tamper fixture and the certification/capability
+regression set passed 175/175 on Windows; Ruff check and format passed. This
+is component verification only. It has not yet been run against a newly
+frozen live native fixture or promoted into a signed certification record.
