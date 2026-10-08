@@ -206,3 +206,11 @@ def test_fixed_source_helper_rejects_symlink_and_reads_searches_real_files(tmp_p
     assert run({"operation": "read", "path": str(root / "escape")}).returncode != 0
     matches = run({"operation": "search", "path": str(root), "query": "length"})
     assert matches.returncode == 0 and len(json.loads(matches.stdout)["matches"]) == 2
+
+    file_matches = run({"operation": "search", "path": str(root / "a.c"), "query": "length"})
+    assert file_matches.returncode == 0
+    assert [match["line"] for match in json.loads(file_matches.stdout)["matches"]] == [1, 2]
+    assert (
+        run({"operation": "search", "path": str(root / "escape"), "query": "private"}).returncode
+        != 0
+    )

@@ -166,13 +166,18 @@ elif operation=="list":
  result["truncated"]=len(found)>limit
  result["next_after"]=found[limit-1][0] if result["truncated"] else None
 elif operation=="search":
+ fd=open_path(path)
+ try: root_mode=os.fstat(fd).st_mode
+ finally: os.close(fd)
+ if not (stat.S_ISREG(root_mode) or stat.S_ISDIR(root_mode)): raise ValueError("regular source or directory required")
+ root_file=stat.S_ISREG(root_mode)
  query=a["query"];limit=a.get("max_results",200);queue=[(path,0)];matches=[];visited=0;read_bytes=0;skipped=0
  while queue and len(matches)<limit:
   folder,depth=queue.pop()
-  for name,directory in entries(folder):
+  for name,directory in ([(None,False)] if root_file and folder==path else entries(folder)):
    visited+=1
    if visited>20000 or read_bytes>33554432: result["truncated"]=True;queue=[];break
-   current=folder+"/"+name
+   current=folder if name is None else folder+"/"+name
    if directory:
     if depth<64: queue.append((current,depth+1))
     else: result["truncated"]=True
