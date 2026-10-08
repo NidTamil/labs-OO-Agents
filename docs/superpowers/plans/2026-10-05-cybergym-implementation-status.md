@@ -1775,3 +1775,38 @@ independently attest with
 The remaining fresh fixtures, negative/interruption probes and formal
 certification records remain open. Official practice and scored tasks remain
 unstarted.
+
+## v26p first attestation and second fixture launch (2026-10-09)
+
+The v26p chunk-table driver returned `oracle_true=true`,
+`boundary_failed=false`, `provider_dispatched=true`, and a post-oracle
+controller memory episode. Its owned VS Code window and tunnel were closed.
+The exact-source raw attestor passed: 415 chained audit rows, 40 completed
+GLM requests and one incomplete, DeepSeek recon/debug/critic requests
+(9/4/4), and four completed native calls to each of the distinct GBrain
+recall and search routes. The signed oracle payload SHA-256 is
+`c3f3a0d738596317b3007de6ba881adbe65a48c3fced1663e1758d97555ae725`.
+The durable raw attestation at
+`/srv/sunchaser/runs/capability-freeze-20261008/v26p1a-raw-attestation.json`
+has SHA-256
+`8fa59e0847c8faf8449bf265cb81b405d4ac08c27b6fb3b50c89a660d0a0cff8`.
+It has 28 completed approved capability IDs alone; the seven missing are
+`native.Edit`, `native.TaskStop`, `native.Workflow`, advisory clangd document
+symbols, native clangd hover, VS Code diagnostics, and the Python
+documentation route. The second fixture must supply those for a complete
+epoch. This is one verified synthetic fixture, not a formal certification.
+
+The v26p length-header fixture is active under the same first-repeat freeze:
+run `synthetic-native-v26p1b-20261009`, attempt
+`attempt-b98a0e1a8f3f487ca740d1fb87255807`, launch
+`synthetic-f4ae2512dc83452fb8764c9255ba01a8`, SSH port 22502, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261009-v26p-cert-epoch-one/synthetic-native-v26p1b-20261009-synthetic-length-header`.
+Its isolated pinned VS Code 1.140.0 window and task-specific tunnel are open
+under alias `cybergym-v26p1b`. The audited one-shot submitter sent its
+reserved prompt once under
+`D:\GLM\tmp\native-v26p1b-ui-send-20261009`; a GLM request was reserved.
+Do not resend. On terminal, close the owned UI/tunnel, independently attest
+with `cybergym-v26p-attest.py`, and compute exact 35-ID completed-use union.
+The second full repeat and formal boundary/interruption/comparator gates
+remain open. Official practice and scored tasks remain unstarted.
