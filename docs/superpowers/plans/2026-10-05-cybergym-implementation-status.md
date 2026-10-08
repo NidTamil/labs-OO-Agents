@@ -1443,3 +1443,33 @@ completed requests. Do not resend. On terminal, close this run's owned UI and
 tunnel, attest with `cybergym-v26m-attest.py`, and compare completed capability
 coverage across the pair. Formal negative/interruption probes, two complete
 comparator records, and scored readiness remain open.
+
+## v26m pairwise capability result and next frozen candidate (2026-10-08)
+
+The second v26m length-header run terminated with `oracle_true=true`,
+`boundary_failed=false`, `provider_dispatched=true`, and a post-oracle
+controller GBrain episode. Its owned window and tunnel were closed. The
+exact-source raw attestor independently verified candidate SHA-256
+`20019f1c63698e55b297f2cf45d445155a1d480ef7ff5ab851db2277cafea422`,
+signed oracle payload SHA-256
+`c33be981cc73b286756b352edbbe70bc5fba97a2b1332da9b13aa3af59d43278`,
+370 chained audit rows, five preflight reports, 52 completed GLM requests,
+zero incomplete GLM requests, and completed DeepSeek requests in all three
+roles (recon 4, debug 4, critic 7) with observed token accounting. This is a
+live synthetic pass, not a formal certification record or scored result.
+
+Across both v26m fixtures, exact completed invocation evidence covers 34 of
+35 approved capability IDs. The only missing ID is
+`native.advisory.gbrain_search`: native GBrain search and DeepSeek advisory
+GBrain recall ran, but DeepSeek did not call its separate read-only search
+route. No certification record has been signed. The frozen synthetic briefs
+are amended to request that specific DeepSeek recon call against isolated
+benchmark memory, with an empty result accepted. This changes fixture bytes,
+so the v26m configuration is superseded for further certification attempts.
+Re-pin the descriptions in a new candidate, run exact-source tests, freeze,
+then gather a fresh two-fixture live epoch. The initial v26m chunk-table
+window used unpinned VS Code 1.141.0 before Send; its pinned 1.140.0 launch
+and the second fixture remain valid observations but this discrepancy must
+stay disclosed. Negative-boundary, interruption, and formal two-epoch
+comparator evidence still remain open. Official practice and scored runs
+remain unstarted.

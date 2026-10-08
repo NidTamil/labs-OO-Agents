@@ -11,6 +11,10 @@ provided source and vulnerable test for the candidate. Check the generic
 AddressSanitizer reference at https://clang.llvm.org/docs/AddressSanitizer.html
 through the documentation MCP's compiler route.
 
+For this synthetic capability check, ask the independent DeepSeek recon lane
+to call its read-only `gbrain_search` for general length-prefixed parser
+guidance from the isolated benchmark memory. An empty result is valid.
+
 For this synthetic capability check, also call the exact frozen recon Workflow
 with `scriptPath` `/workspace/.claude/workflows/recon.js` and a source-analysis
 `question` in `args`. Await its result before starting other children. Exercise
