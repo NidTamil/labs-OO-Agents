@@ -1036,3 +1036,48 @@ candidate explicitly pins that setting to `bypassPermissions` and has a
 failing-then-passing launcher regression. It requires a new image and another
 real VS Code-owned observation. The D: owned tunnel was repaired with an
 explicit SSH config and verified to stay connected with strict host-key checks.
+
+The v26g image pins both Machine settings:
+`claudeCode.allowDangerouslySkipPermissions: true` and
+`claudeCode.initialPermissionMode: bypassPermissions`. In a real VS Code-owned,
+provider-free native calibration on the isolated SunChaser checkout, the
+official extension logged `permission mode: bypassPermissions, version: 2.1.289`.
+That log line was observed before the disposable container was removed; its raw
+bytes were not preserved as a signed artifact, so it is diagnostic evidence.
+The controller captured two pre-provider requests and one hook event, then
+exited successfully without dispatching a provider request. An independent
+calibration inspection verified the captured parent schema scope and 36 tools;
+request `request-000001.json` has SHA-256
+`b9fbcb60ae9d74d4a7cb57209ce225ef1f65280b320359a3942ed158d84a6ab8`.
+The calibration's disposable container was removed on successful exit, which
+explains the subsequent VS Code SSH disconnect. The owned D: window and tunnel
+were then closed. This is a valid provider-free inventory calibration, not a
+synthetic result or a live known-deny hook proof.
+
+The v26g image is `sha256:9619f7a8e203ae1af6672ce3267ab56134493010c9eb398ffbaf889a53718dc6`;
+its runtime identity file has SHA-256
+`3a1c0e125ce528078260085a3f39efe54554bf71e15f9925e100d0b94695f018`.
+The exact-source remote leaderboard suite passed 979 tests with five skips and
+two deselections, and image-mounted Node tests passed 39/39. A provisional
+inventory from the captured v26g schema contains all 35 approved entries:
+registry SHA-256 `4749bb516aeac29c6e8dfc1aad470ecbb8d240e9fac2bec66e955fe4ac3adc23`,
+bindings SHA-256 `84cbe78aa2d8382966d85eb3da076e02f1333e9ddc0822a6cd8ca672ab6c7005`,
+inventory SHA-256 `4d0415e3a5a668a30d377b1603aaa52218dcdb6ae7ba1202104b83d28b34b494`.
+The inventory is explicitly provisional: a VS Code-owned production
+`/native-tools/authorize` known-deny event under bypass, full native synthetic
+results on the new image, and independently attested two-epoch certification
+records remain open. No official practice or scored task has started.
+
+For the next diagnostic native run, a separate v26g probe input configuration
+was created at
+`/srv/sunchaser/runs/capability-freeze-20261008/synthetic-controller-config-v26g-probe.json`
+(SHA-256 `cca636956ddeb4c73ab688b33f586518f0df9f1d64f4d602ff9178234ec13b67`).
+`load_runtime_config` accepted its image, 35-entry registry and nine exact
+source-file hashes, producing configuration SHA-256
+`095fd395e1cf4fef71c91ac161b3dcec5b64cc44437d37abf22918a4df2749d4`.
+It is provisional launch input, not a re-freeze or certification record. The
+existing synthetic task can take a harmless, explicitly denied read as a
+runtime probe without changing its fixture source. The Windows Computer Use
+helper listed the VS Code window but could not bind it, returning `window id
+3933928 no longer belongs to Microsoft.VisualStudioCode; current owner is
+Microsoft.VisualStudioCode`; per its recovery guidance, no input was issued.
