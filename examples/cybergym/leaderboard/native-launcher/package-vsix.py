@@ -39,11 +39,14 @@ def main() -> None:
         "workflows/debug.js",
         "workflows/review.js",
     ):
-        files["extension/" + name] = (root / name).read_bytes()
+        # Git may check text sources out as CRLF on the Windows controller.
+        # Package canonical LF bytes so both hosts pin the same immutable VSIX.
+        files["extension/" + name] = (root / name).read_bytes().replace(b"\r\n", b"\n")
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(args.out, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for name, data in sorted(files.items()):
             info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.create_system = 3
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             archive.writestr(info, data)

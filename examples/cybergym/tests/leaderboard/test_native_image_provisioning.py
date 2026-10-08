@@ -4,10 +4,13 @@
 
 from __future__ import annotations
 
+import ast
 import gzip
+import hashlib
 import importlib.util
 import io
 import json
+import sys
 import tarfile
 from pathlib import Path
 from zipfile import ZipFile
@@ -15,6 +18,31 @@ from zipfile import ZipFile
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2] / "leaderboard/agent-image"
+
+
+def test_calibration_pins_exact_current_launcher_vsix(monkeypatch, tmp_path):
+    driver = (
+        Path(__file__).resolve().parents[2]
+        / "nooa_cybergym/leaderboard/native_calibration_driver.py"
+    )
+    constants = {
+        node.targets[0].id: node.value.value
+        for node in ast.parse(driver.read_text()).body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Constant)
+    }
+    packager = ROOT.parent / "native-launcher/package-vsix.py"
+    spec = importlib.util.spec_from_file_location("package_vsix", packager)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    output = tmp_path / "launcher.vsix"
+    monkeypatch.setattr(sys, "argv", [str(packager), "--out", str(output)])
+    module.main()
+    assert (
+        hashlib.sha256(output.read_bytes()).hexdigest() == constants["FROZEN_LAUNCHER_VSIX_SHA256"]
+    )
 
 
 def test_native_base_declares_clang_compiler_rt_for_fuzzing():

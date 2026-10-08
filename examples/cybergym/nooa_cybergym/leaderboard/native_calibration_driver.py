@@ -47,6 +47,7 @@ from .tool_services_runtime import _schema as registered_schema
 from .vulnerable_runtime import TOOL as VULNERABLE_TOOL
 
 TASK_ID = "synthetic:length-header"
+FROZEN_LAUNCHER_VSIX_SHA256 = "e104fef60d79798caae50365acf4e829e1366edd047c1caf5aa10f54e8d7eb40"
 _RELATIVE_TEMPLATE = Path("examples/cybergym/leaderboard/agent-template")
 _POLICY = Path("examples/cybergym/leaderboard/config/network-policy.json")
 _FIXTURE = Path("examples/cybergym/leaderboard/certification/fixtures/length-header")
@@ -159,7 +160,7 @@ def run(*, repo: Path, root: Path, native_runtime: Path, public_ssh_key: Path,
     runtime = json.loads(native_runtime.read_bytes())
     if (runtime.get("schema_version") != 1
         or runtime.get("vscode_commit") != "07f806f999227108933c2e30515b26eecc1fda74"
-        or runtime.get("launcher_vsix_sha256") != "865bba2eeea461b0dfaa71341e563615f12342db77a13d493eae753976b9d778"):
+        or runtime.get("launcher_vsix_sha256") != FROZEN_LAUNCHER_VSIX_SHA256):
         raise ValueError("calibration native runtime differs from built image")
     binary_sha = runtime["claude_binary_sha256"]
     extension_sha = runtime["claude_extension_sha256"]
