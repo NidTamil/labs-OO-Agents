@@ -357,6 +357,7 @@ def test_child_cannot_be_granted_dangerous_effects(effect):
         ("task_id", ""),
         ("attempt_id", ""),
         ("request_id", ""),
+        ("invocation_id", ""),
         ("paths", ("/workspace/source/../secret",)),
         ("paths", ["/workspace/source"]),
         ("data_scopes", ()),

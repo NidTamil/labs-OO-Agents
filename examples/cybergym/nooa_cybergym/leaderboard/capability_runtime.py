@@ -282,7 +282,9 @@ class NativeCapabilityBinding:
     def effects(self):
         return _effects(self.native_name)
 
-    def request(self, *, task_id, attempt_id, request_id, paths=(), routes=None):
+    def request(
+        self, *, task_id, attempt_id, request_id, invocation_id=None, paths=(), routes=None
+    ):
         """Also usable by a controller-owned advisory adapter with its real action ID."""
         return CapabilityRequest(
             self.capability_id,
@@ -299,6 +301,7 @@ class NativeCapabilityBinding:
             task_id,
             attempt_id,
             request_id,
+            invocation_id,
         )
 
 
@@ -809,6 +812,7 @@ class CapabilityRuntime:
             task_id=call.task_id,
             attempt_id=call.attempt_id,
             request_id=call.request_id,
+            invocation_id=call.tool_id,
             paths=paths,
             routes=routes,
         )
@@ -915,6 +919,7 @@ class CapabilityRuntime:
                 task_id=action.task_id,
                 attempt_id=action.attempt_id,
                 request_id=action.action_id,
+                invocation_id=action.action_id,
                 paths=paths,
             )
             return (

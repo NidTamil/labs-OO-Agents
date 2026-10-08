@@ -321,6 +321,19 @@ def test_mcp_memory_and_document_adapters_use_real_call_identity(tmp_path):
         docs.documentation_admission(doc_call, "documentation/python/reference-v1")
 
 
+def test_authorization_audit_identifies_each_native_tool_use(tmp_path):
+    audit = Audit()
+    gate = runtime(bundle(tmp_path), audit=audit)
+    first = native("Read", {"file_path": "/workspace/src/a.c"})
+    second = replace(first, tool_id="tool-2")
+
+    assert gate.authorize(first) is True
+    assert gate.authorize(second) is True
+    events = [event for event in audit.events if hasattr(event, "request")]
+    assert [event.request.request_id for event in events] == ["request-1", "request-1"]
+    assert [event.request.invocation_id for event in events] == ["tool-1", "tool-2"]
+
+
 def test_bootstrap_rejects_failed_tests_and_changed_files(tmp_path):
     bundle(tmp_path)
     pin_file = ArtifactPin("service.bin", tmp_path / "service.bin", "f" * 64)
@@ -479,6 +492,7 @@ def test_advisory_action_has_distinct_real_identity_and_child_authority(
     assert gate.authorize_advisory(action, args) is True
     event = next(e for e in audit.events if hasattr(e, "request"))
     assert event.role is Role.CHILD and event.request.request_id == "action-1"
+    assert event.request.invocation_id == "action-1"
     assert event.tool_id == "advisory__" + name
     assert gate.authorize_advisory(replace(action, arguments_sha256="f" * 64), args) is False
     assert gate.authorize_advisory(replace(action, task_id="other"), args) is False

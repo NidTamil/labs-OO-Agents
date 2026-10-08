@@ -333,6 +333,7 @@ class CapabilityRequest:
     task_id: str
     attempt_id: str
     request_id: str
+    invocation_id: str | None = None
 
     def __post_init__(self) -> None:
         for field in (
@@ -344,6 +345,8 @@ class CapabilityRequest:
             "request_id",
         ):
             _text(getattr(self, field), field)
+        if self.invocation_id is not None:
+            _text(self.invocation_id, "invocation_id")
         if type(self.identity) is not ToolIdentity:
             raise TypeError("identity must be the adapter's observed immutable ToolIdentity")
         _digest(self.adapter_digest, "adapter_digest")
