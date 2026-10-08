@@ -154,7 +154,10 @@ def entries(value):
  finally: os.close(fd)
 operation=a["operation"];result={"operation":operation,"path":path,"truncated":False}
 if operation=="read":
- lines=read_file(path).splitlines();start=a.get("start_line",1);limit=a.get("max_lines",300)
+ try: lines=read_file(path).splitlines()
+ except UnicodeError:
+  result["error"]="non_utf8_source";lines=[]
+ start=a.get("start_line",1);limit=a.get("max_lines",300)
  result["lines"]=[{"line":i+1,"text":line[:8192],"line_truncated":len(line)>8192} for i,line in enumerate(lines) if start<=i+1<start+limit]
  result["truncated"]=start+limit-1<len(lines)
 elif operation=="list":

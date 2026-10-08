@@ -110,6 +110,31 @@ def test_local_read_is_fixed_nonshell_exec_and_inspects_actual_completion(fixtur
         )
 
 
+@pytest.mark.skipif(os.name == "nt", reason="source reader runs in Linux task containers")
+def test_local_reader_reports_non_utf8_source_without_exposing_binary_bytes(tmp_path):
+    from nooa_cybergym.leaderboard.advisory_tools_runtime import _SOURCE_QUERY
+
+    root = tmp_path / "src"
+    root.mkdir()
+    binary = root / "candidate.bin"
+    binary.write_bytes(b"prefix\xff\x00secret")
+    request = {"roots": [str(root)], "arguments": {"operation": "read", "path": str(binary)}}
+    completed = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", _SOURCE_QUERY, json.dumps(request)],
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0
+    assert completed.stderr == b""
+    assert json.loads(completed.stdout) == {
+        "operation": "read",
+        "path": str(binary),
+        "truncated": False,
+        "error": "non_utf8_source",
+        "lines": [],
+    }
+
+
 @pytest.mark.parametrize(
     "path",
     ["/etc/passwd", "/workspace/output/poc", "/workspace/src/../secret", "/workspace/src//a.c"],
