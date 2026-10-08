@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,10 @@ from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.ledger import SignedEnvelope
 
 from .capabilities import CapabilityRegistry, Role, Status
+from .deepseek import CONTEXT_TOKENS as _DEEPSEEK_CONTEXT_TOKENS
+from .deepseek import ENDPOINT as _DEEPSEEK_ENDPOINT
+from .deepseek import MAX_OUTPUT_TOKENS as _DEEPSEEK_MAX_OUTPUT_TOKENS
+from .deepseek import MODEL as _DEEPSEEK_MODEL
 from .preflight import _FORBIDDEN_ENV, _FORBIDDEN_PATHS
 
 _MAX_JSON = 16 * 1024 * 1024
@@ -81,6 +86,21 @@ class VerifiedPrimaryUsage:
     input_tokens: int
     output_tokens: int
     cache_tokens: int
+    provider_request_ids: tuple[str, ...]
+    observed_version: str | None
+    system_fingerprint: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedDeepSeekRoleUsage:
+    """Controller-observed provider requests and tokens for one advisory role."""
+
+    requests: int
+    incomplete_requests: int
+    input_tokens: int
+    output_tokens: int
+    cache_tokens: int
+    elapsed_seconds: float
     provider_request_ids: tuple[str, ...]
     observed_version: str | None
     system_fingerprint: str | None
@@ -411,6 +431,194 @@ def verify_primary_model_usage(
         version,
         fingerprint,
     )
+
+
+def verify_deepseek_model_usage(
+    evidence_root: Path,
+    *,
+    task_id: str,
+    attempt_id: str,
+    registry_sha256: str,
+    policy_sha256: str,
+) -> dict[str, VerifiedDeepSeekRoleUsage]:
+    """Verify all three controller-owned DeepSeek roles from the chained log."""
+    root = Path(evidence_root)
+    _require(
+        root.is_absolute() and root.is_dir() and not root.is_symlink(),
+        "DeepSeek evidence root invalid",
+    )
+    _require(root.resolve(strict=True) == root, "DeepSeek evidence root not canonical")
+    for digest in (registry_sha256, policy_sha256):
+        _require(
+            type(digest) is str
+            and len(digest) == 64
+            and all(char in "0123456789abcdef" for char in digest),
+            "DeepSeek frozen digest invalid",
+        )
+    audit_path = _evidence_child(root, str(root / "runtime-events.jsonl"))
+    verify_audit_chain(audit_path, task_id=task_id, attempt_id=attempt_id)
+    requested: dict[str, dict[str, Any]] = {}
+    terminal: dict[str, dict[str, Any]] = {}
+    settings = {
+        "model": _DEEPSEEK_MODEL,
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "max",
+        "max_tokens": _DEEPSEEK_MAX_OUTPUT_TOKENS,
+    }
+    for row in _json_lines(audit_path):
+        event = row.get("event")
+        if type(event) is not dict or event.get("event") not in {"request", "response", "failure"}:
+            continue
+        if event.get("role") not in _ADVISORY_ROLES:
+            continue
+        request_id = event.get("request_id")
+        failure_digest = event.get("failure_evidence_digest")
+        request_digest = event.get("request_sha256")
+        _require(
+            type(request_id) is str
+            and bool(request_id)
+            and type(event.get("request_number")) is int
+            and event["request_number"] > 0
+            and type(event.get("shared_request_number")) is int
+            and event["shared_request_number"] > 0
+            and type(request_digest) is str
+            and len(request_digest) == 64
+            and all(char in "0123456789abcdef" for char in request_digest)
+            and event.get("task_id") == task_id
+            and event.get("attempt_id") == attempt_id
+            and event.get("registry_digest") == registry_sha256
+            and event.get("policy_digest") == policy_sha256
+            and event.get("endpoint") == _DEEPSEEK_ENDPOINT
+            and event.get("requested_model") == _DEEPSEEK_MODEL
+            and event.get("request_settings") == settings
+            and (
+                (
+                    type(failure_digest) is str
+                    and len(failure_digest) == 64
+                    and all(char in "0123456789abcdef" for char in failure_digest)
+                )
+                if event["role"] == "conditional_debug_recovery"
+                else failure_digest is None
+            ),
+            "DeepSeek request identity or settings invalid",
+        )
+        destination = requested if event["event"] == "request" else terminal
+        _require(request_id not in destination, "DeepSeek request duplicated")
+        destination[request_id] = event
+    _require(
+        requested.keys() == terminal.keys()
+        and {row["role"] for row in requested.values()} == _ADVISORY_ROLES,
+        "DeepSeek role request lifecycle incomplete",
+    )
+
+    used_provider_ids: set[str] = set()
+    metadata: set[tuple[str | None, str | None]] = set()
+    accumulators = {
+        role: {
+            "requests": 0,
+            "incomplete": 0,
+            "input": 0,
+            "output": 0,
+            "cache": 0,
+            "seconds": 0.0,
+            "provider_ids": [],
+        }
+        for role in _ADVISORY_ROLES
+    }
+    for request_id, request in requested.items():
+        response = terminal[request_id]
+        role = request["role"]
+        _require(
+            response.get("role") == role
+            and response.get("request_settings") == request.get("request_settings")
+            and response.get("failure_evidence_digest") == request.get("failure_evidence_digest")
+            and response.get("request_sha256") == request.get("request_sha256")
+            and response.get("request_number") == request.get("request_number")
+            and response.get("shared_request_number") == request.get("shared_request_number"),
+            "DeepSeek response identity mismatch",
+        )
+        state = accumulators[role]
+        if response["event"] == "failure":
+            state["incomplete"] += 1
+            continue
+        usage = response.get("usage")
+        raw = usage.get("provider_usage") if type(usage) is dict else None
+        provider_id = response.get("provider_request_id")
+        version = response.get("model_version")
+        fingerprint = response.get("system_fingerprint")
+        duration = response.get("duration_seconds")
+        _require(
+            response.get("returned_model") == _DEEPSEEK_MODEL
+            and response.get("http_status") == 200
+            and type(provider_id) is str
+            and bool(provider_id)
+            and provider_id not in used_provider_ids
+            and type(duration) in (int, float)
+            and math.isfinite(duration)
+            and duration > 0
+            and (version is None or (type(version) is str and bool(version)))
+            and (fingerprint is None or (type(fingerprint) is str and bool(fingerprint)))
+            and type(usage) is dict
+            and type(raw) is dict,
+            "DeepSeek response metadata invalid",
+        )
+        names = (
+            "input_tokens",
+            "output_tokens",
+            "counted_tokens",
+            "cache_hit_input_tokens",
+            "cache_miss_input_tokens",
+        )
+        _require(
+            all(type(usage.get(name)) is int and usage[name] >= 0 for name in names)
+            and usage["input_tokens"] + usage["output_tokens"] == usage["counted_tokens"]
+            and usage["cache_hit_input_tokens"] + usage["cache_miss_input_tokens"]
+            == usage["input_tokens"]
+            and usage["output_tokens"] <= _DEEPSEEK_MAX_OUTPUT_TOKENS
+            and usage["counted_tokens"] <= _DEEPSEEK_CONTEXT_TOKENS
+            and all(
+                raw.get(source) == usage[target]
+                for source, target in (
+                    ("prompt_tokens", "input_tokens"),
+                    ("completion_tokens", "output_tokens"),
+                    ("total_tokens", "counted_tokens"),
+                    ("prompt_cache_hit_tokens", "cache_hit_input_tokens"),
+                    ("prompt_cache_miss_tokens", "cache_miss_input_tokens"),
+                )
+            )
+            and (
+                usage.get("reasoning_tokens") is None
+                or (
+                    type(usage["reasoning_tokens"]) is int
+                    and 0 <= usage["reasoning_tokens"] <= usage["output_tokens"]
+                )
+            ),
+            "DeepSeek usage mismatch",
+        )
+        state["requests"] += 1
+        state["input"] += usage["input_tokens"]
+        state["output"] += usage["output_tokens"]
+        state["cache"] += usage["cache_hit_input_tokens"]
+        state["seconds"] += duration
+        state["provider_ids"].append(provider_id)
+        used_provider_ids.add(provider_id)
+        metadata.add((version, fingerprint))
+    _require(len(metadata) <= 1, "DeepSeek provider metadata drift")
+    version, fingerprint = next(iter(metadata)) if metadata else (None, None)
+    return {
+        role: VerifiedDeepSeekRoleUsage(
+            state["requests"],
+            state["incomplete"],
+            state["input"],
+            state["output"],
+            state["cache"],
+            state["seconds"],
+            tuple(state["provider_ids"]),
+            version,
+            fingerprint,
+        )
+        for role, state in accumulators.items()
+    }
 
 
 def verify_completed_capability_uses(

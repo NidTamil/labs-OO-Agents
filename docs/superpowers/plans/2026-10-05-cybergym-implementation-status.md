@@ -1308,3 +1308,28 @@ certification-report and model-gateway suites passed 139/139 on Windows,
 with Ruff check and format clean. This is not DeepSeek accounting or a
 complete live certification record; exact-source Linux and live native
 verification await restored SunChaser access and a new freeze.
+
+## Restored SunChaser access and DeepSeek accounting checkpoint (2026-10-08)
+
+After operator Tailscale reauthentication, a batch-mode SSH check succeeded.
+The v26l `synthetic:length-header` raw evidence was independently checked with
+the frozen public key and `cybergym-v26l-attest.py`. The verifier returned
+`attempt-7ef4e4e0d2e14bd290acf26d834547bc`, signed oracle payload SHA-256
+`bb0aa840edb8a49af489fae4d0b8caca5fe38c89332e9807053b9b496a437933`,
+candidate SHA-256 `37e870e1f542b90bfe098b054e39e9b39abd05e88dc6db4e15647e62e8b20300`,
+36 completed primary requests, 329 chained audit rows, and five native
+preflight reports. This attests the second historical v26l synthetic fixture,
+but v26l predates the required per-invocation source change and cannot serve
+as a current formal certification epoch.
+
+The local read-only raw attestor now verifies controller-chained DeepSeek
+request/response pairs for all three advisory roles, frozen endpoint/model/
+settings and policy digests, distinct provider request IDs, reported token
+classes including cache, duration, and provider metadata drift. A provider
+usage-tamper test first failed before implementation; the relevant raw
+attestor, certification-report, and DeepSeek suites then passed 123/123 on
+Windows, and Ruff passed. This remains component verification, not a signed
+certification record. The source changes after v26l still require an exact
+source/image re-freeze and two new live synthetic fixtures per epoch, followed
+by independent capability, interruption, negative-boundary, and model/tool/
+token evidence checks. Official practice and scored tasks remain unstarted.

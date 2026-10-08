@@ -25,6 +25,7 @@ from nooa_cybergym.leaderboard.raw_fixture_attestor import (
     _verify_preflights,
     verify_audit_chain,
     verify_completed_capability_uses,
+    verify_deepseek_model_usage,
     verify_primary_model_usage,
 )
 from xeus_cybergym.canonical import canonical_json
@@ -332,4 +333,121 @@ def test_primary_model_totals_require_matching_request_and_usage_rows(tmp_path):
     with pytest.raises(RawEvidenceError, match="primary model usage mismatch"):
         verify_primary_model_usage(
             tmp_path, task_id="synthetic:chunk-table", attempt_id="attempt-one"
+        )
+
+
+def test_deepseek_roles_require_paired_requests_and_observed_tokens(tmp_path):
+    registry_digest = "b" * 64
+    policy_digest = "c" * 64
+    roles = (
+        "independent_recon",
+        "conditional_debug_recovery",
+        "final_adversarial_critic",
+    )
+    events = []
+    for index, role in enumerate(roles, start=1):
+        request = {
+            "event": "request",
+            "role": role,
+            "task_id": "synthetic:chunk-table",
+            "attempt_id": "attempt-one",
+            "request_id": f"deepseek-{index}",
+            "request_number": 1,
+            "shared_request_number": index,
+            "request_sha256": "e" * 64,
+            "registry_digest": registry_digest,
+            "policy_digest": policy_digest,
+            "endpoint": "https://api.deepseek.com/chat/completions",
+            "requested_model": "deepseek-flash",
+            "request_settings": {
+                "model": "deepseek-flash",
+                "thinking": {"type": "enabled"},
+                "reasoning_effort": "max",
+                "max_tokens": 128000,
+            },
+            "failure_evidence_digest": "d" * 64 if role == "conditional_debug_recovery" else None,
+        }
+        events.append(request)
+        events.append(
+            {
+                **request,
+                "event": "response",
+                "returned_model": "deepseek-flash",
+                "provider_request_id": f"provider-{index}",
+                "model_version": None,
+                "system_fingerprint": None,
+                "duration_seconds": 2.0,
+                "http_status": 200,
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 3,
+                    "counted_tokens": 13,
+                    "cache_hit_input_tokens": 4,
+                    "cache_miss_input_tokens": 6,
+                    "reasoning_tokens": 1,
+                    "provider_usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 3,
+                        "total_tokens": 13,
+                        "prompt_cache_hit_tokens": 4,
+                        "prompt_cache_miss_tokens": 6,
+                    },
+                },
+            }
+        )
+    events.extend(
+        (
+            {
+                "event": "synthetic_oracle_observed",
+                "oracle_true": True,
+                "evidence_sha256": "a" * 64,
+            },
+            {"event": "memory_oracle_episode_written", "actor": "controller"},
+        )
+    )
+
+    def write_events():
+        rows = []
+        prior = "0" * 64
+        for index, event in enumerate(events, start=1):
+            row = _row(index, prior, event)
+            rows.append(row)
+            prior = row["sha256"]
+        (tmp_path / "runtime-events.jsonl").write_bytes(
+            b"\n".join(canonical_json(row) for row in rows) + b"\n"
+        )
+
+    write_events()
+    result = verify_deepseek_model_usage(
+        tmp_path,
+        task_id="synthetic:chunk-table",
+        attempt_id="attempt-one",
+        registry_sha256=registry_digest,
+        policy_sha256=policy_digest,
+    )
+    assert set(result) == set(roles)
+    assert all(item.requests == 1 and item.input_tokens == 10 for item in result.values())
+    assert sum(item.cache_tokens for item in result.values()) == 12
+
+    events[1]["usage"]["provider_usage"]["prompt_tokens"] = 11
+    write_events()
+    with pytest.raises(RawEvidenceError, match="DeepSeek usage mismatch"):
+        verify_deepseek_model_usage(
+            tmp_path,
+            task_id="synthetic:chunk-table",
+            attempt_id="attempt-one",
+            registry_sha256=registry_digest,
+            policy_sha256=policy_digest,
+        )
+
+    events[1]["usage"]["provider_usage"]["prompt_tokens"] = 10
+    events[1]["request_sha256"] = "f" * 64
+    write_events()
+    with pytest.raises(RawEvidenceError, match="DeepSeek response identity mismatch"):
+        verify_deepseek_model_usage(
+            tmp_path,
+            task_id="synthetic:chunk-table",
+            attempt_id="attempt-one",
+            registry_sha256=registry_digest,
+            policy_sha256=policy_digest,
         )
