@@ -20,6 +20,8 @@ from typing import Any, Protocol
 from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.ledger import SignedEnvelope
 
+from .capabilities import CapabilityRegistry, Role, Status
+
 _MAX_JSON = 16 * 1024 * 1024
 _ZERO = "0" * 64
 _ADVISORY_ROLES = frozenset(
@@ -248,6 +250,116 @@ def _verify_live_activity(root: Path, *, task_id: str, attempt_id: str) -> int:
         "native model, test, or memory tool evidence absent",
     )
     return len(primary)
+
+
+def verify_completed_capability_uses(
+    evidence_root: Path,
+    *,
+    registry: CapabilityRegistry,
+    task_id: str,
+    attempt_id: str,
+) -> dict[str, int]:
+    """Count only audited invocations with an exact completed result.
+
+    This proves per-fixture use, not full registry coverage across an epoch.
+    The caller must pin the registry and independently verify the fixture's
+    signed oracle and frozen identities before using these counts.
+    """
+    root = Path(evidence_root)
+    _require(
+        type(registry) is CapabilityRegistry
+        and root.is_absolute()
+        and root.is_dir()
+        and not root.is_symlink()
+        and root.resolve(strict=True) == root,
+        "capability evidence inputs invalid",
+    )
+    audit_path = _evidence_child(root, str(root / "runtime-events.jsonl"))
+    verify_audit_chain(audit_path, task_id=task_id, attempt_id=attempt_id)
+    native_path = _evidence_child(root, str(root / "native-tools.sqlite"))
+    advisory_path = _evidence_child(root, str(root / "advisory.sqlite"))
+    approved = {
+        entry.capability_id: entry for entry in registry.entries if entry.status is Status.APPROVED
+    }
+
+    try:
+        with sqlite3.connect(f"file:{native_path.as_posix()}?mode=ro", uri=True) as db:
+            native = {}
+            for row in db.execute(
+                "SELECT t.id,t.request,t.name,t.status,r.role "
+                "FROM tools t JOIN requests r ON r.id=t.request"
+            ):
+                _require(row[0] not in native, "native completion identity duplicated")
+                native[row[0]] = row[1:]
+        with sqlite3.connect(f"file:{advisory_path.as_posix()}?mode=ro", uri=True) as db:
+            advisory = {}
+            for role, payload in db.execute(
+                "SELECT role,payload FROM events WHERE event='tool_result'"
+            ):
+                item = json.loads(payload)
+                observation = item.get("observation") if type(item) is dict else None
+                action_id = observation.get("action_id") if type(observation) is dict else None
+                _require(
+                    type(action_id) is str
+                    and bool(action_id)
+                    and action_id not in advisory
+                    and type(item.get("action")) is str,
+                    "advisory completion identity invalid",
+                )
+                advisory[action_id] = (item["action"], role)
+    except (sqlite3.DatabaseError, ValueError, TypeError) as error:
+        raise RawEvidenceError("capability result ledger invalid") from error
+
+    counts: dict[str, int] = {}
+    seen: dict[str, tuple[str, str, str, str]] = {}
+    for row in _json_lines(audit_path):
+        event = row.get("event")
+        if type(event) is not dict or event.get("disposition") != "allowed":
+            continue
+        request = event.get("request")
+        capability_id = event.get("capability_id")
+        entry = approved.get(capability_id) if type(capability_id) is str else None
+        role_name = event.get("role")
+        try:
+            role = Role(role_name)
+        except (TypeError, ValueError):
+            role = None
+        _require(
+            entry is not None
+            and type(request) is dict
+            and type(request.get("invocation_id")) is str
+            and bool(request["invocation_id"])
+            and type(event.get("request_id")) is str
+            and event["request_id"] == request.get("request_id")
+            and event.get("registry_digest") == registry.digest
+            and event.get("tool_id") == entry.identity.tool_id
+            and event.get("task_id") == task_id
+            and event.get("attempt_id") == attempt_id
+            and role in entry.roles,
+            "allowed capability audit identity invalid",
+        )
+        invocation_id = request["invocation_id"]
+        identity = (capability_id, event["request_id"], event["tool_id"], role_name)
+        prior = seen.get(invocation_id)
+        _require(prior is None or prior == identity, "capability invocation reused ambiguously")
+        if prior is not None:
+            continue
+        seen[invocation_id] = identity
+        if event["tool_id"].startswith("advisory__"):
+            result = advisory.get(invocation_id)
+            completed = (
+                role is Role.CHILD
+                and event["request_id"] == invocation_id
+                and result is not None
+                and result[0] == event["tool_id"].removeprefix("advisory__")
+                and result[1] in _ADVISORY_ROLES
+            )
+        else:
+            result = native.get(invocation_id)
+            completed = result == (event["request_id"], event["tool_id"], "completed", role_name)
+        if completed:
+            counts[capability_id] = counts.get(capability_id, 0) + 1
+    return counts
 
 
 def verify_live_synthetic_fixture(
