@@ -1707,3 +1707,28 @@ attest with the repeat-two pinned attestor, and continue the second fixture
 serially. Negative-boundary and interruption probes, complete attested
 certification records, and the comparator remain open. Official practice and
 scored tasks remain unstarted.
+
+## v26o repeat rejection and v26p fixture correction (2026-10-09)
+
+The first fixture of the independent v26o repeat,
+`synthetic-native-v26or2a-20261008`, returned `oracle_true=true`,
+`boundary_failed=false`, and `provider_dispatched=true` under the pinned
+image and repeat-two freeze. Its owned VS Code window and tunnel were closed.
+The exact-source raw attestor rejected the result with `native model, test,
+or memory tool evidence absent`: the native tool ledger shows completed Bash,
+`run_test`, and `mcp__gbrain__recall`, but no completed native
+`mcp__gbrain__search`. The attestor wrote no passing JSON. This fixture is
+not a certification pass, and the second v26o repeat fixture was not started.
+The earlier first v26o pair remains a valid independently attested synthetic
+observation of 35/35 aggregate coverage, but cannot substitute for two
+complete repeated records.
+
+Ruling: both frozen synthetic descriptions said the native agent should use
+GBrain "recall or search", while the raw attestor requires both per fixture.
+The wording made native search optional and caused this observed repeat
+failure. The descriptions now explicitly request separate native
+`mcp__gbrain__recall` and `mcp__gbrain__search` calls and both results. This
+changes frozen fixture bytes, so v26o cannot be reused for certification;
+a new exact-source inventory/freeze and fresh repeated live synthetic runs
+are required. The local runtime-config test passed 21 with one skip using a
+D: basetemp. No official practice or scored task has been started.
