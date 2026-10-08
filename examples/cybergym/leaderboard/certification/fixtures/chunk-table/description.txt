@@ -20,8 +20,18 @@ same source. Empty search or reference results are observations; use the
 actual source and vulnerable test to solve the parser task, and retain the
 single GLM-selected final.
 
+Also exercise the native `Agent` tool with `subagent_type` `cybergym-recon`
+once for independent source analysis, and call native
+`mcp__clangd__definition` yourself on a symbol in `/workspace/src/parser.c`.
+Wait for the recon child to finish before starting another native child.
+These calls verify approved tool plumbing; they do not replace the evidence
+from the actual vulnerable test.
+
 After a nonzero result from the authoritative vulnerable `run_test`, call
 `mcp__advisor__debug` once with a concise question about that
 observed failure. Use its read-only advice to check the candidate before the
 final critic and selection. Do not call debug before a nonzero test; if the
 first test does not fail, keep searching and testing.
+After that observed failure, also call the native `Agent` tool with
+`subagent_type` `cybergym-debug` once for a read-only independent diagnosis.
+Wait for the child result before the final critic and selection.
