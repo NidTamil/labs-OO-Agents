@@ -25,6 +25,7 @@ from nooa_cybergym.leaderboard.raw_fixture_attestor import (
     _verify_preflights,
     verify_audit_chain,
     verify_completed_capability_uses,
+    verify_primary_model_usage,
 )
 from xeus_cybergym.canonical import canonical_json
 
@@ -268,4 +269,67 @@ def test_capability_use_requires_exact_completed_invocation(tmp_path):
             registry=registry,
             task_id="synthetic:chunk-table",
             attempt_id="attempt-one",
+        )
+
+
+def test_primary_model_totals_require_matching_request_and_usage_rows(tmp_path):
+    request = {
+        "task_id": "synthetic:chunk-table",
+        "attempt_id": "attempt-one",
+        "request_id": "model-1",
+        "role": "primary",
+        "configured_model": "glm-5.3[1m]",
+    }
+    reserved = {**request, "event": "request_reserved"}
+    terminal = {
+        **request,
+        "event": "request_terminal",
+        "outcome": "completed",
+        "usage_status": "observed",
+        "returned_model": "glm-5.3",
+        "provider_request_id": "provider-1",
+    }
+    usage = {
+        "event": "usage",
+        "request_id": "model-1",
+        "usage_status": "observed",
+        "returned_model": "glm-5.3",
+        "provider_request_id": "provider-1",
+        "input_tokens": 10,
+        "output_tokens": 3,
+        "cache_read_tokens": 4,
+        "cache_creation_tokens": 2,
+        "counted_tokens": 19,
+    }
+    (tmp_path / "model-requests.jsonl").write_bytes(
+        canonical_json(reserved) + b"\n" + canonical_json(terminal) + b"\n"
+    )
+    usage_path = tmp_path / "model-usage.jsonl"
+    usage_path.write_bytes(canonical_json(usage) + b"\n")
+
+    result = verify_primary_model_usage(
+        tmp_path, task_id="synthetic:chunk-table", attempt_id="attempt-one"
+    )
+    assert result.completed_requests == 1
+    assert result.incomplete_requests == 0
+    assert (result.input_tokens, result.output_tokens, result.cache_tokens) == (10, 3, 6)
+    assert result.provider_request_ids == ("provider-1",)
+
+    usage["provider_request_id"] = "provider-other"
+    usage_path.write_bytes(canonical_json(usage) + b"\n")
+    with pytest.raises(RawEvidenceError, match="primary model usage mismatch"):
+        verify_primary_model_usage(
+            tmp_path, task_id="synthetic:chunk-table", attempt_id="attempt-one"
+        )
+
+    usage["provider_request_id"] = "provider-1"
+    terminal["model_version"] = "release-one"
+    usage["model_version"] = "release-other"
+    (tmp_path / "model-requests.jsonl").write_bytes(
+        canonical_json(reserved) + b"\n" + canonical_json(terminal) + b"\n"
+    )
+    usage_path.write_bytes(canonical_json(usage) + b"\n")
+    with pytest.raises(RawEvidenceError, match="primary model usage mismatch"):
+        verify_primary_model_usage(
+            tmp_path, task_id="synthetic:chunk-table", attempt_id="attempt-one"
         )

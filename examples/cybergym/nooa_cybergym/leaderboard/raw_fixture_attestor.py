@@ -72,6 +72,20 @@ class VerifiedFixture:
     primary_completed_requests: int
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedPrimaryUsage:
+    """Observed GLM requests and tokens; failed requests remain separately counted."""
+
+    completed_requests: int
+    incomplete_requests: int
+    input_tokens: int
+    output_tokens: int
+    cache_tokens: int
+    provider_request_ids: tuple[str, ...]
+    observed_version: str | None
+    system_fingerprint: str | None
+
+
 def _require(condition: bool, reason: str) -> None:
     if not condition:
         raise RawEvidenceError(reason)
@@ -292,6 +306,111 @@ def _verify_live_activity(root: Path, *, task_id: str, attempt_id: str) -> int:
         "native model, test, or memory tool evidence absent",
     )
     return len(primary)
+
+
+def verify_primary_model_usage(
+    evidence_root: Path, *, task_id: str, attempt_id: str
+) -> VerifiedPrimaryUsage:
+    """Join every reserved GLM request, terminal result, and provider usage row."""
+    root = Path(evidence_root)
+    _require(
+        root.is_absolute() and root.is_dir() and not root.is_symlink(),
+        "model evidence root invalid",
+    )
+    _require(root.resolve(strict=True) == root, "model evidence root not canonical")
+    requests_path = _evidence_child(root, str(root / "model-requests.jsonl"))
+    usage_path = _evidence_child(root, str(root / "model-usage.jsonl"))
+    reserved: dict[str, dict[str, Any]] = {}
+    terminal: dict[str, dict[str, Any]] = {}
+    for row in _json_lines(requests_path):
+        if row.get("role") != "primary" or row.get("event") not in {
+            "request_reserved",
+            "request_terminal",
+        }:
+            continue
+        request_id = row.get("request_id")
+        _require(
+            type(request_id) is str
+            and bool(request_id)
+            and row.get("task_id") == task_id
+            and row.get("attempt_id") == attempt_id
+            and row.get("configured_model") == "glm-5.3[1m]",
+            "primary model request identity invalid",
+        )
+        destination = reserved if row["event"] == "request_reserved" else terminal
+        _require(request_id not in destination, "primary model request duplicated")
+        destination[request_id] = row
+    _require(
+        bool(reserved) and reserved.keys() == terminal.keys(),
+        "primary model request lifecycle incomplete",
+    )
+    usage: dict[str, dict[str, Any]] = {}
+    for row in _json_lines(usage_path):
+        request_id = row.get("request_id")
+        if request_id not in reserved:
+            continue
+        _require(
+            row.get("event") == "usage" and request_id not in usage,
+            "primary model usage duplicated or malformed",
+        )
+        usage[request_id] = row
+    _require(usage.keys() == terminal.keys(), "primary model usage absent")
+
+    input_tokens = output_tokens = cache_tokens = incomplete = 0
+    provider_ids: list[str] = []
+    metadata: list[tuple[str | None, str | None]] = []
+    for request_id, result in terminal.items():
+        observed = usage[request_id]
+        if result.get("outcome") != "completed":
+            incomplete += 1
+            continue
+        numbers = (
+            observed.get("input_tokens"),
+            observed.get("output_tokens"),
+            observed.get("cache_read_tokens"),
+            observed.get("cache_creation_tokens"),
+        )
+        provider_id = result.get("provider_request_id")
+        model_version = result.get("model_version")
+        system_fingerprint = result.get("system_fingerprint")
+        _require(
+            result.get("usage_status") == "observed"
+            and result.get("returned_model") == "glm-5.3"
+            and observed.get("usage_status") == "observed"
+            and observed.get("returned_model") == "glm-5.3"
+            and type(provider_id) is str
+            and bool(provider_id)
+            and provider_id == observed.get("provider_request_id")
+            and provider_id not in provider_ids
+            and (model_version is None or (type(model_version) is str and bool(model_version)))
+            and (
+                system_fingerprint is None
+                or (type(system_fingerprint) is str and bool(system_fingerprint))
+            )
+            and model_version == observed.get("model_version")
+            and system_fingerprint == observed.get("system_fingerprint")
+            and all(type(value) is int and value >= 0 for value in numbers)
+            and type(observed.get("counted_tokens")) is int
+            and observed["counted_tokens"] == sum(numbers),
+            "primary model usage mismatch",
+        )
+        input_tokens += numbers[0]
+        output_tokens += numbers[1]
+        cache_tokens += numbers[2] + numbers[3]
+        provider_ids.append(provider_id)
+        metadata.append((model_version, system_fingerprint))
+    _require(len(set(metadata)) <= 1, "primary provider metadata drift")
+    version, fingerprint = metadata[0] if metadata else (None, None)
+    return VerifiedPrimaryUsage(
+        len(provider_ids),
+        incomplete,
+        input_tokens,
+        output_tokens,
+        cache_tokens,
+        tuple(provider_ids),
+        version,
+        fingerprint,
+    )
 
 
 def verify_completed_capability_uses(
