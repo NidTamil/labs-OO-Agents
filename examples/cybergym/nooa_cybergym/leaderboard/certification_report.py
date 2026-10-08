@@ -246,7 +246,13 @@ def _valid_tool_route(routes: tuple[str, ...], row: Mapping[str, Any]) -> bool:
     if "route" not in row:
         return False
     route = row["route"]
-    return (type(route) is str and route in routes) if routes else route is None
+    if not routes:
+        return route is None
+    if len(routes) == 1:
+        return type(route) is str and route == routes[0]
+    # Native Bash/run_test and Workflow reserve a bundle of logical routes at
+    # admission. Naming one arbitrary member would misstate what was enabled.
+    return type(route) is list and route == sorted(routes)
 
 
 def _valid_version_metadata(row: Mapping[str, Any]) -> bool:

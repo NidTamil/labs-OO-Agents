@@ -10,3 +10,12 @@ for /workspace/src/parser.c. An empty memory result is valid; rely on the
 provided source and vulnerable test for the candidate. Check the generic
 AddressSanitizer reference at https://clang.llvm.org/docs/AddressSanitizer.html
 through the documentation MCP's compiler route.
+
+For this synthetic capability check, ask the independent DeepSeek recon lane
+to exercise its read-only `local_read` search for `little_endian_u32`, then
+clangd definition, hover, and references on that symbol's call site in
+`/workspace/src/parser.c`, in addition to its usual source listing and
+document-symbol check. Exercise native clangd references yourself on the
+same source. Empty search or reference results are observations; use the
+actual source and vulnerable test to solve the parser task, and retain the
+single GLM-selected final.

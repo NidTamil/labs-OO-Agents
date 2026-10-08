@@ -10,3 +10,15 @@ for /workspace/src/parser.c. An empty memory result is valid; rely on the
 provided source and vulnerable test for the candidate. Check the generic
 AddressSanitizer reference at https://clang.llvm.org/docs/AddressSanitizer.html
 through the documentation MCP's compiler route.
+
+For this synthetic capability check, also call the exact frozen recon Workflow
+with `scriptPath` `/workspace/.claude/workflows/recon.js` and a source-analysis
+`question` in `args`. Await its result before starting other children. Exercise
+native clangd references and the VS Code diagnostics tool on
+`/workspace/src/parser.c`. Fetch the generic Python `struct` reference at
+`https://docs.python.org/3/library/struct.html` through the documentation
+MCP's Python route. Start a harmless short-lived background shell task under
+`/workspace/src` and cancel only that local task with `TaskStop` using the
+returned task ID; do not cancel a child or the solver session. These are
+calibration actions, not candidate evidence. Continue to solve the parser task
+and use the normal single finalizer.

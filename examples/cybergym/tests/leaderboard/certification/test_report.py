@@ -354,6 +354,42 @@ def test_route_less_native_capability_requires_no_route(complete_pair, local_rou
         assert "synthetic-run-a:undeclared tool or MCP route" in report.failures
 
 
+def test_multi_route_execution_capability_discloses_whole_admitted_route_set(complete_pair):
+    first, second, expected = complete_pair
+    native = replace(
+        _capability("native.execute", "Bash", "model-gateway"),
+        routes=("model-gateway", "registered-tool-gateway"),
+    )
+    registry = CapabilityRegistry((*expected.registry.entries, native))
+    expected = replace(
+        expected,
+        registry=registry,
+        binding=replace(expected.binding, capability_registry_sha256=registry.digest),
+        required_approved_capability_ids=expected.required_approved_capability_ids
+        | frozenset({native.capability_id}),
+    )
+    for run in (first, second):
+        run["hashes"] = expected.all_hashes
+        run["capabilities"]["enabled_ids"].append(native.capability_id)
+        run["capabilities"]["exercised_ids"].append(native.capability_id)
+        run["capabilities"]["tool_calls"].append(
+            {
+                "capability_id": native.capability_id,
+                "tool_id": "Bash",
+                "route": ["model-gateway", "registered-tool-gateway"],
+                "role": "parent",
+                "count": 1,
+            }
+        )
+        run["totals"]["tool_calls"] += 1
+    assert compare_runs(first, second, expected=expected).passed
+    second["capabilities"]["tool_calls"][-1]["route"] = "model-gateway"
+    assert (
+        "synthetic-run-b:undeclared tool or MCP route"
+        in compare_runs(first, second, expected=expected).failures
+    )
+
+
 def test_primary_client_context_suffix_has_pinned_wire_model(complete_pair):
     first, second, expected = complete_pair
     for run in (first, second):

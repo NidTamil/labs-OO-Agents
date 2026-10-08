@@ -986,3 +986,15 @@ It does not attest the missing nine capabilities, negative probes, interruption
 tests, epoch manifests or full certification; those remain open gates.
 The isolated Linux leaderboard suite with the new verifier passed 977 tests,
 with five skips and two deselections.
+
+The next candidate freeze updates only the task contract, the two synthetic
+fixture briefs, and the comparator's route disclosure. The contract now permits
+only the controller-pinned `scriptPath` form of native Workflow; inline and
+override forms remain denied by the existing runtime gate. The synthetic
+briefs request the previously absent read-only operations and a harmless local
+background-task cancellation through TaskStop. The comparator now requires
+multi-route execution capabilities to disclose the entire admitted route set
+instead of naming an arbitrary member. Focused workflow, staging, capability
+and comparator tests passed 97/97 on Windows. These are source and component
+results only; no live Workflow, TaskStop, missing read-tool use, or new freeze
+has yet been observed.
