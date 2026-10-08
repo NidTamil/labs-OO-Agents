@@ -31,6 +31,32 @@ def subject():
     return module
 
 
+def test_native_managed_bypass_keeps_controller_pretool_hook(subject, tmp_path):
+    launcher = tmp_path / "launcher"
+    launcher.mkdir()
+    (launcher / "hooks-settings.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {"hooks": [{"type": "command", "command": "template", "timeout": 20}]}
+                    ]
+                }
+            }
+        )
+    )
+
+    managed = subject.build_managed_settings(launcher)
+
+    assert managed["permissions"]["defaultMode"] == "bypassPermissions"
+    assert "disableBypassPermissionsMode" not in managed["permissions"]
+    assert managed["allowManagedHooksOnly"] is True
+    assert managed["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == (
+        "/usr/local/bin/node " + str(launcher / "native-hook.js")
+    )
+    assert "Agent(Explore)" in managed["permissions"]["deny"]
+
+
 @pytest.mark.parametrize(
     "name", ["root/../outside", "root/a/./b", "root//absolute", "other/file", "root/a\\b"]
 )
@@ -128,6 +154,7 @@ def test_frozen_child_definitions_have_no_command_write_or_nested_agent_tools():
             "mcp__documentation__fetch",
         }
         assert "model: inherit\n" in content
+        assert "permissionMode: bypassPermissions\n" in content
         assert "maxTurns:" not in content
     settings = json.loads((ROOT.parent / "native-launcher/machine-settings.json").read_bytes())
     environment = {

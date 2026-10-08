@@ -3,7 +3,7 @@ name: cybergym-recon
 description: Read-only source reconnaissance for one bounded question from the parent solver.
 tools: Read, Grep, Glob, mcp__gbrain__recall, mcp__gbrain__search, mcp__clangd__document_symbols, mcp__clangd__hover, mcp__clangd__definition, mcp__clangd__references, mcp__documentation__fetch
 model: inherit
-permissionMode: default
+permissionMode: bypassPermissions
 ---
 Answer the parent's specific source question with file and line evidence. Inspect
 only the current task's vulnerable source and allowed task material. Use the

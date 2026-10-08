@@ -823,3 +823,29 @@ concrete per-task worker/executor, final signed receipt through that worker,
 refreshed freeze for all source and host pins, matching full synthetic runs,
 and certification remain outstanding. Neither the two authorised practice
 tasks nor the official scored campaign has been started.
+
+## Native bypass permission probe (2026-10-08 local)
+
+The native image installer now selects `bypassPermissions` in its root-owned
+managed settings, removes `disableBypassPermissionsMode`, and selects bypass for
+the frozen recon/debug/review definitions. Managed `PreToolUse`, the controller
+authorization route, `allowManagedHooksOnly`, and the existing deny list remain.
+The focused provisioning tests were observed failing before the change and
+passing afterward (15/15); Ruff check and format passed.
+
+Before any new freeze, a disposable offline probe exercised the pinned Linux
+Claude Code 2.1.289 binary with bypass selected. A deterministic model requested
+`Bash(touch /workspace/denied-sentinel)` inside an isolated internal-network
+container. The installed native hook posted that exact `PreToolUse` request to
+`/native-tools/authorize`; the probe gateway returned `deny`, and the sentinel
+was absent. This was repeated against the rebuilt candidate image's installed
+settings and hook, without a settings overlay. The candidate image ID is
+`sha256:286c03857c95dc4609fafde97176cb7accabd9e6e1ba667e49fe96091ee95cc6`;
+its managed settings hash is
+`71756fca0ca20033ce3236002345d0c2fc818f36e1777f51b2fb592a676e94ad`.
+Raw disposable evidence is at
+`/srv/sunchaser/runs/native-bypass-pretool-probe-20261008-b/`.
+The gateway in this probe was deterministic rather than the campaign controller,
+so this is evidence for Claude's bypass/hook ordering, not a certification of
+the full controller path. Restaging, source and image re-freeze, live calibration,
+inventory refresh, matching synthetic runs, and re-certification remain open.

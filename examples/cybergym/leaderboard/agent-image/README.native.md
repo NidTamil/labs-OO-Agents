@@ -30,6 +30,16 @@ elapsed time; no additional child turn cap is imposed. The controller separately
 limits active children to three and verifies actual provider tool lists and
 arguments.
 
+The managed `permissions.defaultMode` and each custom child's `permissionMode`
+are `bypassPermissions` to avoid native approval stalls. The managed
+`PreToolUse` hook still sends each tool call to `/native-tools/authorize` and
+honors a controller `deny`; `allowManagedHooksOnly` and the existing deny rules
+remain in force. A disposable offline probe must verify this behavior against
+the rebuilt image before its ID is frozen. The probe uses a deterministic model
+and deny gateway on an internal Docker network, with no provider credential or
+benchmark task. This component check does not substitute for full native
+certification against the real controller services.
+
 Managed `enableWorkflows: true` and `ultracode: true` enable the native dynamic
 workflow surface where the pinned runtime makes it available. The packaged
 recon/debug/review JavaScript scripts call the actual native workflow API with
