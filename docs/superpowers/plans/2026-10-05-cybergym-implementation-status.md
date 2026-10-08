@@ -1518,3 +1518,49 @@ UI/tunnel and independently attest raw evidence with
 `/srv/sunchaser/runs/capability-freeze-20261008/cybergym-v26n-attest.py`.
 The second fixture, negative/interruption probes, and formal comparator
 remain open. Official practice and scored runs remain unstarted.
+
+## v26n first raw attestation and second frozen fixture (2026-10-08)
+
+The first v26n chunk-table driver ended with `oracle_true=true`,
+`boundary_failed=false`, `provider_dispatched=true`, and a post-oracle
+controller GBrain episode. Its owned VS Code 1.140.0 window and tunnel were
+closed. The exact-source independent raw attestor passed: candidate SHA-256
+`a8ebef18bc6f2114473de0a76312c9f0418584f9b7fb2822fc59a15f1e587b78`,
+signed oracle payload SHA-256
+`7cf3da6e4c226463331102b5eb8c3e9e024092057eb0359b8a5c38f7a746a5d4`,
+415 chained audit rows, four native preflight reports, 48 completed GLM
+requests and one incomplete request, plus observed DeepSeek recon/debug/critic
+requests (11/5/3) and token accounting. The exact completed invocation join
+includes `native.advisory.gbrain_search` once. The durable raw attestation at
+`/srv/sunchaser/runs/capability-freeze-20261008/v26n1a-raw-attestation.json`
+has SHA-256
+`fcdf12c98477427b98add33a5914eb18bd975fa3e76ee86bdcded6b550e1add3`.
+This is one independently verified live synthetic fixture, not a formal
+certification record or scored result.
+
+The second frozen fixture `synthetic:length-header` is active under the same
+v26n epoch-one freeze, run ID `synthetic-native-v26n1b-20261008`, attempt
+`attempt-b6f3a7994377438fa07fd35db196c10c`, SSH port 22496, and launch ID
+`synthetic-563e0bc019614bb69c7f8726bc7fe80b`. Its evidence root is
+`/srv/sunchaser/runs/synthetic-evidence-20261008-v26n-cert-epoch-one/synthetic-native-v26n1b-20261008-synthetic-length-header`.
+Its fresh profile was preloaded with the pinned Remote-SSH 0.128.0 bundle,
+isolated SSH settings, and task host key before opening the pinned
+VS Code 1.140.0 window. The audited one-shot submitter sent the reserved
+composer prompt once under `D:\GLM\tmp\native-v26n1b-ui-send-20261008`;
+model requests have started. Do not resend. On terminal, close its owned
+UI/tunnel and independently attest raw evidence.
+
+The existing comparison contract requires two complete records, each covering
+both frozen synthetic fixtures and all 35 capabilities, with the same
+certification epoch. An independent second-repeat runtime config using the
+same epoch label and source pins, but distinct run IDs and evidence roots,
+is prepared at
+`/srv/sunchaser/runs/capability-freeze-20261008/synthetic-controller-config-v26n-cert-repeat-two.json`
+(file SHA-256
+`d6a077a7fb9efb1d0a95a39ed4d2761f7d0933b05d7b217e4e55fab41725eba5`,
+loaded freeze SHA-256
+`3c2abaab8b4f5e03c363d9537250436cae43b0a7a29817b5d6ff7a22702e3bc2`).
+It is prepared, not launched. A distinct-epoch config was also prepared
+earlier but is not suitable for the current comparator's same-epoch check.
+Negative-boundary, interruption, complete record, and comparator evidence
+remain open. Official practice and scored tasks remain unstarted.
