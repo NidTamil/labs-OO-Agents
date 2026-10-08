@@ -48,6 +48,24 @@ def _strict_json(value):
     return result
 
 
+def _workflow_tool_input(value):
+    """Match Claude's JSON-string Workflow args to its parsed hook arguments."""
+    if type(value) is not dict:
+        raise PermissionError("native Workflow input malformed")
+    args = value.get("args")
+    if type(args) is not str:
+        return value
+    try:
+        if len(args.encode("utf-8")) > 8192:
+            raise ValueError
+        parsed = _strict_json(args)
+        if type(parsed) is not dict:
+            raise ValueError
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        raise PermissionError("native Workflow args malformed") from None
+    return {**value, "args": parsed}
+
+
 @dataclass(frozen=True)
 class NativeToolCall:
     task_id: str
@@ -615,12 +633,25 @@ class NativeToolController:
             or h.get("tool_name") != row[1]
             or h.get("session_id") != row[6]
             or (h.get("agent_id") or "") != row[7]
-            or hashlib.sha256(_canonical(h.get("tool_input"))).hexdigest() != row[3]
         ):
+            raise PermissionError("native hook lacks exact provider tool evidence")
+        try:
+            if row[1] == "Workflow":
+                if hashlib.sha256(row[2]).hexdigest() != row[3]:
+                    raise PermissionError("native provider Workflow input changed")
+                provider_input = _workflow_tool_input(_strict_json(row[2]))
+                hook_input = _workflow_tool_input(h.get("tool_input"))
+                matches = _canonical(provider_input) == _canonical(hook_input)
+            else:
+                hook_input = h.get("tool_input")
+                matches = hashlib.sha256(_canonical(hook_input)).hexdigest() == row[3]
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            raise PermissionError("native hook input malformed") from None
+        if not matches:
             raise PermissionError("native hook lacks exact provider tool evidence")
         if self.observed_role(row[6], row[7] or None) != row[8]:
             raise PermissionError("native lifecycle no longer active")
-        return row, h
+        return row, h, hook_input
 
     def authorize_hook(self, envelope) -> bool:
         with self._lock:
@@ -629,7 +660,7 @@ class NativeToolController:
             try:
                 with self._connect() as c:
                     c.execute("BEGIN IMMEDIATE")
-                    row, h = self._matching_hook(envelope, c, {"PreToolUse"})
+                    row, h, normalized_input = self._matching_hook(envelope, c, {"PreToolUse"})
                     if row[4] != "observed":
                         return False
                     call = NativeToolCall(
@@ -641,7 +672,7 @@ class NativeToolController:
                         row[8],
                         row[0],
                         row[1],
-                        h["tool_input"],
+                        normalized_input,
                     )
                     allowed = call.name != "Agent" or (
                         call.role == "parent"
@@ -672,7 +703,7 @@ class NativeToolController:
             try:
                 with self._connect() as c:
                     c.execute("BEGIN IMMEDIATE")
-                    row, hook = self._matching_hook(
+                    row, hook, _ = self._matching_hook(
                         envelope, c, {"PostToolUse", "PostToolUseFailure"}
                     )
                     if row[4] not in {"allowed", "dispatched"}:

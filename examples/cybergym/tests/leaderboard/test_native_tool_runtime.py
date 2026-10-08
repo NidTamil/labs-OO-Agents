@@ -182,6 +182,53 @@ def test_unobserved_or_altered_tool_call_cannot_be_authorized(tmp_path):
     assert c.summary()["completed"] == 1
 
 
+def test_workflow_string_args_match_only_equivalent_hook_object(tmp_path):
+    admitted = []
+    c = controller(
+        tmp_path,
+        lambda call: admitted.append(call.arguments) or True,
+        parent_tools=frozenset({"Read", "Workflow"}),
+    )
+    grant = c.begin_request(model_request(names=("Read", "Workflow")))
+    path = "/workspace/.claude/workflows/recon.js"
+    provider = {"scriptPath": path, "args": '{ "question": "Inspect source" }'}
+    c.observe_stream(grant, tool_frames("Workflow", provider))
+    expected = {"scriptPath": path, "args": {"question": "Inspect source"}}
+    envelope = hook(args=expected)
+    envelope["hook_input"]["tool_name"] = "Workflow"
+
+    changed = json.loads(json.dumps(envelope))
+    changed["hook_input"]["tool_input"]["args"]["question"] = "Different source"
+    assert c.authorize_hook(changed) is False
+    assert c.authorize_hook(envelope) is True
+    assert admitted == [expected]
+    with sqlite3.connect(c.database) as connection:
+        assert connection.execute("SELECT status FROM tools WHERE id='tool-1'").fetchone() == (
+            "allowed",
+        )
+    completed = json.loads(json.dumps(envelope))
+    completed["hook_input"]["hook_event_name"] = "PostToolUse"
+    c.record_result(completed)
+    assert c.summary()["completed"] == 1
+
+
+def test_workflow_string_args_reject_duplicate_json_keys(tmp_path):
+    admitted = []
+    c = controller(
+        tmp_path,
+        lambda call: admitted.append(call) or True,
+        parent_tools=frozenset({"Read", "Workflow"}),
+    )
+    grant = c.begin_request(model_request(names=("Read", "Workflow")))
+    path = "/workspace/.claude/workflows/recon.js"
+    provider = {"scriptPath": path, "args": '{"question":"safe","question":"evil"}'}
+    c.observe_stream(grant, tool_frames("Workflow", provider))
+    envelope = hook(args={"scriptPath": path, "args": {"question": "evil"}})
+    envelope["hook_input"]["tool_name"] = "Workflow"
+    assert c.authorize_hook(envelope) is False
+    assert admitted == []
+
+
 def test_child_advertised_writable_tool_is_removed_before_provider(tmp_path):
     c = controller(tmp_path)
     request = model_request(agent="child-1", names=("Read", "Bash"))
