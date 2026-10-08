@@ -126,6 +126,7 @@ function validateProcessConfig(config) {
   const actual=config.get('environmentVariables',[]);
   const expected=frozenSettings['claudeCode.environmentVariables'];
   const sorted=items=>[...items].sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+  if (config.get('allowDangerouslySkipPermissions') !== true || frozenSettings['claudeCode.allowDangerouslySkipPermissions'] !== true) throw Error('native bypass permission setting is disabled');
   if (config.get('processWrapper') || !Array.isArray(actual) || canonical(sorted(actual))!==canonical(sorted(expected))) throw Error('unfrozen Claude process wrapper or environment override');
 }
 function postJson(url, value) {

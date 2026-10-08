@@ -157,6 +157,7 @@ def test_frozen_child_definitions_have_no_command_write_or_nested_agent_tools():
         assert "permissionMode: bypassPermissions\n" in content
         assert "maxTurns:" not in content
     settings = json.loads((ROOT.parent / "native-launcher/machine-settings.json").read_bytes())
+    assert settings["claudeCode.allowDangerouslySkipPermissions"] is True
     environment = {
         entry["name"]: entry["value"] for entry in settings["claudeCode.environmentVariables"]
     }

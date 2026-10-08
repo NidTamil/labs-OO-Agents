@@ -1,5 +1,6 @@
 {
   "claudeCode.useTerminal": false,
+  "claudeCode.allowDangerouslySkipPermissions": true,
   "claudeCode.selectedModel": "glm-5.3[1m]",
   "claudeCode.continueAfterReload": false,
   "claudeCode.attachOpenFile": false,

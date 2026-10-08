@@ -9,8 +9,11 @@ writes `/opt/sunchaser/native-runtime.json` with extension/binary/config hashes.
 
 The root-owned code lives in `/opt/sunchaser`. Only fresh, empty `/home/agent`
 tmpfs is initialized. Links expose installed extensions and server to VS Code;
-the frozen Machine settings supply the public model-gateway sentinel and GLM
-aliases. No OAuth state, provider key, prior session or workstation home is copied.
+the frozen Machine settings supply the public model-gateway sentinel, GLM
+aliases, and `claudeCode.allowDangerouslySkipPermissions: true`. The launcher
+checks the effective VS Code setting before reserving a task; the managed
+`bypassPermissions` default is ignored by the native extension without it.
+No OAuth state, provider key, prior session or workstation home is copied.
 Use a dedicated workstation VS Code profile with
 `remote.SSH.useExecServer=false` to select the preinstalled
 `~/.vscode-server/bin/<commit>` server. Personal profiles remain separate.
@@ -37,8 +40,11 @@ honors a controller `deny`; `allowManagedHooksOnly` and the existing deny rules
 remain in force. A disposable offline probe must verify this behavior against
 the rebuilt image before its ID is frozen. The probe uses a deterministic model
 and deny gateway on an internal Docker network, with no provider credential or
-benchmark task. This component check does not substitute for full native
-certification against the real controller services.
+benchmark task. This component check does not substitute for a VS Code-owned
+bypass-mode run through the real controller. Before freezing, verify that the
+native extension uses bypass mode, still calls the production
+`/native-tools/authorize` hook, and denies a deliberate known-deny request
+without executing it.
 
 Managed `enableWorkflows: true` and `ultracode: true` enable the native dynamic
 workflow surface where the pinned runtime makes it available. The packaged

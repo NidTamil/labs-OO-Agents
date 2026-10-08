@@ -998,3 +998,28 @@ instead of naming an arbitrary member. Focused workflow, staging, capability
 and comparator tests passed 97/97 on Windows. These are source and component
 results only; no live Workflow, TaskStop, missing read-tool use, or new freeze
 has yet been observed.
+
+## VS Code-owned bypass-mode correction (2026-10-08)
+
+The v26e candidate froze commit `bc32be4` and the existing native image for
+broader capability coverage, but its first live `synthetic:length-header`
+attempt (`synthetic-native-v26ea-20261008`) exposed a load-bearing gap. The
+official Claude Code extension reported that the managed
+`defaultMode: bypassPermissions` was ignored in a VS Code-owned session because
+the Machine setting `claudeCode.allowDangerouslySkipPermissions` was absent.
+The earlier known-deny probe exercised CLI mode and therefore did not establish
+VS Code-owned bypass behavior. The attempt produced a launcher receipt, parent
+preflight, and completed DeepSeek recon, but no GLM dispatch, candidate, or
+oracle result. Its owned process, window, tunnel, and container were stopped;
+its preserved logs are diagnostic evidence only. The v26c synthetic wins remain
+valid as oracle/tool-path evidence but cannot be described as verified bypass
+runs. The v26e freeze is superseded as a certification candidate.
+
+The root cause is the launcher VSIX's frozen Machine settings, which the fresh
+agent home links into the VS Code server. The exact official extension declares
+the allow-bypass setting as Machine scope. A failing regression was observed
+before adding that setting, and the launcher now rejects a VS Code session when
+its effective value is false. The rebuilt VSIX/image, real VS Code-owned bypass
+selection, production known-deny PreToolUse event, new freeze and calibration,
+two full synthetic fixtures per epoch, and formal comparator records remain to
+be verified. No official practice or scored task has been started.

@@ -112,8 +112,9 @@ if (fs.existsSync(subject)) {
     const {validateProcessConfig}=require(subject);
     assert.equal(typeof validateProcessConfig,'function');
     const frozen=require('../machine-settings.json')['claudeCode.environmentVariables'];
-    const config=values=>({get:(key,fallback)=>key==='environmentVariables'?values:fallback});
+    const config=(values,allowBypass=true)=>({get:(key,fallback)=>key==='environmentVariables'?values:key==='allowDangerouslySkipPermissions'?allowBypass:fallback});
     assert.doesNotThrow(()=>validateProcessConfig(config(frozen)));
+    assert.throws(()=>validateProcessConfig(config(frozen,false)),/bypass/);
     assert.throws(()=>validateProcessConfig(config([...frozen,{name:'CLAUDE_CODE_OAUTH_TOKEN',value:'personal-secret'}])),/unfrozen/);
     assert.throws(()=>validateProcessConfig(config([])),/unfrozen/);
   });
