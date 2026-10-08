@@ -838,14 +838,91 @@ Claude Code 2.1.289 binary with bypass selected. A deterministic model requested
 `Bash(touch /workspace/denied-sentinel)` inside an isolated internal-network
 container. The installed native hook posted that exact `PreToolUse` request to
 `/native-tools/authorize`; the probe gateway returned `deny`, and the sentinel
-was absent. This was repeated against the rebuilt candidate image's installed
-settings and hook, without a settings overlay. The candidate image ID is
-`sha256:286c03857c95dc4609fafde97176cb7accabd9e6e1ba667e49fe96091ee95cc6`;
+was absent. This was repeated against the final rebuilt image's installed
+settings and hook, without a settings overlay. The first candidate had a stale
+cached launcher VSIX and was superseded before calibration. Packaging the
+launcher from exact source produced the required digest
+`865bba2eeea461b0dfaa71341e563615f12342db77a13d493eae753976b9d778`.
+The final image ID is
+`sha256:bc1095a81bae142006405c7ec5eb298eb3df989988eac2df938fea561a6c217e`;
 its managed settings hash is
 `71756fca0ca20033ce3236002345d0c2fc818f36e1777f51b2fb592a676e94ad`.
 Raw disposable evidence is at
-`/srv/sunchaser/runs/native-bypass-pretool-probe-20261008-b/`.
+`/srv/sunchaser/runs/native-bypass-pretool-probe-20261008-c/`.
 The gateway in this probe was deterministic rather than the campaign controller,
 so this is evidence for Claude's bypass/hook ordering, not a certification of
-the full controller path. Restaging, source and image re-freeze, live calibration,
-inventory refresh, matching synthetic runs, and re-certification remain open.
+the full controller path. The live synthetic runs separately record production
+`PreToolUse` events and `/native-tools/authorize` requests.
+
+## Bypass image freeze and live synthetic results (2026-10-08 local)
+
+Commit `a8aafeb` pins the final image ID in the Linux process verifier. The
+rebuilt image's runtime hash is
+`e2738223e3dd58b43ba99e58933a1f32dcfd92fe7d137cff6f5606c7f1cddf50`.
+Fresh provider-free calibration at
+`/srv/sunchaser/runs/native-cal-bypass-20261008-c/` used the pinned VS Code
+1.140.0 UI, passed 62/62 native parent probes, and captured one real parent
+request without provider dispatch. The accepted capture hash is
+`76edacdaf928550edc65c4d02e2dee70bd021179636acec5486561e9e6258fb3`.
+The 963-pass Linux component JUnit and that capture produced v26b registry,
+bindings and inventory hashes `f4ef0c491f385d021eb401afed49219a4bbf667773216b481c3d55cc4d323905`,
+`9070a8dcb2c6422e76463dd74fffff5557dce0ff9eacf4758e86c02640d877e9`,
+and `4f9a0f995118dc3bb0147a5b652d5085dee4d00a22dd8725a08aad8cfa718b99`.
+
+The full native `synthetic:length-header` attempt
+`synthetic-native-v26ba-20261008` on that freeze recorded a true signed
+private-oracle verdict, real GLM provider dispatch, complete DeepSeek recon,
+debug and final critic, parent and two child native preflights, and a
+controller-only post-oracle GBrain episode. Its result and raw evidence are
+under `/srv/sunchaser/runs/synthetic-evidence-20261008-v26b/`. The independent
+verifier accepted the oracle signature, configuration/image/candidate hashes,
+audit chain, preflights, model and advisor roles, then failed its GBrain search
+coverage assertion: recall occurred but search did not. This is a successful
+synthetic oracle result, not an accepted certification.
+
+The distinct v26b `synthetic:chunk-table` attempt reached parent/child
+preflights and a vulnerable test, but its DeepSeek debug and critic lanes failed
+after requesting text reads of a generated non-UTF-8 `.bin` candidate. The
+finalizer correctly refused selection without the completed critic. The
+specific owned synthetic process was stopped through its SIGTERM handler after
+that terminal blocker; its evidence is preserved and no oracle result is
+claimed. Commit `7d48c52` fixes only the bounded read observation: permitted
+non-UTF-8 source files now return `non_utf8_source` with no binary bytes. The
+regression failed before the fix and passed afterward; the refreshed Linux
+suite passed 964 tests, with five skips and two deselections.
+
+The separate v26c inventory at
+`/srv/sunchaser/runs/capability-freeze-20261008/inventory-v26c/` pins commit
+`7d48c52`, the same verified native image, accepted parent calibration, and
+fresh component evidence. Its registry, bindings and inventory hashes are
+`bd41641ba06d39b158a93553f0e952389a5adb5376b298d486d7a962e89c8aa8`,
+`45eb06474402e7181bd95f796b6fe42c88b50997bfa79ba7515ee7d64858b8d6`,
+and `011578690d15a42844f5302e1f51d93871650e46f65a4e58d918e2a3fbb9cd5c`.
+The v26c `synthetic:chunk-table` run `synthetic-native-v26ca-20261008` reached a
+true signed private-oracle verdict under the pinned image and freeze. Its GLM
+parent completed 44 model requests; all three DeepSeek lanes completed; GBrain
+recall and search, native Bash and `run_test`, and four 62/62 native parent/child
+preflights were observed. The independent verifier checked the oracle signature,
+candidate/configuration/image hashes, all 349 audit-chain rows, provider and
+tool evidence, advisor roles, and oracle-before-memory ordering; it passed with
+`boundary_failed=false`. The owned VS Code window and SSH tunnel were closed
+after terminal result. A second v26c run on `synthetic:length-header`,
+`synthetic-native-v26cb-20261008`, also reached a true signed private-oracle
+verdict with `boundary_failed=false`. Its GLM parent completed 51 requests;
+all three DeepSeek lanes completed; GBrain recall/search, Bash and `run_test`
+were observed. The independent verifier passed the oracle signature and
+candidate/configuration/image hashes, all 389 chained audit rows, three 62/62
+native parent/child preflights, role/tool evidence, and post-oracle memory
+ordering. The controller denied one child `Read` request during this live run;
+its denied status has no post-hook completion. This is a production path denial,
+though the request was for `/workspace/src/fuzz_harness.c`, so it is not by
+itself a deliberate leakage-probe result. The owned VS Code window and SSH
+tunnel were closed after terminal result.
+
+The formal comparator additionally requires two distinct independently
+attested certification records, each covering both synthetic fixtures, all 35
+approved capabilities exercised, and the declared interruption and
+negative-boundary evidence. The current synthetic driver emits one fixture per
+run and no full certification record/independent raw-run attestation. The
+verified oracle results and component suite do not satisfy that gate. No
+official practice or scored task has been started.
