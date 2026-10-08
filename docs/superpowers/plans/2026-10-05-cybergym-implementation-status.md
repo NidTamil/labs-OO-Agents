@@ -949,6 +949,7 @@ records provider version omission or fingerprint-only metadata explicitly.
 Negative tests still reject forged routes, wire-model drift, one fixture's
 over-budget critic, and inconsistent metadata disclosures. The focused
 certification report suite passed 54/54 on Windows with D: temporary storage;
-Ruff check and format passed. Linux component verification and a new freeze for
-this changed comparator source remain pending. No raw-run attestor or complete
+Ruff check and format passed. The exact-source SunChaser component suite passed
+971 tests, with five skips and two deselections. A new freeze for this changed
+comparator source remains pending. No raw-run attestor or complete
 two-epoch certification record has been produced.
