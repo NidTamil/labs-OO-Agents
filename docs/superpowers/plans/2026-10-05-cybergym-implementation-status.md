@@ -1285,3 +1285,14 @@ invocation IDs. Its synthetic tamper fixture and the certification/capability
 regression set passed 175/175 on Windows; Ruff check and format passed. This
 is component verification only. It has not yet been run against a newly
 frozen live native fixture or promoted into a signed certification record.
+
+Commit `6acc57e` strengthens the raw native preflight verifier: it now checks
+every recorded probe's exit status and observed container/context, requires
+unique probe names, and verifies the explicit forbidden route, path and
+credential-environment probes instead of accepting `passed=true` plus a
+62-probe count. A tamper test replacing the target-patch denial with an
+unrelated probe first failed and then passed after the verifier change. The
+affected certification and preflight tests passed 86/86 on Windows; Ruff
+check and format passed. This still does not prove the separate personal
+GBrain/agent-write denial or interruption/version-drift gates and has not
+been exercised on a newly frozen native run.
