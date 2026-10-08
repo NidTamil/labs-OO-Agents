@@ -1593,3 +1593,44 @@ bytes; a new exact-source freeze and fresh live pair are required. The
 verified v26n results remain historical synthetic observations, not scored
 or formal certification. Negative-boundary and interruption probes remain
 open. Official practice and scored tasks remain unstarted.
+
+## v26o exact-source freeze and first live fixture (2026-10-08)
+
+The isolated clean SunChaser checkout
+`/srv/sunchaser/labs-OO-Agents-cert-v26o` is commit
+`f921da84224252de4c9e83ee13e430eccd145804`. Its exact-source Linux
+leaderboard suite passed 990 tests, with five skipped and two deselected;
+fresh JUnit SHA-256 is
+`e488262ca758d745b4ff3f4c5a3c71ed91556c9981c4e5ccb6543ab114648c78`.
+The new 35-entry inventory has registry SHA-256
+`0664b332916b928a95984555cf0dd119f2830557b7584afd99bfd8ee3cecf562`
+and binding SHA-256
+`449b2fef3b1e9b89e3af34fe8bf2dd78c9fa890680ea355bd1c6f6dc3b7726a8`.
+The loaded epoch-one runtime freeze is
+`b8a7349735c76d4ea4586a33917c1c1fd43156e414a811e2f1b9964228294036`
+from config file SHA-256
+`99ea7037cce0299f4b6c562eaa80bf83042ee57e6314676adf3ef1c579fceef0`.
+It preserves the verified bypass image ID
+`sha256:aeb50f0c03458d6d00a71eba9ce2ddecfe5496b20dfc03ab533abe3d19637239`.
+The amended chunk-table and length-header description SHA-256 values are
+`8ba1c6a1d37bda74dc5eea017d63eec87f764a0a9dc7cd813faa416da07ece41`
+and `d4491bf7ed002488faa6fd177f3ca2913789e7ddb30314c2c87c6943a7dd1348`.
+
+The first v26o live chunk-table fixture is active: run
+`synthetic-native-v26o1a-20261008`, attempt
+`attempt-c0802c35cbc84ccc9a2b11a4d06e0b6f`, launch
+`synthetic-5c7e21e739654576a550550e35b974a8`, SSH port 22497,
+evidence root
+`/srv/sunchaser/runs/synthetic-evidence-20261008-v26o-cert-epoch-one/synthetic-native-v26o1a-20261008-synthetic-chunk-table`.
+The isolated profile was preloaded with the pinned Remote-SSH 0.128.0
+extension, task host key, and exact SSH settings. The pinned VS Code 1.140.0
+window opened, and the audited one-shot submitter sent its reserved composer
+prompt under `D:\GLM\tmp\native-v26o1a-ui-send-20261008`. DeepSeek's
+independent recon lane has requested and received both separate read-only
+`gbrain_recall` and `gbrain_search` tool results. These are provisional live
+observations until signed terminal and independent raw attestation. Do not
+resend. Close the owned UI/tunnel on terminal and attest with
+`/srv/sunchaser/runs/capability-freeze-20261008/cybergym-v26o-attest.py`.
+The second fixture, full independent repeat, boundary/interruption probes,
+and formal comparator remain open. Official practice and scored tasks remain
+unstarted.
