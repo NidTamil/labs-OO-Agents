@@ -1160,3 +1160,60 @@ finalizer stopped before PostToolUse, without inventing a callback. The
 updated SunChaser leaderboard suite passed 984 tests with five skips and two
 deselections. This source change requires a fresh component inventory/freeze
 and live synthetic run before any certification claim.
+
+## v26j pre-UI failure and v26k source-search correction (2026-10-08)
+
+The v26j `synthetic:chunk-table` attempt stopped before a VS Code window or
+primary provider dispatch. Its boundary preflight passed, but DeepSeek recon
+requested read-only `local_read.search` on a permitted regular source file.
+The fixed source helper attempted to enumerate that file as a directory and
+raised `NotADirectoryError`, so the advisory role failed and the controller
+ended the task. No candidate, oracle result, or certification evidence is
+claimed for that attempt.
+
+A Linux regression first failed on the real helper with the same
+`NotADirectoryError`. Commit `ecf45cd` permits bounded literal search on either
+a regular source file or a directory after a no-follow file-type check; it
+preserves the existing source scope, symlink rejection and result bounds. The
+focused advisory tests passed 9/9; the full exact-source SunChaser leaderboard
+suite passed 984 tests, with five skips and two deselections. The D: branch was
+pushed, and the isolated SunChaser checkout is at `ecf45cd98203cdac683be5fcf852df09ed4f05e4`.
+
+Fresh v26k component JUnit at
+`/srv/sunchaser/runs/capability-freeze-20261008/components-v26k.xml` has
+SHA-256 `4c0a05784b32958497bdfc77f3bd95b39e8aff8f5f65dc87d5b899be2416ed81`.
+The source-bound inventory was recalibrated from the existing provider-free
+native capture because the native binary/image did not change. Its 35-entry
+registry, bindings, and inventory hashes are respectively
+`5764a9c1bed840ddf62b260377b80009df4f4bdef3718b7950e8ef0591785fcf`,
+`4d93b23899201bb98961f2f78b52d58096f96afab07944cb7ada1e7aec9f310a`,
+and `84fae672e5868dc87cfc3608f5e294b141640379e23d505bb5571c8c0c282c98`.
+The v26k probe config SHA-256 is
+`c54cf163c4863f0a4ad8295ff03f1e3363dc4e8021459aaa9e05efe3a585c7f0`;
+its validated freeze SHA-256 is
+`d434e5ab4563e488ab85173d0941d8da15cfb6b9812836220641529a7af8533b`.
+The first `synthetic:chunk-table` native run
+`synthetic-native-v26ka-probe-20261008` reached signed `oracle_true=true` with
+`boundary_failed=false`. The public-key-only raw attestor independently
+verified candidate/final identity, launcher receipt, four native preflight
+reports, 44 completed GLM requests, and all 370 chained audit rows. DeepSeek
+recon, conditional debug after vulnerable `run_test`, and final critic were
+observed; controller-only GBrain wrote after the oracle. The owned VS Code
+window and tunnel were closed. The `synthetic:length-header` run
+`synthetic-native-v26kb-probe-20261008` also reached signed `oracle_true=true`
+with `boundary_failed=false`. The independent public-key-only attestor
+verified its candidate/final identity, launcher receipt, four native
+preflight reports, 41 completed GLM requests, and all 441 chained audit rows.
+DeepSeek recon, triggered debug, and critic completed; controller-only GBrain
+wrote after the oracle. Its owned UI and tunnel were closed. The two verified
+fixtures share the v26k image, registry, bindings and freeze.
+
+An exact comparison of allowed capability audit events against the frozen
+35-entry registry found 30 IDs exercised across the pair (25 in chunk-table,
+26 in length-header). Five have no allowed event in either:
+`native.Agent.cybergym-debug`, `native.Agent.cybergym-recon`,
+`native.Agent.cybergym-review`, `native.Edit`, and `native.clangd.definition`.
+Allowed events are only a lower-bound use audit; completed-use provenance,
+declared negative and interruption probes, and two complete independently
+attested comparator records still need work. The v26k pair cannot be labeled
+formally certified. Official practice and scored tasks remain unstarted.
