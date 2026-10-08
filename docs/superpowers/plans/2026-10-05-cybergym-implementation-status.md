@@ -1397,6 +1397,7 @@ and token totals without source modification. Epoch two and formal negative/inte
 comparator work remain open. Official practice and scored tasks remain
 unstarted.
 
+
 ## v26m epoch-one raw attestation and second fixture start (2026-10-08)
 
 The first v26m chunk-table driver returned `oracle_true=true`,
@@ -2181,3 +2182,63 @@ denial facts. They do not substitute for the 12 per-epoch gate records,
 interruption/timeout evidence binding, independent raw callback and signed
 formal comparator report. Official practice and scored tasks remain
 unstarted.
+
+## v26q formal synthetic re-certification accepted (2026-10-09)
+
+The controller assembled two complete **live native** epoch records from the
+independently verified first pair (`v26q1c`/`v26q1d`) and replacement repeat
+pair (`v26qr3a`/`v26qr3b`). The exact-source callback re-ran each raw
+fixture attestor, checked the signed private-oracle results, GLM and DeepSeek
+request/token ledgers, completed per-invocation tool uses, the 62-probe
+native preflights, UI Send evidence, empty isolated GBrain manifests,
+parent/child recall and search, and controller writes after true verdicts.
+It also re-ran the read-only signed interruption/timeout, actual VS Code
+version-drift, and in-container GBrain write-denial verifiers. A
+controller-only exact-secret scan found no credential bytes in the four
+publishable synthetic evidence roots. The fresh official cohort lock hash
+was bound as metadata; no official task asset was mounted or run.
+
+The first report at
+`/srv/sunchaser/runs/capability-freeze-20261008/certification-v26q-evidence`
+passed, but its signed summary compressed child instances into two model
+lane rows without hashing the detailed child ledger in a gate. It is
+**superseded**. A corrected controller-only report at
+`/srv/sunchaser/runs/capability-freeze-20261008/certification-v26q-evidence-v2`
+keeps the source/image/registry/config freezes unchanged and binds every
+raw `children.sqlite` ledger plus a per-fixture child-ID, role, closure and
+observed-concurrency disclosure into the signed `deepseek_roles` gate hashes.
+Each epoch has 13 observed child instances across its two fixtures; the
+observed concurrency peak is two, within the frozen limit of three. The
+report's `child_count=2` denotes the two aggregate model-lane rows; the
+signed gate file carries individual child records.
+
+The **v2 formal comparator accepted both epochs** with all 12 gate files
+per epoch, 35/35 completed approved capability IDs per epoch, zero missing
+or undeclared completed IDs, and the declared nine negative-boundary facts.
+Epoch one accounts for 124 completed model requests and 154 completed tool
+calls; epoch two accounts for 106 and 143. Provider request IDs, role,
+returned model/version metadata and token classes are in the signed record;
+the separately counted incomplete requests remain in the hash-bound raw
+model logs and are disclosed above. The comparator independently
+re-read its two manifests (SHA-256
+`608bbcd1bba96a4dd4f9955f077f6d7e5c0beaa66af8bc1f016ee7433e87003e`
+and
+`817c4e339d19e78b0389195b10b598b1297dce8edff0b4fc0ee21a5e492c01be`),
+then produced an Ed25519-signed accepted report. The payload SHA-256 is
+`02ec77da78ef0f11b8008bf10a5e5892ebf3e931d94cc4f47200a597ca19c47d`;
+the signed envelope SHA-256 is
+`681e36c7edfb48c01ca0d5a89ff8928b945aba9ea2afa49c29ae6164cc60020a`.
+Independent public-key verification reproduced the payload hash and checked
+both runs, all 24 gate hashes and 110 underlying source-file bindings,
+35 capability IDs per epoch, and the child-disclosure files. Controller
+assembler script SHA-256 is
+`2db0d91a4dda2f62faee5322d5e4caa6027e7e8b60c520fa38110e6c77e6fef0`.
+The credential-free signed report and gate files were copied with matching
+hashes to `D:\GLM\certification-v26q-20261009` for operator review.
+
+The signed report explicitly has `official_launch_authorised=false`. The
+fresh 1,507-task cohort metadata lock remains unsigned and its LFS assets
+were not materialized. This re-certification establishes the native
+synthetic path only; it does not constitute a scored or practice result,
+authorize an official campaign, or resolve the separate canonical-repository
+decision. Both practice exercises and the scored campaign remain unstarted.
