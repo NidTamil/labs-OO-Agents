@@ -1634,3 +1634,40 @@ resend. Close the owned UI/tunnel on terminal and attest with
 The second fixture, full independent repeat, boundary/interruption probes,
 and formal comparator remain open. Official practice and scored tasks remain
 unstarted.
+
+## v26o first attestation and second fixture launch (2026-10-08)
+
+The first v26o chunk-table driver ended with `oracle_true=true`,
+`boundary_failed=false`, `provider_dispatched=true`, and a post-oracle
+controller GBrain episode. Its owned window and tunnel were closed. The
+exact-source raw attestor passed, including 380 chained audit rows, 42
+completed GLM requests, a signed oracle payload SHA-256
+`0f313a28158b4ba70a7077f1ecd704ae0da8e581e68e4523edbdef07af9ded7e`,
+and completed invocation evidence for both distinct DeepSeek advisory memory
+routes (`native.advisory.gbrain_recall` and
+`native.advisory.gbrain_search`, one each). The durable raw attestation at
+`/srv/sunchaser/runs/capability-freeze-20261008/v26o1a-raw-attestation.json`
+has SHA-256
+`b6a51686a81128d543bc827afcd5d650d0fe102f1421528979b00ab0961c94cf`.
+This is one independently verified live synthetic fixture, not a formal
+certification record or scored result.
+
+The second v26o fixture `synthetic:length-header` is active under the same
+freeze: run `synthetic-native-v26o1b-20261008`, attempt
+`attempt-0b047e4678034865b11bf5ca68cf698d`, launch
+`synthetic-0cb5c2077ad341ac8d86611bb1ceff6d`, SSH port 22498, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261008-v26o-cert-epoch-one/synthetic-native-v26o1b-20261008-synthetic-length-header`.
+Its isolated VS Code 1.140.0 profile was provisioned with the pinned
+Remote-SSH extension and task host key before opening. The audited one-shot
+submitter sent the reserved prompt once under
+`D:\GLM\tmp\native-v26o1b-ui-send-20261008`; model requests are recorded.
+Do not resend. Close the owned UI/tunnel on terminal, independently attest
+the raw evidence, and compute exact completed-use union against all 35
+approved IDs. The second complete repeat is configured but not launched;
+its config SHA-256 is
+`8f1229aaecf18def3157f5a5f794d23018d3ea64a7da7ffac8e3cf9ba6debe6a`
+and loaded freeze SHA-256 is
+`7b79219bcee927c0b6c9e937642ecd41df07f0df92363cf9360607a70f47a206`.
+Boundary/interruption probes and formal comparator remain open. Official
+practice and scored tasks remain unstarted.
