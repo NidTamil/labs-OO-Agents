@@ -953,3 +953,36 @@ Ruff check and format passed. The exact-source SunChaser component suite passed
 971 tests, with five skips and two deselections. A new freeze for this changed
 comparator source remains pending. No raw-run attestor or complete
 two-epoch certification record has been produced.
+
+## Raw native capability audit (2026-10-08 local)
+
+Read-only inspection of both v26c native-tool and advisory SQLite ledgers against
+the 35-entry frozen registry found at least nine approved operations with no
+observed use in either run: native `TaskStop`, native `Workflow`, advisory
+`clangd_read` definition/hover/references, advisory `local_read` search,
+native clangd references, VS Code diagnostics, and the Python documentation
+route. The compiler documentation route completed; a second compiler fetch
+failed. The advisory records show document symbols, local list/read and GBrain
+recall/search, but they do not establish the missing operations. This is a
+lower-bound gap audit, not an attestation that the other 26 entries satisfy
+their exact role, route, input or completion rules. The task template currently
+instructs the parent never to invoke `Workflow` while the frozen registry
+marks it approved and the certification policy requires all approved entries
+to be exercised. That contradiction must be resolved through the reviewed
+frozen-script path and verified native execution before any new freeze or
+certification claim. Neither v26c run is a full certification epoch.
+
+A new read-only `raw_fixture_attestor.py` verifies one fixture's signed private
+oracle against a separately pinned public-key hash, candidate and final hashes,
+launcher receipt, 62-probe native parent/child reports, every runtime audit
+chain link, oracle-before-controller-memory order, completed GLM requests,
+DeepSeek role completion, and core native tool use. Its 6 tamper/path tests and
+the 54 comparator tests passed on Windows and on the isolated SunChaser Linux
+checkout. Against the original two v26c evidence roots it independently
+verified the same 349/389 audit rows, 4/3 preflight reports, and 44/51 primary
+completed requests using only the pinned public key; no signing private key was
+read by that check. The verifier deliberately returns one-fixture facts only.
+It does not attest the missing nine capabilities, negative probes, interruption
+tests, epoch manifests or full certification; those remain open gates.
+The isolated Linux leaderboard suite with the new verifier passed 977 tests,
+with five skips and two deselections.
