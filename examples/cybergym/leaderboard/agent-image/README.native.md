@@ -10,9 +10,10 @@ writes `/opt/sunchaser/native-runtime.json` with extension/binary/config hashes.
 The root-owned code lives in `/opt/sunchaser`. Only fresh, empty `/home/agent`
 tmpfs is initialized. Links expose installed extensions and server to VS Code;
 the frozen Machine settings supply the public model-gateway sentinel, GLM
-aliases, and `claudeCode.allowDangerouslySkipPermissions: true`. The launcher
-checks the effective VS Code setting before reserving a task; the managed
-`bypassPermissions` default is ignored by the native extension without it.
+aliases, `claudeCode.allowDangerouslySkipPermissions: true`, and
+`claudeCode.initialPermissionMode: bypassPermissions`. The launcher checks both
+effective VS Code settings before reserving a task; the managed
+`bypassPermissions` default alone does not select bypass for a new native panel.
 No OAuth state, provider key, prior session or workstation home is copied.
 Use a dedicated workstation VS Code profile with
 `remote.SSH.useExecServer=false` to select the preinstalled

@@ -47,7 +47,7 @@ from .tool_services_runtime import _schema as registered_schema
 from .vulnerable_runtime import TOOL as VULNERABLE_TOOL
 
 TASK_ID = "synthetic:length-header"
-FROZEN_LAUNCHER_VSIX_SHA256 = "e104fef60d79798caae50365acf4e829e1366edd047c1caf5aa10f54e8d7eb40"
+FROZEN_LAUNCHER_VSIX_SHA256 = "6b7ea6514e99ced2c0f0f371cf531a6b161bc62bc65b8075ca2c60a638b74a06"
 _RELATIVE_TEMPLATE = Path("examples/cybergym/leaderboard/agent-template")
 _POLICY = Path("examples/cybergym/leaderboard/config/network-policy.json")
 _FIXTURE = Path("examples/cybergym/leaderboard/certification/fixtures/length-header")

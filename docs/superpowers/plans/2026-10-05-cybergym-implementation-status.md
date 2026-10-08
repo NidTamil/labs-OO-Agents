@@ -1023,3 +1023,16 @@ its effective value is false. The rebuilt VSIX/image, real VS Code-owned bypass
 selection, production known-deny PreToolUse event, new freeze and calibration,
 two full synthetic fixtures per epoch, and formal comparator records remain to
 be verified. No official practice or scored task has been started.
+
+The first rebuilt v26f image (`sha256:80db89a5...`) packaged only the
+allow-bypass switch. A real VS Code-owned provider-free calibration connected
+through a strict-host-key, owned D: tunnel and returned the native launch
+command, but it captured no model request. The official extension log recorded
+`permission mode: default` for the new session. The calibration process was
+stopped by its verified PID; its receipt and logs are diagnostic, not a valid
+calibration or certification. The extension's own manifest defines the
+machine-scoped `claudeCode.initialPermissionMode`; it was unset. The next
+candidate explicitly pins that setting to `bypassPermissions` and has a
+failing-then-passing launcher regression. It requires a new image and another
+real VS Code-owned observation. The D: owned tunnel was repaired with an
+explicit SSH config and verified to stay connected with strict host-key checks.
