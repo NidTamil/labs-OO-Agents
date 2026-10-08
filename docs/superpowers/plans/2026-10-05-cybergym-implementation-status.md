@@ -1396,3 +1396,50 @@ chunk-table evidence and recovered completed recon/debug/critic requests
 and token totals without source modification. Epoch two and formal negative/interruption/model/tool/token
 comparator work remain open. Official practice and scored tasks remain
 unstarted.
+
+## v26m epoch-one raw attestation and second fixture start (2026-10-08)
+
+The first v26m chunk-table driver returned `oracle_true=true`,
+`boundary_failed=false`, `provider_dispatched=true`, and a post-oracle
+controller memory episode. Its owned VS Code 1.140.0 window and tunnel were
+closed. The exact-source read-only `cybergym-v26m-attest.py` independently
+verified the signed oracle and candidate/final identity, four native
+preflight reports, all 343 chained audit rows, 40 completed GLM requests,
+three completed DeepSeek debug requests, four critic requests, nine recon
+requests, and observed token/cache totals. The verified candidate SHA-256 is
+`a8ebef18bc6f2114473de0a76312c9f0418584f9b7fb2822fc59a15f1e587b78`;
+signed oracle payload SHA-256 is
+`0de0a090087202bef62a667a2d76c5c3394a8ce701bb1da0cba5bd7743631859`.
+One primary request was incomplete and four native tools remained pending at
+controller stop; they were not counted as completed uses. The per-invocation
+attestor joined 30 approved capability IDs to exact completed native or
+DeepSeek actions. The five still missing from this fixture are
+`native.TaskStop`, `native.Workflow`, `native.advisory.gbrain_search`,
+`native.claude-vscode.getDiagnostics`, and
+`native.documentation.fetch.python`. This run had an initial unpinned
+VS Code 1.141.0 connection before the pinned 1.140.0 Send; preserve that
+disclosure when assessing formal certification. A true oracle alone does not
+make this an accepted certification epoch.
+
+The independently configured second epoch is prepared, not launched. Its
+controller config SHA-256 is
+`03a160216ab5e58d959694d0dbad620db1c6c7904465470ce0e0f9f74904316e`;
+loaded freeze SHA-256 is
+`95ae5017617b7de412342636a88eb02e935d72156fd9fd2356d52e0a299be1c9`.
+
+The distinct epoch-one `synthetic:length-header` run
+`synthetic-native-v26m1b-20261008` is **active, not attested**. It uses the
+same v26m config, image, registry and bindings, with attempt
+`attempt-6531cbb855d94b9eb8a476185aab7e6e`, container
+`68ff976807b92d1c6004e06a9d2e84f419c14cd735109d4db17962efe23a3870`,
+SSH port 22494, and evidence root
+`/srv/sunchaser/runs/synthetic-evidence-20261008-v26m-cert-epoch-one/synthetic-native-v26m1b-20261008-synthetic-length-header`.
+The owned window/tunnel alias is `cybergym-v26m1b`, launched with pinned
+`D:\GLM\bin\VSCode-1.140.0\Code.exe` from the start. Launch ID is
+`synthetic-fbcd778617f54cac98606a69432ea7bb`; the exact reserved prompt
+was submitted once by `submit-native-prompt.ps1` under audit directory
+`D:\GLM\tmp\native-v26m1b-ui-send-20261008`. The model gateway has begun
+completed requests. Do not resend. On terminal, close this run's owned UI and
+tunnel, attest with `cybergym-v26m-attest.py`, and compare completed capability
+coverage across the pair. Formal negative/interruption probes, two complete
+comparator records, and scored readiness remain open.
