@@ -151,8 +151,10 @@ def _model(role, *, request_id):
         "reasoning_effort": "max",
         "thinking": {"type": "enabled"} if deepseek else {"level": "max"},
         "context_tokens": 1_048_576 if deepseek else 1_000_000,
-        "observed_version": "provider-observed-2026-10-05",
-        "returned_model": "deepseek-flash" if deepseek else "glm-5.3[1m]",
+        "observed_version": None,
+        "system_fingerprint": None,
+        "version_metadata_status": "provider_omitted",
+        "returned_model": "deepseek-flash" if deepseek else "glm-5.3",
         "alias_drift": False,
         "provider_request_ids": [request_id],
         "requests": 1,
@@ -214,15 +216,22 @@ def _run(label, expected):
             "undeclared_calls": [],
         },
         "models": [
-            _model("glm_parent", request_id=f"{label}-glm"),
-            _model("independent_recon", request_id=f"{label}-recon"),
-            _model("conditional_debug_recovery", request_id=f"{label}-debug"),
-            _model("final_adversarial_critic", request_id=f"{label}-critic"),
+            {
+                **_model(role, request_id=f"{label}-{fixture_id}-{role}"),
+                "fixture_id": fixture_id,
+            }
+            for fixture_id in policy.fixture_ids
+            for role in (
+                "glm_parent",
+                "independent_recon",
+                "conditional_debug_recovery",
+                "final_adversarial_critic",
+            )
         ],
         "totals": {
-            "model_requests": 4,
-            "input_tokens": 40,
-            "output_tokens": 80,
+            "model_requests": 8,
+            "input_tokens": 80,
+            "output_tokens": 160,
             "cache_tokens": 0,
             "tool_calls": 2,
         },
@@ -311,6 +320,88 @@ def test_two_complete_synthetic_records_prepare_reviewable_report_without_launch
     assert run["child_count"] == 2
     assert run["interruption"]["version_drift_paused"] is True
     assert run["negative_probes"]["external-target-patch"] is True
+
+
+@pytest.mark.parametrize("local_route", [None, "", "registered-tool-gateway", "absent"])
+def test_route_less_native_capability_requires_no_route(complete_pair, local_route):
+    first, second, expected = complete_pair
+    native = replace(_capability("native.read", "Read", "unused"), routes=())
+    registry = CapabilityRegistry((*expected.registry.entries, native))
+    expected = replace(
+        expected,
+        registry=registry,
+        binding=replace(expected.binding, capability_registry_sha256=registry.digest),
+        required_approved_capability_ids=expected.required_approved_capability_ids
+        | frozenset({native.capability_id}),
+    )
+    for run in (first, second):
+        run["hashes"] = expected.all_hashes
+        run["capabilities"]["enabled_ids"].append(native.capability_id)
+        run["capabilities"]["exercised_ids"].append(native.capability_id)
+        call = {
+            "capability_id": native.capability_id,
+            "tool_id": "Read",
+            "role": "parent",
+            "count": 1,
+        }
+        if local_route != "absent":
+            call["route"] = local_route
+        run["capabilities"]["tool_calls"].append(call)
+        run["totals"]["tool_calls"] += 1
+    report = compare_runs(first, second, expected=expected)
+    assert report.passed is (local_route is None)
+    if local_route is not None:
+        assert "synthetic-run-a:undeclared tool or MCP route" in report.failures
+
+
+def test_primary_client_context_suffix_has_pinned_wire_model(complete_pair):
+    first, second, expected = complete_pair
+    for run in (first, second):
+        assert run["models"][0]["model"] == "glm-5.3[1m]"
+        assert run["models"][0]["returned_model"] == "glm-5.3"
+    assert compare_runs(first, second, expected=expected).passed
+    second["models"][0]["returned_model"] = "glm-5.3-unexpected"
+    report = compare_runs(first, second, expected=expected)
+    assert not report.passed
+    assert "synthetic-run-b:model alias drift" in report.failures
+
+
+def test_provider_omission_and_fingerprint_only_are_disclosed(complete_pair):
+    first, second, expected = complete_pair
+    assert compare_runs(first, second, expected=expected).passed
+    for run in (first, second):
+        run["models"][1]["system_fingerprint"] = "observed-fingerprint"
+        run["models"][1]["version_metadata_status"] = "fingerprint_only"
+    assert compare_runs(first, second, expected=expected).passed
+    second["models"][1]["version_metadata_status"] = "provider_omitted"
+    report = compare_runs(first, second, expected=expected)
+    assert not report.passed
+    assert "synthetic-run-b:provider version metadata absent" in report.failures
+
+
+def test_deepseek_budget_is_checked_per_fixture_not_across_two_tasks(complete_pair):
+    first, second, expected = complete_pair
+
+    def set_critic_requests(run, fixture_id, count):
+        row = next(
+            item
+            for item in run["models"]
+            if item["fixture_id"] == fixture_id and item["role"] == "final_adversarial_critic"
+        )
+        run["totals"]["model_requests"] += count - row["requests"]
+        row["requests"] = count
+        row["provider_request_ids"] = [
+            f"{run['run_id']}-{fixture_id}-critic-{index}" for index in range(count)
+        ]
+
+    for run in (first, second):
+        for fixture_id in expected.policy.fixture_ids:
+            set_critic_requests(run, fixture_id, 7)
+    assert compare_runs(first, second, expected=expected).passed
+    set_critic_requests(second, expected.policy.fixture_ids[1], 9)
+    report = compare_runs(first, second, expected=expected)
+    assert not report.passed
+    assert "synthetic-run-b:DeepSeek role budget" in report.failures
 
 
 def test_empty_or_missing_approved_capability_baseline_cannot_certify():

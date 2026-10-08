@@ -928,3 +928,27 @@ negative-boundary evidence. The current synthetic driver emits one fixture per
 run and no full certification record/independent raw-run attestation. The
 verified oracle results and component suite do not satisfy that gate. No
 official practice or scored task has been started.
+
+## Formal comparator audit (2026-10-08 local)
+
+The v26c live runs remain valid evidence for their frozen source and image, but
+they are not full certification records. An audit of the comparator against the
+frozen 35-capability registry exposed three structural mismatches: 22 approved
+native/local capabilities have no network route while the comparator required
+membership in a nonempty route set; the configured GLM client ID is
+`glm-5.3[1m]` while the pinned wire and observed provider model is `glm-5.3`;
+and one certification record covers both fixtures while the comparator counted
+DeepSeek's per-task role limits across the combined record. The live GLM
+responses also omit model-version and system-fingerprint metadata, so a
+required invented version would violate the evidence rule.
+
+The comparator now accepts only an explicitly absent route for route-less
+capabilities, checks GLM's returned model against the pinned wire ID, requires
+one model-role row per fixture and applies request limits per fixture, and
+records provider version omission or fingerprint-only metadata explicitly.
+Negative tests still reject forged routes, wire-model drift, one fixture's
+over-budget critic, and inconsistent metadata disclosures. The focused
+certification report suite passed 54/54 on Windows with D: temporary storage;
+Ruff check and format passed. Linux component verification and a new freeze for
+this changed comparator source remain pending. No raw-run attestor or complete
+two-epoch certification record has been produced.

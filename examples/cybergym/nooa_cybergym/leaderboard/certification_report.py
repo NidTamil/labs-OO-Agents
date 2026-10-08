@@ -21,6 +21,7 @@ from typing import Any, Protocol
 
 from .capabilities import CapabilityRegistry, ControlLabel, Role, Status
 from .certification import CertificationBinding, CertificationPolicy
+from .model_gateway import PRIMARY_WIRE_MODEL
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}\Z")
@@ -241,6 +242,32 @@ def _validate_gates(run: Mapping[str, Any], label: str, failures: list[str]) -> 
         failures.append(f"{label}:undeclared or missing gate")
 
 
+def _valid_tool_route(routes: tuple[str, ...], row: Mapping[str, Any]) -> bool:
+    if "route" not in row:
+        return False
+    route = row["route"]
+    return (type(route) is str and route in routes) if routes else route is None
+
+
+def _valid_version_metadata(row: Mapping[str, Any]) -> bool:
+    version = row.get("observed_version")
+    fingerprint = row.get("system_fingerprint")
+    if not _safe_identifier(row.get("returned_model")):
+        return False
+    if version is not None and not _safe_identifier(version):
+        return False
+    if fingerprint is not None and not _safe_identifier(fingerprint):
+        return False
+    status = (
+        "version_observed"
+        if version is not None
+        else "fingerprint_only"
+        if fingerprint is not None
+        else "provider_omitted"
+    )
+    return row.get("version_metadata_status") == status
+
+
 def _validate_capabilities(
     run: Mapping[str, Any], expected: CertificationExpectations, label: str, failures: list[str]
 ) -> int:
@@ -292,7 +319,7 @@ def _validate_capabilities(
         if (
             entry is None
             or row.get("tool_id") != entry.identity.tool_id
-            or row.get("route") not in entry.routes
+            or not _valid_tool_route(entry.routes, row)
             or role not in entry.roles
             or not _positive_int(row.get("count"))
         ):
@@ -312,23 +339,36 @@ def _validate_models(
     if type(rows) is not list:
         failures.append(f"{label}:model request log absent")
         return {}
-    roles = [row.get("role") if type(row) is dict else None for row in rows]
+    policy = expected.policy
+    assignments = [
+        (row.get("fixture_id"), row.get("role")) if type(row) is dict else (None, None)
+        for row in rows
+    ]
+    required_assignments = {
+        (fixture_id, role) for fixture_id in policy.fixture_ids for role in _MODEL_ROLES
+    }
     if (
-        len(roles) != len(_MODEL_ROLES)
-        or any(type(role) is not str for role in roles)
-        or set(roles) != _MODEL_ROLES
+        len(assignments) != len(required_assignments)
+        or any(
+            type(fixture_id) is not str or type(role) is not str for fixture_id, role in assignments
+        )
+        or set(assignments) != required_assignments
     ):
         failures.append(f"{label}:undeclared model role")
     totals = {"model_requests": 0, "input_tokens": 0, "output_tokens": 0, "cache_tokens": 0}
     request_ids = set()
-    policy = expected.policy
+    requests_by_fixture = dict.fromkeys(policy.fixture_ids, 0)
+    deepseek_by_fixture = dict.fromkeys(policy.fixture_ids, 0)
     for row in rows:
         if (
             type(row) is not dict
+            or type(row.get("fixture_id")) is not str
+            or row.get("fixture_id") not in policy.fixture_ids
             or type(row.get("role")) is not str
             or row.get("role") not in _MODEL_ROLES
         ):
             continue
+        fixture_id = row["fixture_id"]
         role = row["role"]
         deepseek = role != "glm_parent"
         if deepseek:
@@ -356,9 +396,13 @@ def _validate_models(
             or row.get("trigger") != _TRIGGERS[role]
         ):
             failures.append(f"{label}:GLM parent settings")
-        if not _safe_identifier(row.get("observed_version")) or not row.get("returned_model"):
+        if not _valid_version_metadata(row):
             failures.append(f"{label}:provider version metadata absent")
-        if row.get("alias_drift") is not False or row.get("returned_model") != row.get("model"):
+        expected_returned_model = policy.alternate_model if deepseek else PRIMARY_WIRE_MODEL
+        if (
+            row.get("alias_drift") is not False
+            or row.get("returned_model") != expected_returned_model
+        ):
             failures.append(f"{label}:model alias drift")
         ids = row.get("provider_request_ids")
         requests = row.get("requests")
@@ -380,6 +424,9 @@ def _validate_models(
                 totals[field] += row[field]
         if _positive_int(requests):
             totals["model_requests"] += requests
+            requests_by_fixture[fixture_id] += requests
+            if deepseek:
+                deepseek_by_fixture[fixture_id] += requests
         if deepseek and _positive_int(requests):
             token_sum = (
                 row["input_tokens"] + row["output_tokens"]
@@ -395,18 +442,9 @@ def _validate_models(
                 or not 0 < row["elapsed_seconds"] <= policy.alternate_max_seconds_by_role[role]
             ):
                 failures.append(f"{label}:DeepSeek role budget")
-    if totals["model_requests"] > policy.max_model_requests_per_task:
+    if any(count > policy.max_model_requests_per_task for count in requests_by_fixture.values()):
         failures.append(f"{label}:shared model request budget")
-    if (
-        sum(
-            row["requests"]
-            for row in rows
-            if type(row) is dict
-            and row.get("role") != "glm_parent"
-            and _positive_int(row.get("requests"))
-        )
-        > 36
-    ):
+    if any(count > 36 for count in deepseek_by_fixture.values()):
         failures.append(f"{label}:DeepSeek request allocation")
     return totals
 
@@ -619,6 +657,7 @@ def _validate_run(
             {
                 key: row.get(key)
                 for key in (
+                    "fixture_id",
                     "role",
                     "model",
                     "provider",
@@ -626,6 +665,8 @@ def _validate_run(
                     "thinking",
                     "context_tokens",
                     "observed_version",
+                    "system_fingerprint",
+                    "version_metadata_status",
                     "returned_model",
                     "alias_drift",
                     "requests",
