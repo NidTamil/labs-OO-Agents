@@ -1892,3 +1892,58 @@ owned VS Code window and tunnel produced one durable
 requests continued afterward. The reconnect has not yet been independently
 attested as same-attempt terminal evidence. Do not treat this active run as
 passed certification.
+
+## v26q reconnect probe: safe reservation, lost active session (2026-10-09)
+
+The controlled v26q1a window/tunnel close and reopen produced exactly one
+`reconnect_observed` file under the original launch. The extension's reconnect
+branch records the event and returns without a second prompt, as designed.
+The native hook ledger subsequently recorded `SessionEnd` for the original
+model session, and the last GLM request was cancelled. The model-request and
+runtime-event logs stopped advancing while the driver remained active waiting
+for a final. Thus this is an observed fail-closed interruption, **not** proof
+that the solver resumed or produced a terminal result. Keep the driver and
+owned window under observation until a real timeout/failure is recorded; do
+not retry Send or count this fixture as a certification pass. The completed
+native hover/recall/search observations remain genuine tool evidence but do
+not replace a successful fixture. A fresh pair with distinct run IDs will be
+needed under the same v26q source/image/registry freeze. Official practice
+and scored tasks remain unstarted.
+
+## v26q observed interruption and timeout receipts (2026-10-09)
+
+The v26q1a reconnect was fail-closed: one original attempt/start, one
+`reconnect_observed` event under the same launch, 35 completed GLM requests,
+one cancelled GLM request, and a `SessionEnd` for the original native model
+session, with no final or oracle. The controller stopped that stalled driver;
+it exited with `native synthetic run interrupted before final`. Its owned
+VS Code window and tunnel were closed. A controller-only attestor checked the
+raw SQLite, launcher and model logs before signing a **failure** terminal
+receipt, SHA-256
+`e30ceafb011b52982ec8527624a82dd09f8fe259c425c6da901e09e4128f792d`.
+An independent public-key verification checked the receipt and observation
+hash. This proves same-attempt reconnect observation and safe failure, not
+successful model continuation or a passed synthetic fixture.
+
+A separate v26q timeout probe with a pinned native VS Code launch made three
+real GLM requests before the controller's 120-second deadline. The driver
+raised the declared `TimeoutError`; the single started attempt has no final,
+oracle, or success result. The controller signed a **timeout** terminal
+receipt, SHA-256
+`9aa8f3ac935966f3d480bc6a121a8f7f58be8d6f7bef98d1f59202030e044d84`,
+and an independent public-key check verified its signature and raw
+observation. Its owned window and tunnel were closed. A preceding 10-second
+configuration attempt failed the driver's minimum 60-second timeout check
+before staging; it is not counted as a probe.
+
+Because v26q1a ended in failure, a fresh complete pair is prepared under
+the same v26q source/image/registry/epoch with distinct run IDs
+`synthetic-native-v26q1c-20261009` and
+`synthetic-native-v26q1d-20261009`, separate roots, and a validated retry
+controller config at
+`/srv/sunchaser/runs/capability-freeze-20261008/synthetic-controller-config-v26q-cert-epoch-one-retry.json`.
+Its file SHA-256 is
+`afb0f852c4cbd69742ee8a361e630ecee1c0184d3538dbeacc444363e45e14e3`;
+loaded freeze SHA-256 is
+`aeca1c8d2ee7fec46f4993a0cba9682cae1340e1d169299ac2b58c85c65d569c`.
+No official practice or scored task has started.
