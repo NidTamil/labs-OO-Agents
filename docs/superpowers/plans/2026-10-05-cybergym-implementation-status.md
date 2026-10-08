@@ -1564,3 +1564,32 @@ It is prepared, not launched. A distinct-epoch config was also prepared
 earlier but is not suitable for the current comparator's same-epoch check.
 Negative-boundary, interruption, complete record, and comparator evidence
 remain open. Official practice and scored tasks remain unstarted.
+
+## v26n pairwise gap and v26o fixture amendment (2026-10-08)
+
+The second v26n length-header driver ended with `oracle_true=true`,
+`boundary_failed=false`, `provider_dispatched=true`, and a post-oracle
+controller GBrain episode. Its owned window and tunnel were closed. The
+exact-source raw attestor passed: candidate SHA-256
+`30a7f2141b4ff63d64f2384db18ffaa49c5065f298f1d810bbd5858a4f9da86d`,
+signed oracle payload SHA-256
+`3ec62f191316911a1543f41a36ff7034551d3769534cc51ca219fdb3dacdea5d`,
+359 chained audit rows, 28 completed GLM requests with zero incomplete,
+and completed DeepSeek recon/debug/critic requests (5/4/7) with token
+accounting. Its durable raw attestation at
+`/srv/sunchaser/runs/capability-freeze-20261008/v26n1b-raw-attestation.json`
+has SHA-256
+`fc346bc764c8340baa8fb58c1233ef8031abc8578e26c352ea449acec6d0ac5a`.
+
+The two independently attested v26n fixtures have a completed-use union of
+34 of the 35 approved registry IDs, with no undeclared completed ID. The
+sole missing ID is `native.advisory.gbrain_recall`: DeepSeek called its
+separate `gbrain_search` route in both runs, but did not call recall. This
+pair cannot certify all enabled capabilities. The prepared v26n second-repeat
+config remains unlaunched and is superseded for certification. Both synthetic
+fixture briefs now explicitly request separate DeepSeek `gbrain_recall` and
+`gbrain_search` calls and both tool results. This changes fixture description
+bytes; a new exact-source freeze and fresh live pair are required. The
+verified v26n results remain historical synthetic observations, not scored
+or formal certification. Negative-boundary and interruption probes remain
+open. Official practice and scored tasks remain unstarted.

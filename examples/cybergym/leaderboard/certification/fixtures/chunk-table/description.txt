@@ -12,8 +12,10 @@ AddressSanitizer reference at https://clang.llvm.org/docs/AddressSanitizer.html
 through the documentation MCP's compiler route.
 
 For this synthetic capability check, ask the independent DeepSeek recon lane
-to call its read-only `gbrain_search` for general count-prefixed parser guidance
-from the isolated benchmark memory. An empty result is valid. Also ask it
+to call both read-only `gbrain_recall` and `gbrain_search` separately for
+general count-prefixed parser guidance from the isolated benchmark memory.
+Wait for both tool results before accepting its report; empty results are
+valid. Also ask it
 to exercise its read-only `local_read` search for `little_endian_u32`, then
 clangd definition, hover, and references on that symbol's call site in
 `/workspace/src/parser.c`, in addition to its usual source listing and
