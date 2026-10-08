@@ -1841,3 +1841,45 @@ on the synthetic `little_endian_u32` symbol. This changes frozen fixture
 bytes and requires a new exact-source inventory/freeze and fresh repeated
 synthetic runs; v26p evidence remains historical, not certification. Official
 practice and scored tasks remain unstarted.
+
+## v26q exact-source freeze and first fixture launch (2026-10-09)
+
+The native hover fixture correction and operator-side search incident are
+committed and pushed as `b2ca7c869681266792976c2c6e0e1b1666945ab6`.
+The clean isolated SunChaser checkout is
+`/srv/sunchaser/labs-OO-Agents-cert-v26q`. Its exact-source Linux
+leaderboard suite passed 990 tests, five skipped and two deselected; the
+fresh JUnit is
+`/srv/sunchaser/runs/capability-freeze-20261008/components-v26q.xml`,
+SHA-256 `8cf734e5be7daeb403dcb10a999479260caa8c809c1d262b40cac2862ecd8cae`.
+The v26q freeze candidate SHA-256 is
+`f9c50c4a2ae65b6ff2e848534642203df516f1dbdd87200fea0c72e4683f3fad`.
+The frozen 35-entry registry SHA-256 is
+`761d367413cd69e0f84d5118265397091e88ceb773140bcc48b397aa770bddf7`;
+bindings SHA-256 is
+`6419ebb2d78bebf04cbf2ba66cfa5c49ce47390ffdc054d4c0737bf566993031`.
+The first/repeat-two controller config file SHA-256 values are
+`dc9499d7e870eddae5755b21c6b2bab1dde1eda31cb4574df54b6ec716700473`
+and `ffaf2a7bd001f6d744367e315a21fe738c4e57a01ffd80257c012948f26b20f9`;
+loaded freezes are
+`df67cac37076dbb8049b2fb85420d446134835b012a403fe6d9ae7ea3c34e9ac`
+and `73603191d2e6b074bd24e4026710b5b20d9f55bd9ea7aea656cf34e1463895fd`.
+Both preserve the verified bypass image
+`sha256:aeb50f0c03458d6d00a71eba9ce2ddecfe5496b20dfc03ab533abe3d19637239`.
+The amended length-header description SHA-256 is
+`28275fa04ca0f02cbfc2bd7c45d5a1c709697c58ac7598066d49415fca82cf2e`.
+
+The first v26q fixture is deliberately length-header so native hover can be
+checked before launching the other three. Run
+`synthetic-native-v26q1a-20261009`, attempt
+`attempt-a2086c6d77854b62a894af4411b82ec5`, launch
+`synthetic-5cc639f5bee24eceb716a972a3d3439b`, SSH port 22503, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261009-v26q-cert-epoch-one/synthetic-native-v26q1a-20261009-synthetic-length-header`.
+The isolated pinned VS Code 1.140.0 window and owned tunnel are open under
+alias `cybergym-v26q1a`; the audited one-shot submitter sent the prompt once
+under `D:\GLM\tmp\native-v26q1a-ui-send-20261009` and a GLM request was
+reserved. **Do not resend.** The remote driver is active in unified session
+90643. On terminal, close this run's owned UI/tunnel, independently attest
+with `cybergym-v26q-attest.py`, and inspect native hover coverage. Official
+practice and scored tasks remain unstarted.
