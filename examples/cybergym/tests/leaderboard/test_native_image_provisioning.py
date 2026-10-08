@@ -51,6 +51,13 @@ def test_native_base_declares_clang_compiler_rt_for_fuzzing():
     assert "libclang-rt-14-dev" in dockerfile
 
 
+def test_native_overlay_links_and_runs_asan_libfuzzer_probe_at_build_time():
+    """A stale base tag must fail the overlay build before any task is frozen."""
+    dockerfile = (ROOT / "Dockerfile.native").read_text()
+    assert "clang -x c -fsanitize=fuzzer,address" in dockerfile
+    assert "-runs=1" in dockerfile
+
+
 @pytest.fixture
 def subject():
     spec = importlib.util.spec_from_file_location("install_native", ROOT / "install-native.py")

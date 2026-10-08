@@ -2,6 +2,11 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 ARG LAUNCHER_SHA256
+# Reject a stale base before packaging a native runtime that cannot run the oracle.
+RUN printf '%s\n' 'int LLVMFuzzerTestOneInput(const unsigned char *data, unsigned long size) { return 0; }' \
+    | clang -x c -fsanitize=fuzzer,address - -o /tmp/cybergym-compiler-rt-probe \
+    && /tmp/cybergym-compiler-rt-probe -runs=1 >/dev/null 2>&1 \
+    && rm /tmp/cybergym-compiler-rt-probe
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
