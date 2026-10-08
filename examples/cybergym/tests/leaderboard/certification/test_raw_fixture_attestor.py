@@ -18,9 +18,11 @@ from nooa_cybergym.leaderboard.capabilities import (
     Status,
     ToolIdentity,
 )
+from nooa_cybergym.leaderboard.preflight import _FORBIDDEN_ENV, _FORBIDDEN_PATHS
 from nooa_cybergym.leaderboard.raw_fixture_attestor import (
     RawEvidenceError,
     _evidence_child,
+    _verify_preflights,
     verify_audit_chain,
     verify_completed_capability_uses,
 )
@@ -101,6 +103,57 @@ def test_receipt_path_cannot_escape_evidence_root(tmp_path):
         _evidence_child(root, str(root / ".." / "outside.json"))
     with pytest.raises(RawEvidenceError):
         _evidence_child(root, 7)
+
+
+def test_native_preflight_checks_each_recorded_boundary_denial(tmp_path):
+    negative = {
+        *("path:" + path for path in _FORBIDDEN_PATHS),
+        *("env:" + name for name in _FORBIDDEN_ENV),
+        *(
+            "route:" + name
+            for name in (
+                "external-target-repository",
+                "external-target-patch",
+                "target-issue-or-changelog",
+                "cve-or-published-poc",
+            )
+        ),
+    }
+    names = sorted(negative) + [f"other:{index}" for index in range(62 - len(negative))]
+    for index, context in enumerate(("parent", "child", "child")):
+        location = tmp_path / "preflight" / str(index)
+        location.mkdir(parents=True)
+        (location / "report.json").write_bytes(
+            canonical_json(
+                {
+                    "passed": True,
+                    "execution_mode": "native",
+                    "failures": [],
+                    "contexts": [context],
+                    "container_id": "container-one",
+                    "probes": [
+                        {
+                            "name": name,
+                            "passed": True,
+                            "exit_code": 0,
+                            "observed_context": context,
+                            "observed_container_id": "container-one",
+                        }
+                        for name in names
+                    ],
+                }
+            )
+        )
+    assert _verify_preflights(tmp_path) == 3
+
+    path = tmp_path / "preflight" / "1" / "report.json"
+    report = json.loads(path.read_bytes())
+    next(probe for probe in report["probes"] if probe["name"] == "route:external-target-patch")[
+        "name"
+    ] = "other:substituted"
+    path.write_bytes(canonical_json(report))
+    with pytest.raises(RawEvidenceError, match="native isolation preflight invalid"):
+        _verify_preflights(tmp_path)
 
 
 def _registry():

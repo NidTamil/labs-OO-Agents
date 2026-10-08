@@ -21,11 +21,21 @@ from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.ledger import SignedEnvelope
 
 from .capabilities import CapabilityRegistry, Role, Status
+from .preflight import _FORBIDDEN_ENV, _FORBIDDEN_PATHS
 
 _MAX_JSON = 16 * 1024 * 1024
 _ZERO = "0" * 64
 _ADVISORY_ROLES = frozenset(
     {"independent_recon", "conditional_debug_recovery", "final_adversarial_critic"}
+)
+_NEGATIVE_PREFLIGHT_NAMES = frozenset(
+    {*("path:" + path for path in _FORBIDDEN_PATHS), *("env:" + name for name in _FORBIDDEN_ENV)}
+    | {
+        "route:external-target-repository",
+        "route:external-target-patch",
+        "route:target-issue-or-changelog",
+        "route:cve-or-published-poc",
+    }
 )
 
 
@@ -187,15 +197,47 @@ def _verify_preflights(root: Path) -> int:
     contexts = []
     for path in paths:
         report, _ = _json(path)
+        contexts_for_report = report.get("contexts")
+        context = (
+            contexts_for_report[0]
+            if type(contexts_for_report) is list and len(contexts_for_report) == 1
+            else None
+        )
+        probes = report.get("probes")
+        container_id = report.get("container_id")
+        names = (
+            [item.get("name") if type(item) is dict else None for item in probes]
+            if type(probes) is list
+            else []
+        )
         _require(
             report.get("passed") is True
             and report.get("execution_mode") == "native"
-            and type(report.get("probes")) is list
-            and len(report["probes"]) == 62
+            and type(probes) is list
+            and len(probes) == 62
             and report.get("failures") == [],
             "native isolation preflight invalid",
         )
-        contexts.append(report.get("contexts"))
+        _require(
+            type(context) is str
+            and context in {"parent", "child"}
+            and type(container_id) is str
+            and bool(container_id)
+            and all(type(name) is str for name in names)
+            and len(names) == len(set(names))
+            and _NEGATIVE_PREFLIGHT_NAMES <= set(names)
+            and all(
+                type(probe) is dict
+                and probe.get("passed") is True
+                and type(probe.get("exit_code")) is int
+                and probe["exit_code"] == 0
+                and probe.get("observed_context") == context
+                and probe.get("observed_container_id") == container_id
+                for probe in probes
+            ),
+            "native isolation preflight invalid",
+        )
+        contexts.append(contexts_for_report)
     _require(
         contexts.count(["parent"]) == 1 and contexts.count(["child"]) >= 2,
         "parent/child native preflight evidence absent",
