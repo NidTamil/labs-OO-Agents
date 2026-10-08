@@ -1473,3 +1473,48 @@ and the second fixture remain valid observations but this discrepancy must
 stay disclosed. Negative-boundary, interruption, and formal two-epoch
 comparator evidence still remain open. Official practice and scored runs
 remain unstarted.
+
+## v26n exact-source freeze and live launch (2026-10-08)
+
+The isolated exact-source SunChaser checkout
+`/srv/sunchaser/labs-OO-Agents-cert-v26n` is clean at commit
+`7762118ecfb1629a92ff5cf8a7d7fbc71998a228`. Its Linux leaderboard
+component suite produced 990 passed, five skipped, two deselected, with
+fresh JUnit SHA-256
+`a75d7af938fea39ba85638e2377a074166c46a5d30a7d2054d41d0b2037e79fe`.
+The v26n inventory retains 35 approved entries; registry SHA-256 is
+`f649bef6085f0b0d0180954c9d39b6393fcc57082161e7e572d4f9b4baad0eab`
+and binding SHA-256 is
+`8d68712ed9eb541ce140cbec70f8b9e02f2d6a5c38143cf31748c521351bc320`.
+The loaded epoch-one runtime freeze is
+`a3cf7786fd1ff95e57e7d2b961b43929e10ae9f722ba93a30de592cf56cc88b7`
+from file SHA-256
+`1fd5f347596561836731f63afd4d0d46a388edb52cd69c198e7d82f8edf5eeac`.
+It preserves the verified bypass image ID
+`sha256:aeb50f0c03458d6d00a71eba9ce2ddecfe5496b20dfc03ab533abe3d19637239`.
+The amended chunk-table and length-header description SHA-256 values are
+`cbcc88cb1337de5103237d25314d788ac8bf4799d8a5f6d9d3e3feda243a37bb`
+and `f27109b02c67e5270cc3eeda942132642a7d2ae7096ab18b62337085691248a7`.
+A second distinct epoch config has been prepared, not launched; file SHA-256
+`d72cbc4de81698e0600eb1eec5c532a8c3dcf219f6128670accebb803fc1f9f1`.
+
+The first v26n live synthetic `chunk-table` driver is active with run ID
+`synthetic-native-v26n1a-20261008`, attempt
+`attempt-01f16f0f405f4504aec89e3c0db820f6`, SSH port 22495, and launch ID
+`synthetic-619f5077dc3c4066ba42c509d83e47aa`. Evidence root is
+`/srv/sunchaser/runs/synthetic-evidence-20261008-v26n-cert-epoch-one/synthetic-native-v26n1a-20261008-synthetic-chunk-table`.
+The first owned VS Code 1.140.0 window stopped before model Send because its
+fresh profile had no pinned Remote-SSH extension. The renderer log showed
+`No remote extension installed to resolve ssh-remote`. The owned window and
+tunnel were closed; the preserved Remote-SSH 0.128.0 extension bundle and
+exact isolated SSH settings/known host were installed in that profile, and
+the same reserved attempt was reopened. The one-shot audited host submitter
+sent the exact composer prompt once under
+`D:\GLM\tmp\native-v26n1a-ui-send-20261008`. Model requests are recorded.
+The read-only advisory SQLite event chain now shows a DeepSeek independent
+recon `gbrain_search` tool request and result. This is an observation, not
+yet a completed-use attestation. Do not resend. On terminal, close the owned
+UI/tunnel and independently attest raw evidence with
+`/srv/sunchaser/runs/capability-freeze-20261008/cybergym-v26n-attest.py`.
+The second fixture, negative/interruption probes, and formal comparator
+remain open. Official practice and scored runs remain unstarted.
