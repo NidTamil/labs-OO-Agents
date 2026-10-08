@@ -1947,3 +1947,17 @@ Its file SHA-256 is
 loaded freeze SHA-256 is
 `aeca1c8d2ee7fec46f4993a0cba9682cae1340e1d169299ac2b58c85c65d569c`.
 No official practice or scored task has started.
+
+The fresh v26q length-header fixture is active under that retry config:
+run `synthetic-native-v26q1c-20261009`, attempt
+`attempt-c022ad38025842ce820a31cbec0e2440`, launch
+`synthetic-b2e4103ce1e04e98b86287fd8d09492a`, SSH port 22507, evidence
+root
+`/srv/sunchaser/runs/synthetic-evidence-20261009-v26q-cert-epoch-one-retry/synthetic-native-v26q1c-20261009-synthetic-length-header`.
+Its pinned VS Code 1.140.0 window and task-owned tunnel are open under alias
+`cybergym-v26q1c`; the audited one-shot submitter sent the reserved prompt
+once under `D:\GLM\tmp\native-v26q1c-ui-send-20261009`, and a GLM request
+was reserved. **Do not resend or interrupt this fixture.** The remote driver
+is active in unified session 58934. On terminal, close the owned UI/tunnel,
+independently attest with `cybergym-v26q-retry-attest.py`, and only then
+launch the chunk-table fixture serially.
