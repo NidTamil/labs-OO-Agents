@@ -1137,3 +1137,26 @@ for the debug lane only after an observed nonzero vulnerable test; that source
 change requires a new harness manifest, config and live runs. Both fixtures,
 formal negative/interruption probes and two full comparator epochs remain
 outstanding. Official practice and scored tasks remain unstarted.
+
+The next v26i probe froze the revised fixture briefs under configuration
+SHA-256 `9217c3d8a19a638ef44f61b62c738a404bb3c8e20c928f08a91ee2c92ed2da10`
+and the same compiler-ready image. Its first `synthetic:length-header` run
+completed real DeepSeek recon, conditional debug after a nonzero vulnerable
+test, and final critic. A model-initiated native Glob was denied. The GLM
+parent called finalizer, which durably recorded one declaration and returned a
+tool result. Controller terminalization then failed before writing the final
+artifact or running the private oracle: the native hook still had no
+PostToolUse callback, while the provider tool ledger had already advanced the
+finalizer to `completed`. The controller had only accepted `dispatched` in
+that exact declared-finalizer stop race. No oracle verdict or certification is
+claimed for this v26i attempt; its owned window and tunnel were closed.
+
+A regression covering both `dispatched` and `completed` finalizer states
+failed before the narrow cleanup fix and passed afterward. The fix permits
+`completed` only for the finalizer with a durable declaration; any other
+unfinished completed hook remains invalid. It reconciles the preserved v26i
+raw ledgers as one policy denial, one interrupted read, and one declared
+finalizer stopped before PostToolUse, without inventing a callback. The
+updated SunChaser leaderboard suite passed 984 tests with five skips and two
+deselections. This source change requires a fresh component inventory/freeze
+and live synthetic run before any certification claim.

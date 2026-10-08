@@ -59,10 +59,14 @@ def test_provider_dispatch_requires_completed_glm_response_with_usage(tmp_path):
     path.write_text('{"event":"request_terminal","role":"deepseek","outcome":"completed"}\n')
     assert _verified_primary_provider(path) is False
     with path.open("a") as stream:
-        stream.write('{"event":"request_terminal","role":"primary","outcome":"provider_error","returned_model":"glm-5.3"}\n')
+        stream.write(
+            '{"event":"request_terminal","role":"primary","outcome":"provider_error","returned_model":"glm-5.3"}\n'
+        )
     assert _verified_primary_provider(path) is False
     with path.open("a") as stream:
-        stream.write('{"event":"request_terminal","role":"primary","outcome":"completed","usage_status":"observed","returned_model":"glm-5.3","provider_request_id":"msg-1"}\n')
+        stream.write(
+            '{"event":"request_terminal","role":"primary","outcome":"completed","usage_status":"observed","returned_model":"glm-5.3","provider_request_id":"msg-1"}\n'
+        )
     assert _verified_primary_provider(path) is True
 
 
@@ -146,7 +150,10 @@ def test_writer_guard_is_pinned_by_signed_read_catalog(tmp_path):
         _memory_guard_binding(path, verifier)
 
 
-def test_stopped_tool_dispositions_reconcile_denials_and_interrupted_calls(tmp_path):
+@pytest.mark.parametrize("finalizer_status", ["dispatched", "completed"])
+def test_stopped_tool_dispositions_reconcile_denials_and_interrupted_calls(
+    tmp_path, finalizer_status
+):
     hooks = sqlite3.connect(tmp_path / "native-hooks.sqlite")
     hooks.execute("create table sessions(id text primary key, closed integer)")
     hooks.execute("create table tools(id text primary key, name text, closed integer)")
@@ -170,7 +177,7 @@ def test_stopped_tool_dispositions_reconcile_denials_and_interrupted_calls(tmp_p
             ("tool-denied", "Bash", "denied"),
             ("tool-observed", "Bash", "observed"),
             ("tool-read", "Read", "allowed"),
-            ("tool-final", "mcp__finalizer__select_final", "dispatched"),
+            ("tool-final", "mcp__finalizer__select_final", finalizer_status),
         ],
     )
     native.commit()
@@ -182,3 +189,5 @@ def test_stopped_tool_dispositions_reconcile_denials_and_interrupted_calls(tmp_p
         "declared_finalizer_stopped_before_post_hook": 1,
         "sessions_closed_by_controller_stop": 1,
     }
+    with pytest.raises(RuntimeError, match="finalizer was dispatched without a declaration"):
+        _stopped_tool_dispositions(tmp_path, final_declared=False)

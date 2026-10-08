@@ -212,7 +212,9 @@ def _stopped_tool_dispositions(evidence: Path, *, final_declared: bool) -> dict[
             # The provider emitted a tool_use block, but no authorization or
             # dispatch was recorded before the controller stopped the solver.
             counts["provider_tool_unadmitted_at_controller_stop"] += 1
-        elif name == "mcp__finalizer__select_final" and status == "dispatched":
+        elif name == "mcp__finalizer__select_final" and status in {"dispatched", "completed"}:
+            # The provider can deliver its tool result before a native PostToolUse
+            # callback, while the declared finalizer stops the solver immediately.
             if not final_declared:
                 raise RuntimeError("finalizer was dispatched without a declaration")
             counts["declared_finalizer_stopped_before_post_hook"] += 1
