@@ -1672,6 +1672,7 @@ and loaded freeze SHA-256 is
 Boundary/interruption probes and formal comparator remain open. Official
 practice and scored tasks remain unstarted.
 
+
 ## v26o complete first pair and independent repeat start (2026-10-08)
 
 The second v26o length-header driver returned `oracle_true=true`,
@@ -2111,4 +2112,72 @@ recorded. **Do not resend or interrupt.** On terminal close only this run's
 owned UI/tunnel, independently attest with
 `cybergym-v26q-repeat-three-attest.py`, then run the repeat-three pair
 checker for 35/35 coverage. Official practice and scored tasks remain
+unstarted.
+
+## v26q replacement repeat pair independently verified (2026-10-09)
+
+The replacement chunk-table run `synthetic-native-v26qr3b-20261009` reached
+the true private-oracle terminal result under the frozen source, image and
+registry. Its task-owned VS Code window and SSH tunnel were closed. The
+exact-source independent raw attestor passed; its output SHA-256 is
+`28aa2ccc39a4f945f67f2efdd21643dc46b9c5013fef645735dd09b4d9c6e8fa`.
+The repeat-three pair checker recomputed **35 approved, 35 completed union,
+zero missing and zero undeclared** from both independently verified raw
+attestations. Length-header had 36 completed primary requests and 13
+completed DeepSeek requests; chunk-table had 37 completed primary requests
+and 20 completed DeepSeek requests. Each also recorded one incomplete primary
+request at controller stop; those requests are disclosed and excluded from
+completed counts. Both fixture results have signed true private-oracle
+verdicts. The first pair and replacement repeat-three pair now meet the
+two-pair raw fixture coverage gate, but **no formal comparator record or
+signed PASS report exists yet**. Deliberate agent-memory-write and
+version-drift denials, interruption/timeout evidence binding, all 12 gate
+files per epoch, and a controller callback that re-verifies raw evidence are
+still required. The failed repeat-two chunk mate stays excluded. Official
+practice and scored tasks remain unstarted.
+
+## v26q live negative-boundary probes (2026-10-09)
+
+A separate provider-free native calibration probe connected VS Code 1.141.0
+to the preserved v26q image. The first attempt could not install its server
+inside the offline, read-only container; it timed out and is **not** drift
+evidence. For a fresh disposable probe, the official VS Code 1.141.0 server
+archive was downloaded on the controller host and its SHA-256
+`5711ed2690e550d52ca8531bcd349e273ed7b4e0b22180767a9338fd572de2ba`
+verified against the vendor response. It was provisioned in that probe's
+executable tmpfs only; no frozen image or successful fixture was modified.
+The real 1.141.0 client then connected. Its remote agent log rejected the
+frozen launcher extension with: `Extension is not compatible with Code
+1.141.0. Extension requires: 1.140.0.` The provider-free controller saw no
+native launch reservation or provider request, and the task-owned UI/tunnel
+were closed. Independent read-only drift attestation passed, script SHA-256
+`f498c98ddc852b866ce7c538e71a92e3c252ddc44fbd573f8672fe5bfa868a93`,
+output SHA-256
+`43ab2916161f1ee17c68a6255960dc4335e6523124f84d464fa37553fb53936e`.
+This proves an actual incompatible-client pause, not a successful synthetic
+fixture or native model request.
+
+A distinct native synthetic negative probe used the same frozen source,
+image, 35-entry registry and bindings but a separate config file SHA-256
+`a345e37cd8f122d151b9a286d13d36e5b0bde71935bd7856a196de08df4ab207`
+and loaded freeze SHA-256
+`f05a3a599110a578fdb943f754a364a612f82bea930bfe71ef8a8b6349f5dd29`.
+Its first run failed closed during DeepSeek reconnaissance before the
+denial could be injected; it is excluded. In the second run, a controller
+watcher executed one `tools/call` for `write` as UID agent inside the live
+native container against production `gbrain-read-gateway/mcp`. The gateway
+recorded the exact request SHA-256
+`1b9bb797058fa7b26dd11ea60f750ecf5f83a1826c9d44cc5c17ef096294cdc9`
+from that container and returned HTTP 403 with `memory route denied`.
+The driver was then deliberately stopped before any final or oracle. An
+independent verifier checked the request, response, production gateway row,
+frozen source/image/config identity, complete runtime hash chain, and absence
+of a memory-write event. Verifier script SHA-256 is
+`f6d40f7fefb12070edcef093656eb57934c898b39ab7ac474d951d81b473398c`;
+attestation output SHA-256 is
+`e0242ce66beb00d672f82516268ad7cb78ad121ba936579363fe37174aae911b`.
+These probes close the independently observed drift and agent-memory-write
+denial facts. They do not substitute for the 12 per-epoch gate records,
+interruption/timeout evidence binding, independent raw callback and signed
+formal comparator report. Official practice and scored tasks remain
 unstarted.
