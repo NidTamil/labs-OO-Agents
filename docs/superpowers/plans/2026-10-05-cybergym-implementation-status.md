@@ -914,7 +914,9 @@ were observed. The independent verifier passed the oracle signature and
 candidate/configuration/image hashes, all 389 chained audit rows, three 62/62
 native parent/child preflights, role/tool evidence, and post-oracle memory
 ordering. The controller denied one child `Read` request during this live run;
-its denied status has no post-hook completion. This is a production path denial,
+native hook event 127 records its `PreToolUse`, the tool ledger records `denied`
+with no post-hook completion, and the hashed gateway route log includes 80
+production `/native-tools/authorize` calls. This is a production path denial,
 though the request was for `/workspace/src/fuzz_harness.c`, so it is not by
 itself a deliberate leakage-probe result. The owned VS Code window and SSH
 tunnel were closed after terminal result.
