@@ -2345,3 +2345,13 @@ implementation path**, not a verdict: build an audited bounded vulnerable
 `run_test` adapter and a one-shot post-final evaluator with signed request,
 raw observations and result. Do not expose or mount fixed images to the solver.
 No image was executed during this inspection.
+
+A controller-only ARVO execution primitive now snapshots candidate bytes into
+a private directory, checks their pinned hash before and after execution,
+starts only an explicitly pinned image with Docker networking disabled, mounts
+the snapshot read-only at `/tmp/poc`, invokes the official `/bin/arvo` command,
+bounds captured output, normalizes timeout exit `137` to raw `300`, and removes
+the container in `finally`. Its pure classifier applies the official raw
+exit-code rule. The targeted practice suite passes 92 tests using fake Docker
+objects. This primitive is not yet connected to `run_test` or a signed
+post-final verdict, and no real ARVO image was started.
