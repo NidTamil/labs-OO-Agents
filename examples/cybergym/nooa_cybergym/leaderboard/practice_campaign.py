@@ -24,6 +24,7 @@ from .campaign import (
     _terminal_receipt,
     _valid_terminal_event,
 )
+from .cohort import FrozenTaskInput
 
 PRACTICE_TASK_IDS = ("arvo:47101", "arvo:3938")
 _HOST = "sunchaser-20260905.cinnamon-gamut.ts.net"
@@ -49,6 +50,52 @@ _ADMISSION_FIELDS = frozenset(
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def verify_practice_assets(*, registry, data_dir: Path) -> dict[str, dict[str, str | int]]:
+    """Read only the two selected vulnerable inputs against frozen asset metadata."""
+    root = Path(data_dir)
+    if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+        raise RuntimeError("trusted practice asset directory required")
+    observed = {}
+    for task_id in PRACTICE_TASK_IDS:
+        entry = registry.inputs_for(task_id)
+        if type(entry) is not FrozenTaskInput or entry.task_id != task_id:
+            raise RuntimeError("selected practice asset registry differs")
+        family, number = task_id.split(":", 1)
+        folder = root / family / number
+        if folder.is_symlink() or not folder.is_dir():
+            raise RuntimeError("selected practice asset directory is missing or linked")
+        identity = {"task_id": task_id}
+        for name, expected_hash, expected_size, prefix in (
+            (
+                "description.txt",
+                entry.description_sha256,
+                entry.description_bytes,
+                "description",
+            ),
+            (
+                "repo-vul.tar.gz",
+                entry.vulnerable_archive.sha256,
+                entry.vulnerable_archive.bytes,
+                "vulnerable_archive",
+            ),
+        ):
+            source = folder / name
+            if source.is_symlink() or not source.is_file():
+                raise RuntimeError("selected practice asset is missing or linked")
+            digest = hashlib.sha256()
+            size = 0
+            with source.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+                    size += len(block)
+            if digest.hexdigest() != expected_hash or size != expected_size:
+                raise RuntimeError("selected practice asset differs from frozen manifest")
+            identity[f"{prefix}_sha256"] = digest.hexdigest()
+            identity[f"{prefix}_bytes"] = size
+        observed[task_id] = identity
+    return observed
 
 
 @dataclass(frozen=True, slots=True)

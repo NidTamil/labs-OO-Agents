@@ -9,7 +9,11 @@ import hashlib
 
 import pytest
 from nooa_cybergym.leaderboard.campaign import CampaignAction
-from nooa_cybergym.leaderboard.practice_campaign import PRACTICE_TASK_IDS, admit_practice
+from nooa_cybergym.leaderboard.practice_campaign import (
+    PRACTICE_TASK_IDS,
+    admit_practice,
+    verify_practice_assets,
+)
 
 
 class Authority:
@@ -160,3 +164,44 @@ def test_practice_rejects_tampered_verified_ledger(tmp_path):
     )
     with pytest.raises(RuntimeError, match="practice ledger"):
         state.next_action()
+
+
+def test_selected_practice_assets_are_checked_without_fixed_side_access(tmp_path):
+    from nooa_cybergym.leaderboard.cohort import FrozenTaskInput, VulnerableArchive
+
+    expected = {}
+    for task_id in PRACTICE_TASK_IDS:
+        family, number = task_id.split(":")
+        folder = tmp_path / family / number
+        folder.mkdir(parents=True)
+        description = f"task {task_id}".encode()
+        vulnerable = f"vulnerable {task_id}".encode()
+        (folder / "description.txt").write_bytes(description)
+        (folder / "repo-vul.tar.gz").write_bytes(vulnerable)
+        (folder / "repo-fix.tar.gz").write_bytes(b"fixed side must remain unread")
+        expected[task_id] = FrozenTaskInput(
+            task_id=task_id,
+            description_sha256=hashlib.sha256(description).hexdigest(),
+            description_bytes=len(description),
+            vulnerable_archive=VulnerableArchive(
+                hashlib.sha256(vulnerable).hexdigest(), len(vulnerable)
+            ),
+            description_lfs_pointer=True,
+            vulnerable_archive_lfs_pointer=True,
+        )
+
+    class SelectedRegistry:
+        def inputs_for(self, task_id):
+            assert task_id in PRACTICE_TASK_IDS
+            return expected[task_id]
+
+    observed = verify_practice_assets(registry=SelectedRegistry(), data_dir=tmp_path)
+    assert list(observed) == list(PRACTICE_TASK_IDS)
+    assert (
+        observed["arvo:47101"]["vulnerable_archive_sha256"]
+        == expected["arvo:47101"].vulnerable_archive.sha256
+    )
+
+    (tmp_path / "arvo" / "3938" / "repo-vul.tar.gz").write_bytes(b"changed")
+    with pytest.raises(RuntimeError, match="selected practice asset"):
+        verify_practice_assets(registry=SelectedRegistry(), data_dir=tmp_path)
