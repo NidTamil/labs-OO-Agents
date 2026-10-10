@@ -39,6 +39,9 @@ _REQUIRED_SIGNED_KEYS = {
     ),
     "harness_lock": frozenset({"schema_version", "epoch", "campaign_policy_sha256"}),
     "cohort": frozenset({"schema_version", "task_ids", "tasks_json_sha256"}),
+    "practice_admission": frozenset(
+        {"schema_version", "artifact_kind", "scope", "run_id", "epoch", "task_ids"}
+    ),
     "terminal_receipt": frozenset(
         {"schema_version", "artifact_kind", "run_id", "epoch", "task_id", "status"}
     ),

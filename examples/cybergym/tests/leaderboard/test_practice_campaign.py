@@ -1,0 +1,162 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Two-task practice admission and signed-ledger replay are distinct from scored go-live."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+
+import pytest
+from nooa_cybergym.leaderboard.campaign import CampaignAction
+from nooa_cybergym.leaderboard.practice_campaign import PRACTICE_TASK_IDS, admit_practice
+
+
+class Authority:
+    def __init__(self, admission):
+        self.admission = admission
+        self.events = []
+        self.receipts = {}
+
+    def attest_signed(self, kind, envelope):
+        if kind == "practice_admission" and envelope == b"signed-admission":
+            return self.admission
+        if kind == "terminal_receipt":
+            return self.receipts.get(envelope)
+        return None
+
+    def create_campaign_once(self, _root, _run_id, event):
+        if self.events:
+            return False
+        self.events.append(dict(event))
+        return True
+
+    def read_verified_events(self, _root, _run_id):
+        return tuple(dict(event) for event in self.events)
+
+    def append_event(self, _root, _run_id, event, expected_revision):
+        if expected_revision != len(self.events):
+            return False
+        self.events.append(dict(event))
+        return True
+
+
+def admission():
+    return {
+        "schema_version": 1,
+        "artifact_kind": "practice_admission",
+        "scope": "native_practice_level1",
+        "run_id": "practice-1",
+        "epoch": "v26q",
+        "task_ids": list(PRACTICE_TASK_IDS),
+        "max_parallel_tasks": 1,
+        "freeze_sha256": "a" * 64,
+        "asset_hashes_sha256": "b" * 64,
+        "host_key_sha256": "c" * 64,
+        "vscode_version": "1.140.0",
+        "claude_extension_version": "2.1.289",
+        "remote_host": "sunchaser-20260905.cinnamon-gamut.ts.net",
+    }
+
+
+def admit(tmp_path, authority):
+    return admit_practice(
+        signed_admission=b"signed-admission",
+        authority=authority,
+        run_id="practice-1",
+        epoch="v26q",
+        evidence_root=tmp_path,
+        expected_freeze_sha256="a" * 64,
+        expected_asset_hashes_sha256="b" * 64,
+        expected_host_key_sha256="c" * 64,
+    )
+
+
+def receipt(authority, task_id):
+    raw = f"signed-receipt:{task_id}".encode()
+    authority.receipts[raw] = {
+        "schema_version": 1,
+        "artifact_kind": "terminal_receipt",
+        "run_id": "practice-1",
+        "epoch": "v26q",
+        "task_id": task_id,
+        "status": "timeout",
+        "evidence_sha256": "d" * 64,
+    }
+    return raw
+
+
+def test_practice_replays_exact_two_tasks_and_signed_terminal_receipts(tmp_path):
+    authority = Authority(admission())
+    state = admit(tmp_path, authority)
+    assert state.next_action() == CampaignAction("prepare", "arvo:47101")
+    state.mark_prepared("arvo:47101")
+    state.mark_started("arvo:47101", request_id="request-1")
+    with pytest.raises(RuntimeError, match="task order"):
+        state.mark_prepared("arvo:3938")
+    state.mark_terminal("arvo:47101", receipt(authority, "arvo:47101"))
+    assert state.next_action() == CampaignAction("prepare", "arvo:3938")
+    state.mark_prepared("arvo:3938")
+    state.mark_started("arvo:3938", request_id="request-2")
+    state.mark_terminal("arvo:3938", receipt(authority, "arvo:3938"))
+    assert state.next_action() == CampaignAction("complete", None)
+    assert admit(tmp_path, authority).next_action() == CampaignAction("complete", None)
+    assert [event["task_id"] for event in authority.events[1::3]] == list(PRACTICE_TASK_IDS)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "task_ids",
+        "max_parallel_tasks",
+        "remote_host",
+        "freeze_sha256",
+        "asset_hashes_sha256",
+        "host_key_sha256",
+        "vscode_version",
+        "claude_extension_version",
+    ],
+)
+def test_practice_admission_rejects_wrong_scope_before_ledger_creation(tmp_path, mutation):
+    payload = admission()
+    payload[mutation] = {
+        "task_ids": ["arvo:3938", "arvo:47101"],
+        "max_parallel_tasks": 2,
+        "remote_host": "other.example",
+        "freeze_sha256": "d" * 64,
+        "asset_hashes_sha256": "e" * 64,
+        "host_key_sha256": "f" * 64,
+        "vscode_version": "1.141.0",
+        "claude_extension_version": "2.1.287",
+    }[mutation]
+    authority = Authority(payload)
+    with pytest.raises(RuntimeError, match="practice admission"):
+        admit(tmp_path, authority)
+    assert authority.events == []
+
+
+def test_practice_rejects_unsigned_or_wrong_task_receipt(tmp_path):
+    authority = Authority(admission())
+    state = admit(tmp_path, authority)
+    state.mark_prepared("arvo:47101")
+    state.mark_started("arvo:47101", request_id="request-1")
+    with pytest.raises(RuntimeError, match="signed terminal"):
+        state.mark_terminal("arvo:47101", b"unsigned")
+    with pytest.raises(RuntimeError, match="identity"):
+        state.mark_terminal("arvo:47101", receipt(authority, "arvo:3938"))
+    assert state.next_action() == CampaignAction("observe_started", "arvo:47101")
+
+
+def test_practice_rejects_tampered_verified_ledger(tmp_path):
+    authority = Authority(admission())
+    state = admit(tmp_path, authority)
+    authority.events.append(
+        {
+            "type": "terminal",
+            "task_id": "arvo:47101",
+            "receipt_sha256": hashlib.sha256(b"fake").hexdigest(),
+            "receipt_envelope_b64": base64.b64encode(b"fake").decode(),
+        }
+    )
+    with pytest.raises(RuntimeError, match="practice ledger"):
+        state.next_action()
