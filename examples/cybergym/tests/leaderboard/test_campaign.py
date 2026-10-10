@@ -67,6 +67,7 @@ class Authority:
         self.payloads = payloads
         self.invalid = set()
         self.events = []
+        self.create_calls = 0
         self.created_root = None
         self.append_calls = []
         self.signed_receipts = {}
@@ -79,6 +80,7 @@ class Authority:
         return self.payloads.get(kind) if envelope == f"signed:{kind}".encode() else None
 
     def create_campaign_once(self, evidence_root, run_id, event):
+        self.create_calls += 1
         if self.created_root is not None:
             return False
         self.created_root = evidence_root
@@ -247,6 +249,7 @@ def test_resume_campaign_replays_same_signed_started_task_without_creation(tmp_p
         task_id, "launch-1"
     )
     assert len(authority.events) == 3
+    assert authority.create_calls == 1
 
 
 def test_resume_campaign_rejects_missing_or_changed_creation_ledger(tmp_path):
