@@ -2398,3 +2398,25 @@ hashes, and practice freeze. The official task archive and description remain
 unchanged. Two focused unit tests passed. It still needs the remote per-task
 worker that invokes this overlay after `prepare_workspace`; no practice
 workspace has been launched.
+
+## Practice capability gate found before launch (2026-10-10)
+
+The v26q donor inventory was inspected on the pinned SunChaser controller:
+all 35 capability entries carry `component_verified_synthetic_only` evidence.
+`CapabilityRuntime` explicitly rejects that registry for `arvo:47101` or
+`arvo:3938`. The accepted v26q live synthetic report does not silently
+promote its registry to practice scope. An authorized, separately evidenced
+practice capability promotion and freeze are therefore required before the
+first native practice model request. Neither practice exercise has started.
+
+The previously referenced Windows Tailscale `known_hosts` path was absent in
+this process profile. The existing public Tailscale host-key file under the
+Codex LocalCache was located; strict-checking SSH to the same pinned SunChaser
+alias succeeded with that explicit path. A practice UI freeze must bind this
+working file path and hash. No alternate SSH destination was used.
+
+A selected-only practice asset registry now parses exactly the ordered two-task
+manifest and rejects a third task, fixed-side fields, changed hashes and
+unmaterialized pointers. The focused practice/capability suite passed 64 tests
+and Ruff check/format passed. This component work does not remove the capability
+gate, produce a practice launch command, or assert a practice verdict.
