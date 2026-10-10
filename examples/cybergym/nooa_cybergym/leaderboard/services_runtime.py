@@ -46,6 +46,7 @@ from .native_workflows import frozen_workflows, reserve_workflow
 from .network import NetworkPolicy
 from .practice_vulnerable_runtime import OfficialArvoRecipe, OfficialArvoVulnerableRunner
 from .runtime_custody import TaskRuntimeContext
+from .scored_vulnerable_runtime import OfficialCohortRecipe, OfficialCohortVulnerableRunner
 from .tool_services_runtime import ClangdClient, DocumentationReader, RegisteredToolGateway
 from .vulnerable_runtime import VulnerableRecipe, VulnerableRunner, vulnerable_mcp_handler
 
@@ -190,7 +191,7 @@ class NativeServices:
         public_keys,
         task_brief: str,
         structural_terms: tuple[str, ...],
-        vulnerable_recipe: VulnerableRecipe | OfficialArvoRecipe,
+        vulnerable_recipe: VulnerableRecipe | OfficialArvoRecipe | OfficialCohortRecipe,
         captured_schemas: Mapping[str, str],
         workspace_manifest: Path,
         workspace_root: Path,
@@ -436,8 +437,13 @@ class NativeServices:
                 redact=self.audit.redact,
                 resolve_candidate=self.finalizer.snapshot_candidate,
             )
-            if type(vulnerable_recipe) is OfficialArvoRecipe:
-                self.vulnerable = OfficialArvoVulnerableRunner(
+            if type(vulnerable_recipe) in {OfficialArvoRecipe, OfficialCohortRecipe}:
+                runner_type = (
+                    OfficialArvoVulnerableRunner
+                    if type(vulnerable_recipe) is OfficialArvoRecipe
+                    else OfficialCohortVulnerableRunner
+                )
+                self.vulnerable = runner_type(
                     docker_client=docker_client,
                     peer=peer,
                     task_id=task_id,

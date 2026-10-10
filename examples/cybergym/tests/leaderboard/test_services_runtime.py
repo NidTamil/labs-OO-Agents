@@ -32,6 +32,10 @@ from nooa_cybergym.leaderboard.practice_vulnerable_runtime import (
     OfficialArvoVulnerableRunner,
 )
 from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+from nooa_cybergym.leaderboard.scored_vulnerable_runtime import (
+    OfficialCohortRecipe,
+    OfficialCohortVulnerableRunner,
+)
 from nooa_cybergym.leaderboard.services_runtime import NativeServices, SealedRoutes
 from nooa_cybergym.leaderboard.tool_services_runtime import ClangdClient
 from nooa_cybergym.leaderboard.vulnerable_runtime import VulnerableRecipe
@@ -292,6 +296,19 @@ def test_official_arvo_recipe_selects_vulnerable_only_native_route(assembled):
         {"candidate_path": "/workspace/output/poc"},
     )
     assert service.vulnerable.run(call)["test"]["raw_exit_code"] == 0
+
+
+def test_scored_recipe_selects_cohort_vulnerable_route(assembled):
+    image_id = "sha256:" + "a" * 64
+    # This composition fixture has a synthetic task ID; recipe validation for
+    # real numeric cohort IDs is covered by the scored runner tests.
+    recipe = object.__new__(OfficialCohortRecipe)
+    object.__setattr__(recipe, "task_id", TASK)
+    object.__setattr__(recipe, "image_id", image_id)
+    service = assembled.create(
+        vulnerable_recipe=recipe,
+    )
+    assert isinstance(service.vulnerable, OfficialCohortVulnerableRunner)
 
 
 def test_preflight_route_requires_verified_parent_process(assembled):
