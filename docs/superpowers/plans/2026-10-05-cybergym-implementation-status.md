@@ -2315,3 +2315,13 @@ intent must bind that digest and its reserved launch ID before native UI
 `Send`. An incorrect request ID or a task already terminal fails closed.
 The targeted practice/campaign/authority suite passes 82 tests; these are
 component checks, not a live native practice verification.
+
+The controller-side `NativePracticeTaskExecutor` now adapts a durable
+per-task worker to the serial runner. It rechecks the prepared launch identity,
+derives the first-request ID from that launch, publishes the signed start
+intent for the exact verified ledger event, and invokes the existing one-shot
+mailbox submitter only afterward. It rejects a mismatched launch before
+intent publication or UI Send. The relevant 84 component tests pass. The
+durable remote worker, actual vulnerable-side recipes, private evaluator
+bindings, and executable practice CLI are still absent; this adapter alone
+does not authorize or perform a practice request.
