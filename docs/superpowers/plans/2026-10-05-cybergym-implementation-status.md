@@ -2284,3 +2284,19 @@ formal report covers its earlier synthetic source/image/configuration; these
 new controller sources and official practice inputs are not certified by that
 report. Freeze and attest the exact practice configuration separately before
 launch. Neither practice exercise nor the scored campaign has started.
+
+The remote practice-input root is now mode `0700`, owned by `root`; both
+selected task directories were already mode `0700`. A scratch Level-1
+`prepare_workspace` preflight for `arvo:47101` generated the 13-file bundle
+and task-manifest SHA-256
+`7ffbdb51606a8f12eef359cd8eee185943b14928257aa41bae370aea1e33911a`.
+That preflight used an intentionally non-routable placeholder server address,
+so its output is **not** the launch workspace. No practice container, UI,
+model request, evaluator request, or terminal receipt exists. The pinned
+Windows executable `D:\GLM\bin\VSCode-1.140.0\Code.exe` was independently
+checked: product and file versions are both `1.140.0`, and its SHA-256 is
+`96851792952c34ead53462ad36d973356af2e737b5ed4e433e23c4647e0d6318`.
+The native extension version remains pinned in the image/config at `2.1.289`.
+The actual practice launcher still needs a per-task vulnerable build/test
+recipe and an isolated real evaluator binding; the synthetic parser recipe
+and synthetic oracle cannot truthfully stand in for either official task.
