@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -40,7 +41,9 @@ _ADMISSION_FIELDS = frozenset(
         "max_parallel_tasks",
         "freeze_sha256",
         "asset_hashes_sha256",
+        "selected_assets_sha256",
         "host_key_sha256",
+        "vscode_exe_sha256",
         "vscode_version",
         "claude_extension_version",
         "remote_host",
@@ -98,6 +101,44 @@ def verify_practice_assets(*, registry, data_dir: Path) -> dict[str, dict[str, s
     return observed
 
 
+def selected_assets_sha256(observed: Mapping[str, Mapping[str, str | int]]) -> str:
+    """Bind the four verified practice file identities in one canonical digest."""
+    if type(observed) is not dict or set(observed) != set(PRACTICE_TASK_IDS):
+        raise ValueError("exactly two selected practice assets required")
+    fields = {
+        "task_id",
+        "description_sha256",
+        "description_bytes",
+        "vulnerable_archive_sha256",
+        "vulnerable_archive_bytes",
+    }
+    for task_id in PRACTICE_TASK_IDS:
+        identity = observed[task_id]
+        if (
+            type(identity) is not dict
+            or set(identity) != fields
+            or identity["task_id"] != task_id
+            or any(
+                type(identity[name]) is not str or _DIGEST.fullmatch(identity[name]) is None
+                for name in ("description_sha256", "vulnerable_archive_sha256")
+            )
+            or any(
+                type(identity[name]) is not int or identity[name] <= 0
+                for name in ("description_bytes", "vulnerable_archive_bytes")
+            )
+        ):
+            raise ValueError("selected asset identity is invalid")
+    return _sha(
+        json.dumps(
+            {"schema_version": 1, "task_ids": list(PRACTICE_TASK_IDS), "assets": observed},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PracticeState:
     run_id: str
@@ -127,6 +168,8 @@ class PracticeState:
             "admission_sha256": self.admission_sha256,
             "freeze_sha256": payload["freeze_sha256"],
             "asset_hashes_sha256": payload["asset_hashes_sha256"],
+            "selected_assets_sha256": payload["selected_assets_sha256"],
+            "vscode_exe_sha256": payload["vscode_exe_sha256"],
         }
 
     def _next_action_and_revision(self) -> tuple[CampaignAction, int]:
@@ -228,7 +271,9 @@ def admit_practice(
     evidence_root: Path,
     expected_freeze_sha256: str,
     expected_asset_hashes_sha256: str,
+    expected_selected_assets_sha256: str,
     expected_host_key_sha256: str,
+    expected_vscode_exe_sha256: str,
 ) -> PracticeState:
     """Admit only the authorized pair with exact signed runtime and asset pins."""
     if (
@@ -245,7 +290,9 @@ def admit_practice(
             for value in (
                 expected_freeze_sha256,
                 expected_asset_hashes_sha256,
+                expected_selected_assets_sha256,
                 expected_host_key_sha256,
+                expected_vscode_exe_sha256,
             )
         )
     ):
@@ -261,7 +308,9 @@ def admit_practice(
         "max_parallel_tasks": 1,
         "freeze_sha256": expected_freeze_sha256,
         "asset_hashes_sha256": expected_asset_hashes_sha256,
+        "selected_assets_sha256": expected_selected_assets_sha256,
         "host_key_sha256": expected_host_key_sha256,
+        "vscode_exe_sha256": expected_vscode_exe_sha256,
         "vscode_version": "1.140.0",
         "claude_extension_version": "2.1.289",
         "remote_host": _HOST,

@@ -13,6 +13,7 @@ from nooa_cybergym.leaderboard.campaign_runner import UiTarget, run_campaign
 from nooa_cybergym.leaderboard.practice_campaign import (
     PRACTICE_TASK_IDS,
     admit_practice,
+    selected_assets_sha256,
     verify_practice_assets,
 )
 
@@ -57,7 +58,9 @@ def admission():
         "max_parallel_tasks": 1,
         "freeze_sha256": "a" * 64,
         "asset_hashes_sha256": "b" * 64,
+        "selected_assets_sha256": "e" * 64,
         "host_key_sha256": "c" * 64,
+        "vscode_exe_sha256": "f" * 64,
         "vscode_version": "1.140.0",
         "claude_extension_version": "2.1.289",
         "remote_host": "sunchaser-20260905.cinnamon-gamut.ts.net",
@@ -73,7 +76,9 @@ def admit(tmp_path, authority):
         evidence_root=tmp_path,
         expected_freeze_sha256="a" * 64,
         expected_asset_hashes_sha256="b" * 64,
+        expected_selected_assets_sha256="e" * 64,
         expected_host_key_sha256="c" * 64,
+        expected_vscode_exe_sha256="f" * 64,
     )
 
 
@@ -117,7 +122,9 @@ def test_practice_replays_exact_two_tasks_and_signed_terminal_receipts(tmp_path)
         "remote_host",
         "freeze_sha256",
         "asset_hashes_sha256",
+        "selected_assets_sha256",
         "host_key_sha256",
+        "vscode_exe_sha256",
         "vscode_version",
         "claude_extension_version",
     ],
@@ -130,7 +137,9 @@ def test_practice_admission_rejects_wrong_scope_before_ledger_creation(tmp_path,
         "remote_host": "other.example",
         "freeze_sha256": "d" * 64,
         "asset_hashes_sha256": "e" * 64,
+        "selected_assets_sha256": "a" * 64,
         "host_key_sha256": "f" * 64,
+        "vscode_exe_sha256": "b" * 64,
         "vscode_version": "1.141.0",
         "claude_extension_version": "2.1.287",
     }[mutation]
@@ -202,6 +211,14 @@ def test_selected_practice_assets_are_checked_without_fixed_side_access(tmp_path
         observed["arvo:47101"]["vulnerable_archive_sha256"]
         == expected["arvo:47101"].vulnerable_archive.sha256
     )
+    digest = selected_assets_sha256(observed)
+    assert len(digest) == 64
+    with pytest.raises(ValueError, match="exactly two"):
+        selected_assets_sha256({"arvo:47101": observed["arvo:47101"]})
+    with pytest.raises(ValueError, match="selected asset"):
+        selected_assets_sha256(
+            {**observed, "arvo:3938": {**observed["arvo:3938"], "description_bytes": -1}}
+        )
 
     (tmp_path / "arvo" / "3938" / "repo-vul.tar.gz").write_bytes(b"changed")
     with pytest.raises(RuntimeError, match="selected practice asset"):

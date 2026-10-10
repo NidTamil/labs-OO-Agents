@@ -2300,3 +2300,11 @@ The native extension version remains pinned in the image/config at `2.1.289`.
 The actual practice launcher still needs a per-task vulnerable build/test
 recipe and an isolated real evaluator binding; the synthetic parser recipe
 and synthetic oracle cannot truthfully stand in for either official task.
+
+Practice admission now requires separate SHA-256 bindings for the four
+selected, locally re-verified input files and the pinned Windows `Code.exe`,
+in addition to the full metadata-manifest and version pins. The canonical
+selected-input digest is
+`0a6ef95271d460c3d11d2423be87347e809858afe123b75f9a2be8aa5a2c3465`.
+This changes the source contract only; no admission or practice launch has
+been signed under it yet.
