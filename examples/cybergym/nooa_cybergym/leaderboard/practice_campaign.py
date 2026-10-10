@@ -218,6 +218,25 @@ class PracticeState:
         """Replay the verified chain before every controller transition."""
         return self._next_action_and_revision()[0]
 
+    def started_event_sha256(self, task_id: str, request_id: str) -> str:
+        """Bind a start intent to the exact last verified practice ledger event."""
+        action, revision = self._next_action_and_revision()
+        if action != CampaignAction("observe_started", task_id):
+            raise RuntimeError("verified practice started event is unavailable")
+        events = self.authority.read_verified_events(self.evidence_root, self.run_id)
+        expected = {"type": "started", "task_id": task_id, "request_id": request_id}
+        if len(events) != revision or events[-1] != expected:
+            raise RuntimeError("verified practice started event differs from request")
+        return _sha(
+            json.dumps(
+                expected,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+
     def _append(self, task_id: str, kind: str, **details: str) -> None:
         action, revision = self._next_action_and_revision()
         expected = {

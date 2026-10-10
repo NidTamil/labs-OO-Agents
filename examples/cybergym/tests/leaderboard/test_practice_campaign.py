@@ -102,9 +102,14 @@ def test_practice_replays_exact_two_tasks_and_signed_terminal_receipts(tmp_path)
     assert state.next_action() == CampaignAction("prepare", "arvo:47101")
     state.mark_prepared("arvo:47101")
     state.mark_started("arvo:47101", request_id="request-1")
+    assert len(state.started_event_sha256("arvo:47101", "request-1")) == 64
+    with pytest.raises(RuntimeError, match="started event"):
+        state.started_event_sha256("arvo:47101", "request-wrong")
     with pytest.raises(RuntimeError, match="task order"):
         state.mark_prepared("arvo:3938")
     state.mark_terminal("arvo:47101", receipt(authority, "arvo:47101"))
+    with pytest.raises(RuntimeError, match="started event"):
+        state.started_event_sha256("arvo:47101", "request-1")
     assert state.next_action() == CampaignAction("prepare", "arvo:3938")
     state.mark_prepared("arvo:3938")
     state.mark_started("arvo:3938", request_id="request-2")

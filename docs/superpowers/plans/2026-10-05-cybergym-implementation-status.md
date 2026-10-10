@@ -2308,3 +2308,10 @@ selected-input digest is
 `0a6ef95271d460c3d11d2423be87347e809858afe123b75f9a2be8aa5a2c3465`.
 This changes the source contract only; no admission or practice launch has
 been signed under it yet.
+
+The practice ledger can now expose the SHA-256 of its last verified `started`
+event, matching Xeus canonical JSON serialization. A task-specific start
+intent must bind that digest and its reserved launch ID before native UI
+`Send`. An incorrect request ID or a task already terminal fails closed.
+The targeted practice/campaign/authority suite passes 82 tests; these are
+component checks, not a live native practice verification.
