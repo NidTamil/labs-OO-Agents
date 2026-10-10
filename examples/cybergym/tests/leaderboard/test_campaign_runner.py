@@ -434,6 +434,19 @@ def test_runner_requires_serial_policy(tmp_path):
         run_campaign(state, FakeExecutor(authority), RecordingUi(), max_parallel_tasks=2)
 
 
+def test_runner_reaps_if_admitted_action_selector_fails(tmp_path):
+    state, authority = _state(tmp_path)
+    ui = RecordingUi()
+
+    def failed_selector(_state):
+        raise RuntimeError("verified practice ledger unavailable")
+
+    with pytest.raises(RuntimeError, match="verified practice ledger unavailable"):
+        run_campaign(state, FakeExecutor(authority), ui, action_for_state=failed_selector)
+
+    assert ui.calls == [("reap", "run-1")]
+
+
 def test_runner_does_not_submit_when_started_intent_append_is_unacknowledged(tmp_path):
     state, authority = _state(tmp_path)
     _seed_terminal_prefix(authority, 1506)

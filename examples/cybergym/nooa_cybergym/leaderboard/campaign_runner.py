@@ -231,9 +231,9 @@ def run_campaign(
     # A started task may already have sent its one native prompt and be running
     # inside an owned window. Preserve it on recovery; the durable UI operation
     # keys below reconcile open/submit without issuing Send twice.
-    if action_for_state(state).kind != "observe_started":
-        ui.reap(state.run_id)
     try:
+        if action_for_state(state).kind != "observe_started":
+            ui.reap(state.run_id)
         while True:
             action = action_for_state(state)
             if action.kind == "complete":
