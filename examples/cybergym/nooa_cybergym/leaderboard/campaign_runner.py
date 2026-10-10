@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
-from .campaign import CampaignState, next_action
+from .campaign import CampaignAction, CampaignState, next_action
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,12 +213,15 @@ def run_campaign(
     *,
     max_parallel_tasks: int = 1,
     log: Callable[[str], None] = print,
+    action_for_state: Callable[[CampaignState], CampaignAction] = next_action,
 ) -> None:
     """Drive the signed campaign to completion, one task at a time.
 
     Raises on the first failure after reaping the UI; the ledger is durable, so a
     re-invocation resumes at the same task. ``max_parallel_tasks`` must be 1: the
     frozen campaign policy pins serial execution and the scheduler is strictly serial.
+    The default action selector enforces the scored campaign state. A separately
+    admitted practice run may supply its own verified-ledger selector explicitly.
     """
     if max_parallel_tasks != 1:
         raise ValueError("campaign scheduling is serial; max_parallel_tasks must be 1")
@@ -228,11 +231,11 @@ def run_campaign(
     # A started task may already have sent its one native prompt and be running
     # inside an owned window. Preserve it on recovery; the durable UI operation
     # keys below reconcile open/submit without issuing Send twice.
-    if next_action(state).kind != "observe_started":
+    if action_for_state(state).kind != "observe_started":
         ui.reap(state.run_id)
     try:
         while True:
-            action = next_action(state)
+            action = action_for_state(state)
             if action.kind == "complete":
                 # Final sweep: each task self-closes at terminal, but a crashed-then-
                 # resumed task can leave an untracked orphan, so end on a clean slate.

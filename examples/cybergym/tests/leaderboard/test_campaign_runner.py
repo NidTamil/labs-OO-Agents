@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 
 import pytest
-from nooa_cybergym.leaderboard.campaign import check_go_live, next_action
+from nooa_cybergym.leaderboard.campaign import CampaignAction, check_go_live, next_action
 from nooa_cybergym.leaderboard.campaign_runner import (
     MailboxNativeUi,
     NativeUiController,
@@ -344,6 +344,71 @@ def test_runner_is_serial_across_two_tasks_without_overlapping_windows(tmp_path)
     assert len(opens) == 2 and len(closes) == 2
     # RecordingUi.open asserts no overlap; reaching here proves serial execution.
     assert next_action(state).kind == "complete"
+
+
+def test_runner_drives_two_task_practice_state_without_scored_cohort(tmp_path):
+    """Practice scheduling must use the same owned UI teardown without a 1,507-task state."""
+
+    class Authority:
+        def __init__(self):
+            self.events = []
+            self.signed_receipts = {}
+
+        def read_verified_events(self, _root, _run_id):
+            return tuple(self.events)
+
+    class PracticeState:
+        run_id = "practice-1"
+        evidence_root = tmp_path
+        task_ids = ("arvo:47101", "arvo:3938")
+
+        def __init__(self):
+            self.authority = Authority()
+            self.actions = [
+                *(
+                    CampaignAction(kind, task_id)
+                    for task_id in self.task_ids
+                    for kind in ("prepare", "observe_prepared", "observe_started")
+                ),
+                CampaignAction("complete", None),
+            ]
+
+        def next_action(self):
+            return self.actions[0]
+
+        def mark_prepared(self, task_id):
+            assert self.actions[0] == CampaignAction("prepare", task_id)
+            self.authority.events.append({"type": "prepared", "task_id": task_id})
+            self.actions.pop(0)
+
+        def mark_started(self, task_id, *, request_id):
+            assert self.actions[0] == CampaignAction("observe_prepared", task_id)
+            self.authority.events.append(
+                {"type": "started", "task_id": task_id, "request_id": request_id}
+            )
+            self.actions.pop(0)
+
+        def mark_terminal(self, task_id, receipt):
+            assert self.actions[0] == CampaignAction("observe_started", task_id)
+            assert receipt in self.authority.signed_receipts
+            self.authority.events.append({"type": "terminal", "task_id": task_id})
+            self.actions.pop(0)
+
+    state = PracticeState()
+    executor = FakeExecutor(state.authority)
+    ui = RecordingUi()
+
+    run_campaign(state, executor, ui, action_for_state=lambda current: current.next_action())
+
+    assert [
+        event["task_id"] for event in state.authority.events if event["type"] == "terminal"
+    ] == [
+        "arvo:47101",
+        "arvo:3938",
+    ]
+    assert [call[2] for call in ui.calls if call[0] == "open"] == list(state.task_ids)
+    assert [call[2] for call in ui.calls if call[0] == "close"] == list(state.task_ids)
+    assert ui.calls[-1] == ("reap", "practice-1")
 
 
 def test_runner_reaps_and_reraises_when_a_task_fails(tmp_path):
