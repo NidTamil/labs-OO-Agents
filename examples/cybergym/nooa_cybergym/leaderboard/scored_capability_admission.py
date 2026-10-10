@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .campaign import CampaignState
 from .capabilities import CapabilityRegistry, Status
@@ -26,6 +26,35 @@ class ScoredCapabilityAdmission:
     epoch: str
     cohort_sha256: str
     registry_sha256: str
+    image_id: str
+    _state: CampaignState = field(repr=False, compare=False)
+    _decision: bytes = field(repr=False)
+    _certification: bytes = field(repr=False)
+    _harness_lock: bytes = field(repr=False)
+
+    def verify_current(
+        self, *, task_id: str, registry: CapabilityRegistry, observed_image_id: str
+    ) -> None:
+        """Recheck the signed bundle and current task on runtime construction."""
+        action = self._state.next_action()
+        if action.task_id != task_id or action.kind not in {
+            "prepare",
+            "observe_prepared",
+            "observe_started",
+        }:
+            raise RuntimeError("scored task differs from verified campaign transition")
+        if observed_image_id != self.image_id:
+            raise RuntimeError("observed scored image differs from signed freeze")
+        refreshed = verify_scored_capability_admission(
+            state=self._state,
+            decision=self._decision,
+            certification=self._certification,
+            harness_lock=self._harness_lock,
+            registry=registry,
+            observed_image_id=observed_image_id,
+        )
+        if refreshed != self:
+            raise RuntimeError("scored capability admission changed during task")
 
 
 def _attest(state: CampaignState, kind: str, envelope: bytes):
@@ -44,10 +73,17 @@ def verify_scored_capability_admission(
     certification: bytes,
     harness_lock: bytes,
     registry: CapabilityRegistry,
+    observed_image_id: str,
 ) -> ScoredCapabilityAdmission:
     """Refuse a practice/synthetic freeze before any scored container is created."""
     if type(state) is not CampaignState or type(registry) is not CapabilityRegistry:
         raise TypeError("signed campaign state and exact capability registry required")
+    if (
+        type(observed_image_id) is not str
+        or not observed_image_id.startswith("sha256:")
+        or _HASH.fullmatch(observed_image_id[7:]) is None
+    ):
+        raise ValueError("observed immutable scored image identity required")
     # Replay the independently verified creation and all subsequent transitions.
     state.next_action()
     approval = _attest(state, "decision", decision)
@@ -70,8 +106,11 @@ def verify_scored_capability_admission(
         or certified.get("cohort_sha256") != state.cohort_sha256
         or certified.get("campaign_policy_sha256") != state.policy_sha256
         or certified.get("capability_coverage") != "all_enabled_exercised"
+        or not isinstance(certified.get("frozen_hashes"), dict)
+        or certified.get("frozen_hashes", {}).get("image_sha256") != observed_image_id[7:]
         or harness.get("epoch") != state.epoch
         or harness.get("campaign_policy_sha256") != state.policy_sha256
+        or harness.get("image_sha256") != observed_image_id[7:]
     ):
         raise RuntimeError("signed full-cohort admission differs from verified campaign")
     digest = registry.digest
@@ -91,4 +130,14 @@ def verify_scored_capability_admission(
         or certified.get("required_approved_capability_ids") != approved_ids
     ):
         raise RuntimeError("signed live capability coverage differs from scored registry")
-    return ScoredCapabilityAdmission(state.run_id, state.epoch, state.cohort_sha256, digest)
+    return ScoredCapabilityAdmission(
+        state.run_id,
+        state.epoch,
+        state.cohort_sha256,
+        digest,
+        observed_image_id,
+        state,
+        decision,
+        certification,
+        harness_lock,
+    )

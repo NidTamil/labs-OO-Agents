@@ -7,6 +7,7 @@ import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from nooa_cybergym.leaderboard.campaign import (
@@ -24,7 +25,9 @@ from nooa_cybergym.leaderboard.capabilities import (
     Status,
     ToolIdentity,
 )
+from nooa_cybergym.leaderboard.capability_runtime import CapabilityRuntime, ObservedPath
 from nooa_cybergym.leaderboard.deepseek import AlternateModelPolicy
+from nooa_cybergym.leaderboard.host_boundary_runtime import AdmittedPeer
 from nooa_cybergym.leaderboard.scored_capability_admission import (
     verify_scored_capability_admission,
 )
@@ -33,6 +36,7 @@ from nooa_cybergym.leaderboard.workspace import ControllerPaths
 CONFIG = Path(__file__).resolve().parents[2] / "leaderboard/config/campaign-policy.json"
 ALTERNATE = CONFIG.with_name("alternate-model.json")
 IDS = tuple(f"arvo:{index}" for index in range(1, 1508))
+SCORED_IMAGE = "sha256:" + "e" * 64
 
 
 def _scored_registry(*, synthetic=False):
@@ -81,7 +85,9 @@ def test_scored_capability_admission_requires_signed_live_registry(tmp_path):
     state = check_go_live(**inputs)
     registry = _scored_registry()
     authority.payloads["harness_lock"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["harness_lock"]["image_sha256"] = SCORED_IMAGE[7:]
     authority.payloads["certification"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["certification"]["frozen_hashes"] = {"image_sha256": SCORED_IMAGE[7:]}
     authority.payloads["certification"]["enabled_capability_ids"] = [
         entry.capability_id for entry in registry.entries
     ]
@@ -94,9 +100,37 @@ def test_scored_capability_admission_requires_signed_live_registry(tmp_path):
         certification=b"signed:certification",
         harness_lock=b"signed:harness_lock",
         registry=registry,
+        observed_image_id=SCORED_IMAGE,
     )
     assert admission.registry_sha256 == registry.digest
     assert admission.run_id == state.run_id
+    admission.verify_current(task_id=IDS[0], registry=registry, observed_image_id=SCORED_IMAGE)
+    with pytest.raises(RuntimeError, match="image"):
+        admission.verify_current(
+            task_id=IDS[0], registry=registry, observed_image_id="sha256:" + "f" * 64
+        )
+    with pytest.raises(RuntimeError, match="task"):
+        admission.verify_current(task_id=IDS[1], registry=registry, observed_image_id=SCORED_IMAGE)
+    peer = AdmittedPeer("container-1", "network-1", "172.20.0.2")
+    runtime = CapabilityRuntime(
+        registry=registry,
+        expected_registry_sha256=registry.digest,
+        bindings=(),
+        peer=peer,
+        task_id=IDS[0],
+        attempt_id="attempt-1",
+        audit=SimpleNamespace(record=lambda _event: True),
+        path_observer=lambda path: ObservedPath(path, path, True, "file"),
+        boundary_check=lambda observed: observed == peer,
+        working_directory="/workspace",
+        execution_paths=("/workspace/src",),
+        execution_routes=(),
+        model_id="glm-5.3",
+        structural_terms=("buffer",),
+        scored_admission=admission,
+        observed_image_id=SCORED_IMAGE,
+    )
+    assert runtime.task_id == IDS[0]
 
 
 def test_scored_capability_admission_rejects_synthetic_and_missing_coverage(tmp_path):
@@ -104,7 +138,9 @@ def test_scored_capability_admission_rejects_synthetic_and_missing_coverage(tmp_
     state = check_go_live(**inputs)
     registry = _scored_registry(synthetic=True)
     authority.payloads["harness_lock"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["harness_lock"]["image_sha256"] = SCORED_IMAGE[7:]
     authority.payloads["certification"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["certification"]["frozen_hashes"] = {"image_sha256": SCORED_IMAGE[7:]}
     authority.payloads["certification"]["enabled_capability_ids"] = [
         entry.capability_id for entry in registry.entries
     ]
@@ -118,6 +154,7 @@ def test_scored_capability_admission_rejects_synthetic_and_missing_coverage(tmp_
             certification=b"signed:certification",
             harness_lock=b"signed:harness_lock",
             registry=registry,
+            observed_image_id=SCORED_IMAGE,
         )
     live_registry = _scored_registry()
     authority.payloads["harness_lock"]["capability_registry_sha256"] = live_registry.digest
@@ -135,6 +172,7 @@ def test_scored_capability_admission_rejects_synthetic_and_missing_coverage(tmp_
             certification=b"signed:certification",
             harness_lock=b"signed:harness_lock",
             registry=live_registry,
+            observed_image_id=SCORED_IMAGE,
         )
 
 
@@ -144,8 +182,10 @@ def test_scored_capability_admission_rechecks_signed_decision_and_freeze(tmp_pat
     registry = _scored_registry()
     ids = [entry.capability_id for entry in registry.entries]
     authority.payloads["harness_lock"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["harness_lock"]["image_sha256"] = SCORED_IMAGE[7:]
     authority.payloads["certification"].update(
         capability_registry_sha256=registry.digest,
+        frozen_hashes={"image_sha256": SCORED_IMAGE[7:]},
         enabled_capability_ids=ids,
         required_approved_capability_ids=ids,
     )
@@ -157,6 +197,7 @@ def test_scored_capability_admission_rechecks_signed_decision_and_freeze(tmp_pat
             certification=inputs["certification"],
             harness_lock=inputs["harness_lock"],
             registry=registry,
+            observed_image_id=SCORED_IMAGE,
         )
     authority.payloads["decision"]["official_launch_authorised"] = True
     authority.payloads["harness_lock"]["capability_registry_sha256"] = "a" * 64
@@ -167,6 +208,7 @@ def test_scored_capability_admission_rechecks_signed_decision_and_freeze(tmp_pat
             certification=inputs["certification"],
             harness_lock=inputs["harness_lock"],
             registry=registry,
+            observed_image_id=SCORED_IMAGE,
         )
 
 

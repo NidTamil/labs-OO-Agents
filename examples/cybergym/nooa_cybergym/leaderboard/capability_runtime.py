@@ -576,6 +576,7 @@ class CapabilityRuntime:
         structural_terms: tuple[str, ...],
         synthetic_task_ids=frozenset(),
         practice_permit=None,
+        scored_admission=None,
         observed_image_id: str | None = None,
         network_policy: NetworkPolicy | None = None,
         forbidden_memory_identifiers: tuple[str, ...] = (),
@@ -624,6 +625,19 @@ class CapabilityRuntime:
                 raise ValueError(
                     "component-only registry is restricted to explicit synthetic task IDs"
                 )
+        elif task_id.startswith(("arvo:", "oss-fuzz:")):
+            from .scored_capability_admission import ScoredCapabilityAdmission
+
+            if type(scored_admission) is not ScoredCapabilityAdmission:
+                raise ValueError("signed scored capability admission required")
+            try:
+                scored_admission.verify_current(
+                    task_id=task_id,
+                    registry=registry,
+                    observed_image_id=observed_image_id,
+                )
+            except (RuntimeError, ValueError, TypeError):
+                raise ValueError("signed scored capability admission required") from None
         self.registry, self.peer, self.task_id, self.attempt_id = (
             registry,
             peer,

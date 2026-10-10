@@ -191,6 +191,33 @@ def test_component_registry_never_authorizes_official_task(tmp_path):
         runtime(bundle(tmp_path), task="oss-fuzz:12345")
 
 
+def test_live_registry_cannot_admit_scored_task_without_signed_campaign_permit(tmp_path):
+    built = bundle(tmp_path)
+    live_registry = CapabilityRegistry(
+        tuple(
+            replace(entry, evidence_refs=("live_native_observed",))
+            for entry in built.registry.entries
+        )
+    )
+    with pytest.raises(ValueError, match="scored capability admission"):
+        CapabilityRuntime(
+            registry=live_registry,
+            expected_registry_sha256=live_registry.digest,
+            bindings=built.bindings,
+            peer=PEER,
+            task_id="oss-fuzz:12345",
+            attempt_id="attempt-1",
+            audit=Audit(),
+            path_observer=lambda path: ObservedPath(path, path, True, "file"),
+            boundary_check=lambda peer: peer == PEER,
+            working_directory="/workspace",
+            execution_paths=("/workspace/src",),
+            execution_routes=(),
+            model_id="glm-5.3",
+            structural_terms=("buffer",),
+        )
+
+
 @pytest.mark.parametrize(
     "mutation", ["pending", "denied-role", "changed-adapter", "symlink-out", "boundary", "audit"]
 )
