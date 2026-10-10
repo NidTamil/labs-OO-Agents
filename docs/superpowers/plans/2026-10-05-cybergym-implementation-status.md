@@ -2242,3 +2242,45 @@ were not materialized. This re-certification establishes the native
 synthetic path only; it does not constitute a scored or practice result,
 authorize an official campaign, or resolve the separate canonical-repository
 decision. Both practice exercises and the scored campaign remain unstarted.
+
+## Two-task native practice preparation (2026-10-10)
+
+The operator authorized exactly `arvo:47101` followed by `arvo:3938` at
+Level 1 through the native Claude Code harness. The harness-owned Tailscale
+SSH tunnel to `sunchaser-20260905.cinnamon-gamut.ts.net` is permitted; no
+other SSH destination, DigitalOcean gate, XEUS migration, 1,507-task scored
+cohort launch, or abandoned OO-Agents solver path is in scope. The exact
+launch command must be given before the first native practice launch.
+
+Commits `9b1f062`, `938f420`, `c8dc726`, and `618fd2f` on
+`review/cybergym-parent-fuzzing` add an explicit practice action-selector seam
+to the serial runner, reap the UI if admission fails, admit only the ordered
+two-task practice set through a signed Xeus ledger, and verify only the two
+selected vulnerable assets. The scored 1,507-task go-live predicate remains
+unchanged. The first three commits and the asset-check commit were pushed to
+origin. The targeted practice/campaign/authority suite passed 80 tests,
+including the exact-order serial-runner integration test; no live practice
+result follows from these component tests.
+
+The four selected input files were copied over the pinned harness Tailscale
+SSH route into the controller-only directory
+`/srv/sunchaser/runs/native-practice-inputs-20261010/data`. Remote SHA-256
+values matched the local frozen manifest for both descriptions and both
+`repo-vul.tar.gz` archives. No fixed-side archive, patch, issue, CVE, or PoC
+was copied or opened. The asset manifest, mask map, generator source package,
+and nine-file generic harness were copied into adjacent controller-only
+directories. The remote metadata hashes match their frozen local values;
+`verify_harness_tree` checked all nine files. The official Level-1 generator
+imports under the remote Python 3.12 Xeus environment. The selected assets
+have not been mounted in a native task container and no practice model
+request has been sent.
+
+The remaining gate is a real per-task native worker and `TaskExecutor` that
+stage the official Level-1 workspace, reserve the first request, open the
+pinned Windows UI/tunnel, wait for the signed controller start intent, submit
+once, stop the solver, dispatch the private evaluator, publish and verify the
+signed terminal receipt, and tear down the UI before advancing. The v26q
+formal report covers its earlier synthetic source/image/configuration; these
+new controller sources and official practice inputs are not certified by that
+report. Freeze and attest the exact practice configuration separately before
+launch. Neither practice exercise nor the scored campaign has started.

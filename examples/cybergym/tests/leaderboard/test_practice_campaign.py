@@ -9,6 +9,7 @@ import hashlib
 
 import pytest
 from nooa_cybergym.leaderboard.campaign import CampaignAction
+from nooa_cybergym.leaderboard.campaign_runner import UiTarget, run_campaign
 from nooa_cybergym.leaderboard.practice_campaign import (
     PRACTICE_TASK_IDS,
     admit_practice,
@@ -205,3 +206,54 @@ def test_selected_practice_assets_are_checked_without_fixed_side_access(tmp_path
     (tmp_path / "arvo" / "3938" / "repo-vul.tar.gz").write_bytes(b"changed")
     with pytest.raises(RuntimeError, match="selected practice asset"):
         verify_practice_assets(registry=SelectedRegistry(), data_dir=tmp_path)
+
+
+def test_signed_practice_state_runs_serially_through_native_ui_owner(tmp_path):
+    authority = Authority(admission())
+    state = admit(tmp_path, authority)
+    actions = []
+
+    class Executor:
+        def prepare(self, task_id):
+            actions.append(("prepare", task_id))
+
+        def ui_target(self, task_id):
+            return UiTarget("cybergym-practice", 22511)
+
+        def first_request_id(self, task_id):
+            return f"request:{task_id}"
+
+        def start(self, task_id, request_id):
+            assert request_id == f"request:{task_id}"
+            actions.append(("start", task_id))
+
+        def await_terminal(self, task_id):
+            actions.append(("terminal", task_id))
+            return receipt(authority, task_id)
+
+    class Ui:
+        opened = None
+
+        def reap(self, _run_id):
+            self.opened = None
+            actions.append(("reap", None))
+
+        def open(self, _run_id, task_id, _host, _port):
+            assert self.opened is None
+            self.opened = task_id
+            actions.append(("open", task_id))
+
+        def close(self, _run_id, task_id, _host):
+            assert self.opened == task_id
+            self.opened = None
+            actions.append(("close", task_id))
+
+    ui = Ui()
+    run_campaign(state, Executor(), ui, action_for_state=lambda current: current.next_action())
+    assert ui.opened is None
+    assert state.next_action() == CampaignAction("complete", None)
+    assert [item for item in actions if item[0] == "open"] == [
+        ("open", "arvo:47101"),
+        ("open", "arvo:3938"),
+    ]
+    assert actions.index(("close", "arvo:47101")) < actions.index(("open", "arvo:3938"))
