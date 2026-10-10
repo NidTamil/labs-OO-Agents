@@ -15,12 +15,159 @@ from nooa_cybergym.leaderboard.campaign import (
     next_action,
     resume_campaign,
 )
+from nooa_cybergym.leaderboard.capabilities import (
+    Capability,
+    CapabilityRegistry,
+    ControlLabel,
+    Effect,
+    Role,
+    Status,
+    ToolIdentity,
+)
 from nooa_cybergym.leaderboard.deepseek import AlternateModelPolicy
+from nooa_cybergym.leaderboard.scored_capability_admission import (
+    verify_scored_capability_admission,
+)
 from nooa_cybergym.leaderboard.workspace import ControllerPaths
 
 CONFIG = Path(__file__).resolve().parents[2] / "leaderboard/config/campaign-policy.json"
 ALTERNATE = CONFIG.with_name("alternate-model.json")
 IDS = tuple(f"arvo:{index}" for index in range(1, 1508))
+
+
+def _scored_registry(*, synthetic=False):
+    entries = []
+    for index in range(35):
+        identity = ToolIdentity(
+            "native",
+            "1",
+            "a" * 64,
+            f"tool-{index}",
+            "1",
+            "b" * 64,
+            "controller",
+            "1",
+            "c" * 64,
+        )
+        entries.append(
+            Capability(
+                capability_id=f"native.tool-{index}",
+                identity=identity,
+                operation="read",
+                status=Status.APPROVED,
+                control_label=ControlLabel.PERFORMANCE_OPTIMISATION,
+                purpose="test-scoped read",
+                roles=(Role.PARENT,),
+                effects=(Effect.READ,),
+                data_scopes=("test-data",),
+                path_scopes=("/workspace/src",),
+                routes=(),
+                provider_ids=(),
+                model_ids=(),
+                credential_refs=(),
+                accounting="per invocation",
+                log_schema="test-event-v1",
+                evidence_refs=(
+                    "component_verified_synthetic_only" if synthetic else "live_native_observed",
+                ),
+                certification_digest="d" * 64,
+            )
+        )
+    return CapabilityRegistry(tuple(entries))
+
+
+def test_scored_capability_admission_requires_signed_live_registry(tmp_path):
+    inputs, authority, _ = fixture(tmp_path)
+    state = check_go_live(**inputs)
+    registry = _scored_registry()
+    authority.payloads["harness_lock"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["certification"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["certification"]["enabled_capability_ids"] = [
+        entry.capability_id for entry in registry.entries
+    ]
+    authority.payloads["certification"]["required_approved_capability_ids"] = [
+        entry.capability_id for entry in registry.entries
+    ]
+    admission = verify_scored_capability_admission(
+        state=state,
+        decision=b"signed:decision",
+        certification=b"signed:certification",
+        harness_lock=b"signed:harness_lock",
+        registry=registry,
+    )
+    assert admission.registry_sha256 == registry.digest
+    assert admission.run_id == state.run_id
+
+
+def test_scored_capability_admission_rejects_synthetic_and_missing_coverage(tmp_path):
+    inputs, authority, _ = fixture(tmp_path)
+    state = check_go_live(**inputs)
+    registry = _scored_registry(synthetic=True)
+    authority.payloads["harness_lock"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["certification"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["certification"]["enabled_capability_ids"] = [
+        entry.capability_id for entry in registry.entries
+    ]
+    authority.payloads["certification"]["required_approved_capability_ids"] = [
+        entry.capability_id for entry in registry.entries
+    ]
+    with pytest.raises(RuntimeError, match="synthetic-only"):
+        verify_scored_capability_admission(
+            state=state,
+            decision=b"signed:decision",
+            certification=b"signed:certification",
+            harness_lock=b"signed:harness_lock",
+            registry=registry,
+        )
+    live_registry = _scored_registry()
+    authority.payloads["harness_lock"]["capability_registry_sha256"] = live_registry.digest
+    authority.payloads["certification"]["capability_registry_sha256"] = live_registry.digest
+    authority.payloads["certification"]["enabled_capability_ids"] = [
+        entry.capability_id for entry in live_registry.entries[:-1]
+    ]
+    authority.payloads["certification"]["required_approved_capability_ids"] = [
+        entry.capability_id for entry in live_registry.entries
+    ]
+    with pytest.raises(RuntimeError, match="coverage"):
+        verify_scored_capability_admission(
+            state=state,
+            decision=b"signed:decision",
+            certification=b"signed:certification",
+            harness_lock=b"signed:harness_lock",
+            registry=live_registry,
+        )
+
+
+def test_scored_capability_admission_rechecks_signed_decision_and_freeze(tmp_path):
+    inputs, authority, _ = fixture(tmp_path)
+    state = check_go_live(**inputs)
+    registry = _scored_registry()
+    ids = [entry.capability_id for entry in registry.entries]
+    authority.payloads["harness_lock"]["capability_registry_sha256"] = registry.digest
+    authority.payloads["certification"].update(
+        capability_registry_sha256=registry.digest,
+        enabled_capability_ids=ids,
+        required_approved_capability_ids=ids,
+    )
+    authority.payloads["decision"]["official_launch_authorised"] = False
+    with pytest.raises(RuntimeError, match="admission"):
+        verify_scored_capability_admission(
+            state=state,
+            decision=inputs["decision"],
+            certification=inputs["certification"],
+            harness_lock=inputs["harness_lock"],
+            registry=registry,
+        )
+    authority.payloads["decision"]["official_launch_authorised"] = True
+    authority.payloads["harness_lock"]["capability_registry_sha256"] = "a" * 64
+    with pytest.raises(RuntimeError, match="registry"):
+        verify_scored_capability_admission(
+            state=state,
+            decision=inputs["decision"],
+            certification=inputs["certification"],
+            harness_lock=inputs["harness_lock"],
+            registry=registry,
+        )
 
 
 def canonical(value):
