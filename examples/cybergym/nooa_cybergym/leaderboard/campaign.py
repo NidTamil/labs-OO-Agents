@@ -274,6 +274,21 @@ class CampaignState:
     cohort_envelope: bytes = field(repr=False)
     authority: CampaignAuthority = field(repr=False)
 
+    def next_action(self) -> CampaignAction:
+        """Replay the verified cohort ledger before a controller transition."""
+        return next_action(self)
+
+    def started_event_sha256(self, task_id: str, request_id: str) -> str:
+        """Bind a native start intent to this exact verified ledger request."""
+        action, revision = _next_action_and_revision(self)
+        if action != CampaignAction("observe_started", task_id):
+            raise RuntimeError("verified campaign started event is unavailable")
+        events = self.authority.read_verified_events(self.evidence_root, self.run_id)
+        expected = {"type": "started", "task_id": task_id, "request_id": request_id}
+        if len(events) != revision or events[-1] != expected:
+            raise RuntimeError("verified campaign started event differs from request")
+        return _sha256(_json_bytes(expected))
+
     def load_asset_registry(self, path: Path):
         """Load only the 1,507 inputs pinned by this signed campaign."""
         from .cohort import FrozenAssetRegistry

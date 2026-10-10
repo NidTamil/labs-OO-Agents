@@ -213,6 +213,22 @@ def test_campaign_state_carries_signed_inputs_and_rejects_unpinned_asset_manifes
         state.load_asset_registry(manifest)
 
 
+def test_scored_started_event_digest_requires_exact_verified_request(tmp_path):
+    inputs, authority, _ = fixture(tmp_path)
+    state = check_go_live(**inputs)
+    task_id = IDS[0]
+    state.mark_prepared(task_id)
+    state.mark_started(task_id, request_id="launch-1")
+    expected = {"type": "started", "task_id": task_id, "request_id": "launch-1"}
+    assert state.next_action().kind == "observe_started"
+    assert state.started_event_sha256(task_id, "launch-1") == sha(canonical(expected))
+    with pytest.raises(RuntimeError, match="started event differs"):
+        state.started_event_sha256(task_id, "launch-2")
+    authority.events[-1]["request_id"] = "tampered"
+    with pytest.raises(RuntimeError, match="started event differs"):
+        state.started_event_sha256(task_id, "launch-1")
+
+
 def test_campaign_loads_only_signed_ordered_assets_and_mask_map(tmp_path):
     inputs, _, payloads = fixture(tmp_path)
     asset_bytes = canonical(
