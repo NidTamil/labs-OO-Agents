@@ -18,8 +18,9 @@ from pathlib import Path
 from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.ledger import SignedEnvelope
 
+from .campaign import _attest
 from .capabilities import CapabilityRegistry
-from .practice_campaign import PRACTICE_TASK_IDS, PracticeState
+from .practice_campaign import _ADMISSION_FIELDS, _HOST, PRACTICE_TASK_IDS, PracticeState
 
 _SHA = re.compile(r"[a-f0-9]{64}\Z")
 
@@ -87,6 +88,30 @@ class PracticeCapabilityPermit:
             "observe_started",
         }:
             raise RuntimeError("current practice task differs from signed ledger")
+        admission = _attest(state.authority, "practice_admission", state.signed_admission)
+        if (
+            set(admission) != _ADMISSION_FIELDS
+            or admission.get("artifact_kind") != "practice_admission"
+            or admission.get("scope") != "native_practice_level1"
+            or admission.get("task_ids") != list(PRACTICE_TASK_IDS)
+            or admission.get("run_id") != state.run_id
+            or admission.get("epoch") != state.epoch
+            or admission.get("max_parallel_tasks") != 1
+            or admission.get("vscode_version") != "1.140.0"
+            or admission.get("claude_extension_version") != "2.1.289"
+            or admission.get("remote_host") != _HOST
+            or any(
+                type(admission.get(name)) is not str or _SHA.fullmatch(admission[name]) is None
+                for name in (
+                    "freeze_sha256",
+                    "asset_hashes_sha256",
+                    "selected_assets_sha256",
+                    "host_key_sha256",
+                    "vscode_exe_sha256",
+                )
+            )
+        ):
+            raise RuntimeError("signed practice admission differs from exact task pins")
         paths = (Path(report_path), Path(signed_report_path))
         if any(
             not path.is_absolute()

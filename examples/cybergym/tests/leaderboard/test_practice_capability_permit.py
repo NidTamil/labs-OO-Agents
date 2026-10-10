@@ -34,14 +34,20 @@ def _state(tmp_path):
     authority = Authority(
         {
             "schema_version": 1,
+            "artifact_kind": "practice_admission",
             "run_id": "practice-1",
             "epoch": "practice-v26q",
             "task_ids": ["arvo:47101", "arvo:3938"],
             "scope": "native_practice_level1",
+            "max_parallel_tasks": 1,
             "freeze_sha256": "a" * 64,
             "asset_hashes_sha256": "b" * 64,
             "selected_assets_sha256": "c" * 64,
+            "host_key_sha256": "e" * 64,
             "vscode_exe_sha256": "d" * 64,
+            "vscode_version": "1.140.0",
+            "claude_extension_version": "2.1.289",
+            "remote_host": "sunchaser-20260905.cinnamon-gamut.ts.net",
         }
     )
     state = PracticeState(

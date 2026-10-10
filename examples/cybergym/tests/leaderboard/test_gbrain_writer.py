@@ -101,6 +101,30 @@ def test_verified_actual_oracle_outcome_is_the_only_source_of_episode_label(tmp_
     assert len(bridge.writes) == 1
 
 
+def test_verified_practice_outcome_is_labelled_practice_only_after_parent_stops(tmp_path):
+    bridge, audit = Bridge(), Audit()
+    verdict = receipt("oracle_true") | {"task_id": "arvo:47101"}
+    writer = OracleMemoryWriter(
+        bridge=bridge,
+        attest_receipt=lambda _: verdict,
+        audit=audit,
+        expected_guard_binding_sha256="c" * 64,
+        evidence_root=tmp_path,
+        run_id="synthetic-run",
+        epoch="synthetic-epoch",
+    )
+    with pytest.raises(TransportDenied, match="stopped"):
+        writer.publish_practice(
+            b"signed-receipt", task_id="arvo:47101", solver_stopped=lambda: False
+        )
+    assert not bridge.writes
+    writer.publish_practice(b"signed-receipt", task_id="arvo:47101", solver_stopped=lambda: True)
+    content = bridge.writes[0]["params"]["arguments"]["content"]
+    assert "practice" in content.lower()
+    assert "not a scored result" in content.lower()
+    assert "official oracle verdict" not in content.lower()
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -200,7 +224,9 @@ def synthetic_result(tmp_path, *, run_id="synthetic-run", task_id="synthetic-toy
     data = canonical_json(payload)
     signed = tmp_path / "synthetic-oracle.signed.json"
     signed.write_bytes(canonical_json(signer.sign(data).model_dump()))
-    result = SyntheticOracleResult(task_id, "a" * 64, true, hashlib.sha256(data).hexdigest(), signed, payload["observations"])
+    result = SyntheticOracleResult(
+        task_id, "a" * 64, true, hashlib.sha256(data).hexdigest(), signed, payload["observations"]
+    )
     return result, verifier
 
 
@@ -218,9 +244,21 @@ def test_synthetic_episode_requires_signed_stopped_toy_oracle_and_is_labelled(tm
         epoch="synthetic-epoch",
     )
     with pytest.raises(TransportDenied, match="stopped"):
-        writer.publish_synthetic(result, verifier=verifier, attempt_id="attempt-a", freeze_sha256="b" * 64, solver_stopped=lambda: False)
+        writer.publish_synthetic(
+            result,
+            verifier=verifier,
+            attempt_id="attempt-a",
+            freeze_sha256="b" * 64,
+            solver_stopped=lambda: False,
+        )
     assert bridge.writes == []
-    written = writer.publish_synthetic(result, verifier=verifier, attempt_id="attempt-a", freeze_sha256="b" * 64, solver_stopped=lambda: True)
+    written = writer.publish_synthetic(
+        result,
+        verifier=verifier,
+        attempt_id="attempt-a",
+        freeze_sha256="b" * 64,
+        solver_stopped=lambda: True,
+    )
     content = bridge.writes[0]["params"]["arguments"]["content"]
     assert "synthetic toy oracle" in content
     outcome = "synthetic_oracle_true" if true else "synthetic_oracle_false"
@@ -243,9 +281,21 @@ def test_synthetic_episode_rejects_tampering_and_identity_mismatch(tmp_path):
         epoch="synthetic-epoch",
     )
     with pytest.raises(TransportDenied):
-        writer.publish_synthetic(result, verifier=verifier, attempt_id="wrong", freeze_sha256="b" * 64, solver_stopped=lambda: True)
+        writer.publish_synthetic(
+            result,
+            verifier=verifier,
+            attempt_id="wrong",
+            freeze_sha256="b" * 64,
+            solver_stopped=lambda: True,
+        )
     raw = result.signed_evidence.read_bytes()
     result.signed_evidence.write_bytes(raw.replace(b"synthetic", b"falsified", 1))
     with pytest.raises(TransportDenied):
-        writer.publish_synthetic(result, verifier=verifier, attempt_id="attempt-a", freeze_sha256="b" * 64, solver_stopped=lambda: True)
+        writer.publish_synthetic(
+            result,
+            verifier=verifier,
+            attempt_id="attempt-a",
+            freeze_sha256="b" * 64,
+            solver_stopped=lambda: True,
+        )
     assert bridge.writes == []

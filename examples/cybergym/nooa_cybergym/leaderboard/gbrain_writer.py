@@ -69,6 +69,68 @@ class OracleMemoryWriter:
         with self._lock:
             return self._publish(signed_receipt, task_id)
 
+    def publish_practice(
+        self,
+        signed_receipt: bytes,
+        *,
+        task_id: str,
+        solver_stopped: Callable[[], bool],
+    ) -> dict:
+        """Capture a verified Level-1 practice outcome without a scored claim."""
+        from .practice_campaign import PRACTICE_TASK_IDS
+
+        with self._lock:
+            if not callable(solver_stopped) or solver_stopped() is not True:
+                raise TransportDenied("stopped solver required before practice capture")
+            if (
+                type(signed_receipt) is not bytes
+                or not 0 < len(signed_receipt) <= 65536
+                or task_id not in PRACTICE_TASK_IDS
+            ):
+                raise TransportDenied("bounded signed practice receipt required")
+            try:
+                verdict = self._attest(signed_receipt)
+            except Exception:
+                verdict = None
+            if (
+                not isinstance(verdict, Mapping)
+                or verdict.get("artifact_kind") != "terminal_receipt"
+                or verdict.get("schema_version") != 1
+                or verdict.get("run_id") != self._run
+                or verdict.get("epoch") != self._epoch
+                or verdict.get("task_id") != task_id
+                or verdict.get("status") not in {"oracle_true", "oracle_false"}
+                or verdict.get("oracle_true") is not (verdict["status"] == "oracle_true")
+                or any(
+                    type(verdict.get(name)) is not str or _HASH.fullmatch(verdict[name]) is None
+                    for name in _HASH_FIELDS
+                )
+            ):
+                raise TransportDenied("verified practice verdict is absent or mismatched")
+            self._check_writer_scope()
+            receipt_hash = hashlib.sha256(signed_receipt).hexdigest()
+            outcome = "practice_" + verdict["status"]
+            event = self._event(
+                task_id=task_id,
+                receipt_hash=receipt_hash,
+                outcome=outcome,
+                verdict_id=verdict["oracle_verdict_sha256"],
+            )
+            content = (
+                "---\ntype: note\ntier: episodic\nreviewed: false\n"
+                "title: Controller verified Level-1 practice outcome\nlicense: CC0-1.0\n"
+                f"captured_at: {datetime.now(UTC).isoformat()}\n"
+                f"source_document: practice-receipt:{receipt_hash}\n"
+                f"source_sha256: {receipt_hash}\n"
+                f"oracle_outcome: {outcome}\n---\n"
+                "The trusted controller recorded a signed Level-1 practice ARVO result. "
+                "This is not a scored result.\n"
+                f"Final candidate SHA-256: {verdict['final_sha256']}\n"
+                f"Practice verdict SHA-256: {verdict['oracle_verdict_sha256']}\n"
+                "This episode is an outcome record; it makes no general vulnerability claim.\n"
+            )
+            return self._capture(event, content)
+
     def publish_synthetic(
         self,
         result: SyntheticOracleResult,
@@ -253,7 +315,9 @@ class OracleMemoryWriter:
                     "jsonrpc": "2.0",
                     "id": uuid4().hex,
                     "method": "xeus/oracle-capture",
-                    "params": {"arguments": {"slug": event["slug"], "content": content, "type": "note"}},
+                    "params": {
+                        "arguments": {"slug": event["slug"], "content": content, "type": "note"}
+                    },
                 },
                 timeout_seconds=60,
             )

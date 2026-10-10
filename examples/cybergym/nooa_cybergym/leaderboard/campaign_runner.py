@@ -214,6 +214,7 @@ def run_campaign(
     max_parallel_tasks: int = 1,
     log: Callable[[str], None] = print,
     action_for_state: Callable[[CampaignState], CampaignAction] = next_action,
+    stop_after_terminal_task_id: str | None = None,
 ) -> None:
     """Drive the signed campaign to completion, one task at a time.
 
@@ -225,6 +226,14 @@ def run_campaign(
     """
     if max_parallel_tasks != 1:
         raise ValueError("campaign scheduling is serial; max_parallel_tasks must be 1")
+    if stop_after_terminal_task_id is not None:
+        from .practice_campaign import PRACTICE_TASK_IDS
+
+        if (
+            tuple(getattr(state, "task_ids", ())) != PRACTICE_TASK_IDS
+            or stop_after_terminal_task_id not in PRACTICE_TASK_IDS
+        ):
+            raise ValueError("early terminal stop is reserved for the signed practice pair")
 
     open_host: str | None = None
     open_task_id: str | None = None
@@ -277,6 +286,10 @@ def run_campaign(
                     open_host = None
                     open_task_id = None
                 log(f"terminal {task_id}")
+                if task_id == stop_after_terminal_task_id:
+                    ui.reap(state.run_id)
+                    log(f"practice segment terminal {task_id}")
+                    return
 
             else:  # pragma: no cover - campaign.next_action yields no other kind
                 raise RuntimeError(f"unsupported campaign action: {action.kind!r}")

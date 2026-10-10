@@ -398,7 +398,23 @@ def test_runner_drives_two_task_practice_state_without_scored_cohort(tmp_path):
     executor = FakeExecutor(state.authority)
     ui = RecordingUi()
 
-    run_campaign(state, executor, ui, action_for_state=lambda current: current.next_action())
+    run_campaign(
+        state,
+        executor,
+        ui,
+        action_for_state=lambda current: current.next_action(),
+        stop_after_terminal_task_id="arvo:47101",
+    )
+    assert state.next_action() == CampaignAction("prepare", "arvo:3938")
+    assert [call[2] for call in ui.calls if call[0] == "open"] == ["arvo:47101"]
+    assert ui.calls[-1] == ("reap", "practice-1")
+    run_campaign(
+        state,
+        executor,
+        ui,
+        action_for_state=lambda current: current.next_action(),
+        stop_after_terminal_task_id="arvo:3938",
+    )
 
     assert [
         event["task_id"] for event in state.authority.events if event["type"] == "terminal"
