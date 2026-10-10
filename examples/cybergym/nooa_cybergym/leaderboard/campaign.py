@@ -392,8 +392,11 @@ def check_go_live(
     authority: CampaignAuthority,
     run_id: str,
     evidence_root: Path,
+    _resume: bool = False,
 ) -> CampaignState:
     """Admit one approved campaign without dispatching an official task."""
+    if type(_resume) is not bool:
+        raise TypeError("campaign resume mode must be explicit")
     if authority is None or type(run_id) is not str or not run_id:
         raise RuntimeError("trusted campaign authority and run identity required")
     if not isinstance(evidence_root, Path):
@@ -459,13 +462,7 @@ def check_go_live(
         "mask_map_sha256": mask_digest,
         "task_count": 1507,
     }
-    try:
-        created = authority.create_campaign_once(evidence_root, run_id, event)
-    except Exception:
-        created = False
-    if created is not True:
-        raise RuntimeError("campaign already exists or creation acknowledgement unavailable")
-    return CampaignState(
+    state = CampaignState(
         run_id=run_id,
         epoch=epoch,
         evidence_root=evidence_root,
@@ -478,6 +475,47 @@ def check_go_live(
         mask_map_sha256=mask_digest,
         cohort_envelope=cohort,
         authority=authority,
+    )
+    if _resume:
+        _next_action_and_revision(state)
+        return state
+    try:
+        created = authority.create_campaign_once(evidence_root, run_id, event)
+    except Exception:
+        created = False
+    if created is not True:
+        raise RuntimeError("campaign already exists or creation acknowledgement unavailable")
+    return state
+
+
+def resume_campaign(
+    *,
+    decision: bytes,
+    certification: bytes,
+    harness_lock: bytes,
+    cohort: bytes,
+    campaign_policy: Mapping[str, Any],
+    tasks_json: bytes,
+    authority: CampaignAuthority,
+    run_id: str,
+    evidence_root: Path,
+) -> CampaignState:
+    """Reopen only an existing fully verified campaign with the same signed bundle.
+
+    No creation, model request, or ledger append occurs here. A missing or
+    changed creation event and every invalid later transition fail closed.
+    """
+    return check_go_live(
+        decision=decision,
+        certification=certification,
+        harness_lock=harness_lock,
+        cohort=cohort,
+        campaign_policy=campaign_policy,
+        tasks_json=tasks_json,
+        authority=authority,
+        run_id=run_id,
+        evidence_root=evidence_root,
+        _resume=True,
     )
 
 

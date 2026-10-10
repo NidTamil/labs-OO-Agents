@@ -9,7 +9,12 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from nooa_cybergym.leaderboard.campaign import CampaignState, check_go_live, next_action
+from nooa_cybergym.leaderboard.campaign import (
+    CampaignState,
+    check_go_live,
+    next_action,
+    resume_campaign,
+)
 from nooa_cybergym.leaderboard.deepseek import AlternateModelPolicy
 from nooa_cybergym.leaderboard.workspace import ControllerPaths
 
@@ -227,6 +232,45 @@ def test_scored_started_event_digest_requires_exact_verified_request(tmp_path):
     authority.events[-1]["request_id"] = "tampered"
     with pytest.raises(RuntimeError, match="started event differs"):
         state.started_event_sha256(task_id, "launch-1")
+
+
+def test_resume_campaign_replays_same_signed_started_task_without_creation(tmp_path):
+    inputs, authority, _ = fixture(tmp_path)
+    state = check_go_live(**inputs)
+    task_id = IDS[0]
+    state.mark_prepared(task_id)
+    state.mark_started(task_id, request_id="launch-1")
+    resumed = resume_campaign(**inputs)
+    assert resumed.run_id == state.run_id
+    assert resumed.next_action().kind == "observe_started"
+    assert resumed.started_event_sha256(task_id, "launch-1") == state.started_event_sha256(
+        task_id, "launch-1"
+    )
+    assert len(authority.events) == 3
+
+
+def test_resume_campaign_rejects_missing_or_changed_creation_ledger(tmp_path):
+    inputs, authority, _ = fixture(tmp_path)
+    with pytest.raises(RuntimeError, match="verified campaign ledger"):
+        resume_campaign(**inputs)
+    check_go_live(**inputs)
+    authority.events[0]["cohort_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="creation event"):
+        resume_campaign(**inputs)
+
+
+def test_resume_campaign_rechecks_signed_decision_and_frozen_policy(tmp_path):
+    inputs, authority, payloads = fixture(tmp_path)
+    check_go_live(**inputs)
+    payloads["decision"]["official_launch_authorised"] = False
+    with pytest.raises(RuntimeError, match="not authorised"):
+        resume_campaign(**inputs)
+    payloads["decision"]["official_launch_authorised"] = True
+    changed = dict(inputs)
+    changed["campaign_policy"] = dict(inputs["campaign_policy"]) | {"unexpected": True}
+    with pytest.raises(RuntimeError, match="policy differs"):
+        resume_campaign(**changed)
+    assert len(authority.events) == 1
 
 
 def test_campaign_loads_only_signed_ordered_assets_and_mask_map(tmp_path):
