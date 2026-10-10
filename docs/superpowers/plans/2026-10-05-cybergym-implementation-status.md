@@ -2369,3 +2369,22 @@ verification passed 109 tests with two POSIX-only tests skipped on Windows;
 Ruff check/format passed. This does **not** constitute a native practice run
 or a signed official verdict. Next: one-shot post-final evaluator and durable
 task worker/CLI, then exact practice freeze and native qualification.
+
+Ruling: the two-task practice oracle uses its own explicitly labeled signed
+controller/evaluator records rather than presenting a direct Docker verifier
+as a Xeus out-of-process evaluator result. The user excluded XEUS migration
+from this native-harness practice run. The cost is that these records are
+practice attestations, not Xeus certification or scored-campaign receipts;
+they must never be described otherwise.
+
+A one-shot ARVO practice evaluator now verifies the stopped parent's `FinalLock`
+and exact official verifier source hash, writes a durable signed request before
+opening either image, runs pinned vulnerable and fixed images serially with
+networking disabled, signs the raw observations and official-rule result, and
+publishes a signed terminal receipt shaped for the practice ledger. A request
+without a signed result is deliberately ambiguous and cannot redispatch after
+restart; a complete signed result can be replayed to recover the same terminal
+receipt without rerunning either image. The fixed image and raw result remain
+in private controller evidence. Component tests cover signed true verdict,
+idempotent replay, ambiguous failure, stopped-solver gate and changed verifier
+source; 35 related tests passed. No real ARVO image has been run yet.
