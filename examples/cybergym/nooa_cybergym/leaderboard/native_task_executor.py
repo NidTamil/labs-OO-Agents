@@ -396,7 +396,10 @@ class MailboxNativeSubmitter:
             or type(manifest.get("launch_id")) is not str
             or not launch_dir.is_absolute()
             or launch_dir.is_symlink()
-            or not launch_dir.is_dir()
+            or (launch_dir.exists() and not launch_dir.is_dir())
+            or not launch_dir.parent.is_dir()
+            or launch_dir.parent.is_symlink()
+            or launch_dir.parent.resolve() != launch_dir.parent
             or not callable(getattr(launch_authority, "_check_receipt", None))
             or not callable(getattr(mailbox, "publish", None))
             or not callable(getattr(mailbox, "wait_ack", None))
@@ -428,6 +431,9 @@ class MailboxNativeSubmitter:
         receipt_path = self.launch.launch_dir / "launcher-receipt.json"
         while not receipt_path.exists() and time.monotonic() < deadline:
             time.sleep(0.25)
+        launch_dir = self.launch.launch_dir
+        if launch_dir.is_symlink() or not launch_dir.is_dir() or launch_dir.resolve() != launch_dir:
+            raise RuntimeError("native launch directory was not reserved safely")
         receipt_raw = _bytes(receipt_path, "native launch receipt")
         if len(receipt_raw) > 4096:
             raise RuntimeError("native launch receipt exceeds outbound command limit")
