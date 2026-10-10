@@ -2388,3 +2388,13 @@ receipt without rerunning either image. The fixed image and raw result remain
 in private controller evidence. Component tests cover signed true verdict,
 idempotent replay, ambiguous failure, stopped-solver gate and changed verifier
 source; 35 related tests passed. No real ARVO image has been run yet.
+
+The practice workspace overlay now accepts an already generated and verified
+official Level-1 `PreparedWorkspace`, rechecks every original file against its
+task manifest, refuses collisions with official task inputs, and adds only
+individually pinned native Claude template bytes. It writes a separate
+practice-native manifest binding the official manifest, selected run, template
+hashes, and practice freeze. The official task archive and description remain
+unchanged. Two focused unit tests passed. It still needs the remote per-task
+worker that invokes this overlay after `prepare_workspace`; no practice
+workspace has been launched.
