@@ -44,6 +44,7 @@ from .native_runtime import NativeModelDispatcher
 from .native_tool_runtime import NativeToolController
 from .native_workflows import frozen_workflows, reserve_workflow
 from .network import NetworkPolicy
+from .practice_vulnerable_runtime import OfficialArvoRecipe, OfficialArvoVulnerableRunner
 from .runtime_custody import TaskRuntimeContext
 from .tool_services_runtime import ClangdClient, DocumentationReader, RegisteredToolGateway
 from .vulnerable_runtime import VulnerableRecipe, VulnerableRunner, vulnerable_mcp_handler
@@ -189,7 +190,7 @@ class NativeServices:
         public_keys,
         task_brief: str,
         structural_terms: tuple[str, ...],
-        vulnerable_recipe: VulnerableRecipe,
+        vulnerable_recipe: VulnerableRecipe | OfficialArvoRecipe,
         captured_schemas: Mapping[str, str],
         workspace_manifest: Path,
         workspace_root: Path,
@@ -435,17 +436,32 @@ class NativeServices:
                 redact=self.audit.redact,
                 resolve_candidate=self.finalizer.snapshot_candidate,
             )
-            self.vulnerable = VulnerableRunner(
-                container=container,
-                peer=peer,
-                task_id=task_id,
-                attempt_id=attempt_id,
-                recipe=vulnerable_recipe,
-                controller=self.deepseek,
-                observe_failure=self._observe_vulnerable_failure,
-                snapshot_candidate=self.finalizer.hash_candidate,
-                audit=self.audit,
-            )
+            if type(vulnerable_recipe) is OfficialArvoRecipe:
+                self.vulnerable = OfficialArvoVulnerableRunner(
+                    docker_client=docker_client,
+                    peer=peer,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    recipe=vulnerable_recipe,
+                    output=output,
+                    evidence=evidence,
+                    controller=self.deepseek,
+                    observe_failure=self._observe_vulnerable_failure,
+                    snapshot_candidate=self.finalizer.hash_candidate,
+                    audit=self.audit,
+                )
+            else:
+                self.vulnerable = VulnerableRunner(
+                    container=container,
+                    peer=peer,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    recipe=vulnerable_recipe,
+                    controller=self.deepseek,
+                    observe_failure=self._observe_vulnerable_failure,
+                    snapshot_candidate=self.finalizer.hash_candidate,
+                    audit=self.audit,
+                )
             self._launch = native_launch_handler(launch_authority, network_id=peer.network_id)
             self._hooks = native_hook_handler(
                 self.hooks,

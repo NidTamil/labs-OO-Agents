@@ -27,6 +27,10 @@ from nooa_cybergym.leaderboard.native_launcher import NativeLaunchAuthority, bui
 from nooa_cybergym.leaderboard.native_tool_runtime import NativeToolCall
 from nooa_cybergym.leaderboard.native_workflows import frozen_workflows
 from nooa_cybergym.leaderboard.network import NetworkPolicy
+from nooa_cybergym.leaderboard.practice_vulnerable_runtime import (
+    OfficialArvoRecipe,
+    OfficialArvoVulnerableRunner,
+)
 from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
 from nooa_cybergym.leaderboard.services_runtime import NativeServices, SealedRoutes
 from nooa_cybergym.leaderboard.tool_services_runtime import ClangdClient
@@ -246,6 +250,48 @@ def request(peer, endpoint="registered-tool-gateway", path="/mcp/clangd"):
         b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
         peer,
     )
+
+
+def test_official_arvo_recipe_selects_vulnerable_only_native_route(assembled):
+    image_id = "sha256:" + "a" * 64
+    output = assembled.args["output"]
+    (output / "poc").write_bytes(b"candidate")
+
+    class Container:
+        def start(self):
+            pass
+
+        def wait(self, timeout):
+            return {"StatusCode": 0}
+
+        def logs(self, **kwargs):
+            return iter((b"clean",))
+
+        def remove(self, force):
+            pass
+
+    docker = SimpleNamespace(
+        api=object(),
+        images=SimpleNamespace(get=lambda _: SimpleNamespace(id=image_id)),
+        containers=SimpleNamespace(create=lambda **_: Container()),
+    )
+    service = assembled.create(
+        vulnerable_recipe=OfficialArvoRecipe(task_id=TASK, image_id=image_id),
+        docker_client=docker,
+    )
+    assert isinstance(service.vulnerable, OfficialArvoVulnerableRunner)
+    call = NativeToolCall(
+        TASK,
+        "attempt-1",
+        "request-1",
+        "session-1",
+        None,
+        "parent",
+        "tool-1",
+        "mcp__vulnerable__run_test",
+        {"candidate_path": "/workspace/output/poc"},
+    )
+    assert service.vulnerable.run(call)["test"]["raw_exit_code"] == 0
 
 
 def test_preflight_route_requires_verified_parent_process(assembled):

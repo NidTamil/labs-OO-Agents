@@ -2355,3 +2355,17 @@ the container in `finally`. Its pure classifier applies the official raw
 exit-code rule. The targeted practice suite passes 92 tests using fake Docker
 objects. This primitive is not yet connected to `run_test` or a signed
 post-final verdict, and no real ARVO image was started.
+
+The native `run_test` service now selects an `OfficialArvoRecipe` only when
+explicitly supplied for the task. That recipe binds a task ID and one pinned
+vulnerable image ID; the controller hashes the candidate through the existing
+finalizer, records audit admission before execution, runs the isolated ARVO
+primitive with a private snapshot, rechecks the candidate, and releases only
+bounded vulnerable-side output and raw exit to the parent. A genuine crash
+can enable the existing DeepSeek debugging lane only after the observed
+audit record is acknowledged. The fixed-side image is absent from this route.
+The synthetic `VulnerableRecipe` path remains intact. Test-first component
+verification passed 109 tests with two POSIX-only tests skipped on Windows;
+Ruff check/format passed. This does **not** constitute a native practice run
+or a signed official verdict. Next: one-shot post-final evaluator and durable
+task worker/CLI, then exact practice freeze and native qualification.
