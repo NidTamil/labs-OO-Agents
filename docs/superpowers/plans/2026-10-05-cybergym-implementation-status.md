@@ -2325,3 +2325,9 @@ intent publication or UI Send. The relevant 84 component tests pass. The
 durable remote worker, actual vulnerable-side recipes, private evaluator
 bindings, and executable practice CLI are still absent; this adapter alone
 does not authorize or perform a practice request.
+
+The adapter now cross-checks the prepared worker's launch object against its
+signed native launch manifest (`run_id`, `task_id`, `launch_id`) before returning
+a request ID to the ledger; it also requires the launch receipt verifier and
+first-request witness interfaces. A task-swapped manifest is rejected before
+start-intent publication or UI Send. The focused suite passes 85 tests.

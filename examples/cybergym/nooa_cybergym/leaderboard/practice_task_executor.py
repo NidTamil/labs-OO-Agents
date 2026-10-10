@@ -80,6 +80,8 @@ class NativePracticeTaskExecutor:
             raise ValueError("task is outside authorized practice pair")
         launch = self.worker.ensure_prepared(task_id)
         evidence = Path(getattr(launch, "evidence", ""))
+        authority = getattr(launch, "launch_authority", None)
+        manifest = getattr(authority, "manifest", None)
         if (
             getattr(launch, "task_id", None) != task_id
             or type(getattr(launch, "launch_id", None)) is not str
@@ -92,8 +94,12 @@ class NativePracticeTaskExecutor:
             or not evidence.is_absolute()
             or evidence.is_symlink()
             or not evidence.is_dir()
-            or getattr(launch, "launch_authority", None) is None
-            or getattr(launch, "witness", None) is None
+            or type(manifest) is not dict
+            or manifest.get("run_id") != self.state.run_id
+            or manifest.get("task_id") != task_id
+            or manifest.get("launch_id") != launch.launch_id
+            or not callable(getattr(authority, "_check_receipt", None))
+            or not callable(getattr(getattr(launch, "witness", None), "observed", None))
         ):
             raise RuntimeError("prepared practice launch identity differs")
         prior = self._launches.get(task_id)

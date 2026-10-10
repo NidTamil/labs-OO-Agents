@@ -14,6 +14,14 @@ from nooa_cybergym.leaderboard.practice_task_executor import NativePracticeTaskE
 
 def test_practice_executor_publishes_verified_start_before_one_send(tmp_path):
     events = []
+    authority = SimpleNamespace(
+        manifest={
+            "run_id": "practice-1",
+            "task_id": "arvo:47101",
+            "launch_id": "launch-47101",
+        },
+        _check_receipt=lambda _receipt: None,
+    )
     launch = SimpleNamespace(
         task_id="arvo:47101",
         launch_id="launch-47101",
@@ -21,8 +29,8 @@ def test_practice_executor_publishes_verified_start_before_one_send(tmp_path):
         ssh_port=22511,
         attempt_id="attempt-47101",
         evidence=tmp_path,
-        launch_authority=object(),
-        witness=object(),
+        launch_authority=authority,
+        witness=SimpleNamespace(observed=lambda _launch_id: True),
     )
 
     class State:
@@ -85,6 +93,14 @@ def test_practice_executor_publishes_verified_start_before_one_send(tmp_path):
 
 
 def test_practice_executor_rejects_wrong_launch_before_send(tmp_path):
+    authority = SimpleNamespace(
+        manifest={
+            "run_id": "practice-1",
+            "task_id": "arvo:47101",
+            "launch_id": "launch-47101",
+        },
+        _check_receipt=lambda _receipt: None,
+    )
     launch = SimpleNamespace(
         task_id="arvo:47101",
         launch_id="launch-47101",
@@ -92,8 +108,8 @@ def test_practice_executor_rejects_wrong_launch_before_send(tmp_path):
         ssh_port=22511,
         attempt_id="attempt-47101",
         evidence=tmp_path,
-        launch_authority=object(),
-        witness=object(),
+        launch_authority=authority,
+        witness=SimpleNamespace(observed=lambda _launch_id: False),
     )
     worker = SimpleNamespace(ensure_prepared=lambda _: launch, await_terminal=lambda _: b"unused")
     state = SimpleNamespace(
@@ -113,3 +129,41 @@ def test_practice_executor_rejects_wrong_launch_before_send(tmp_path):
     )
     with pytest.raises(RuntimeError, match="launch identity"):
         executor.start("arvo:47101", "different-launch")
+
+
+def test_practice_executor_rejects_launch_manifest_mismatch_before_ledger_start(tmp_path):
+    launch = SimpleNamespace(
+        task_id="arvo:47101",
+        launch_id="launch-47101",
+        remote_alias="cybergym-practice",
+        ssh_port=22511,
+        attempt_id="attempt-47101",
+        evidence=tmp_path,
+        launch_authority=SimpleNamespace(
+            manifest={
+                "run_id": "practice-1",
+                "task_id": "arvo:3938",
+                "launch_id": "launch-47101",
+            },
+            _check_receipt=lambda _receipt: None,
+        ),
+        witness=SimpleNamespace(observed=lambda _launch_id: False),
+    )
+    executor = NativePracticeTaskExecutor(
+        state=SimpleNamespace(
+            run_id="practice-1",
+            next_action=lambda: CampaignAction("observe_started", "arvo:47101"),
+            started_event_sha256=lambda *_args: "a" * 64,
+        ),
+        worker=SimpleNamespace(
+            ensure_prepared=lambda _: launch, await_terminal=lambda _: b"unused"
+        ),
+        mailbox=SimpleNamespace(run_id="practice-1"),
+        signer=object(),
+        verifier=object(),
+        remote_alias="cybergym-practice",
+        publish_intent=lambda *_args, **_kwargs: pytest.fail("intent must not publish"),
+        submitter_factory=lambda **_kwargs: pytest.fail("Send must not be constructed"),
+    )
+    with pytest.raises(RuntimeError, match="prepared practice launch identity"):
+        executor.first_request_id("arvo:47101")
