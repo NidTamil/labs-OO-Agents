@@ -2420,3 +2420,16 @@ manifest and rejects a third task, fixed-side fields, changed hashes and
 unmaterialized pointers. The focused practice/capability suite passed 64 tests
 and Ruff check/format passed. This component work does not remove the capability
 gate, produce a practice launch command, or assert a practice verdict.
+
+The component-only registry gate now has a separate practice permit path. It
+revalidates the signed v26q live-native report, its exact 35-capability registry,
+the observed image ID, and the current task in the signed two-task practice
+ledger each time `CapabilityRuntime` is constructed. It still rejects a scored
+task, the second practice task before the first terminal event, an altered
+permit, or a missing/mismatched observed image. The actual v26q report envelope
+was independently checked against the controller public key and its payload
+matched the canonical report bytes. The focused practice/capability/ledger
+suite passed 61 tests. This is an explicit practice-only admission rule, not
+promotion of synthetic evidence into scored certification. No native practice
+worker, freeze, model request, PoC, evaluator result, or terminal receipt exists
+yet; the user-requested two task launches remain pending.

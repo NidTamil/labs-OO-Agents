@@ -575,6 +575,8 @@ class CapabilityRuntime:
         model_id: str,
         structural_terms: tuple[str, ...],
         synthetic_task_ids=frozenset(),
+        practice_permit=None,
+        observed_image_id: str | None = None,
         network_policy: NetworkPolicy | None = None,
         forbidden_memory_identifiers: tuple[str, ...] = (),
         frozen_workflows: Mapping[str, str] | None = None,
@@ -598,10 +600,26 @@ class CapabilityRuntime:
         if type(peer) is not AdmittedPeer:
             raise TypeError("controller-admitted task peer required")
         if any(SYNTHETIC_SCOPE in e.evidence_refs for e in registry.entries):
-            if (
-                not synthetic_task_ids
-                or any(not _text(t) or not t.startswith("synthetic:") for t in synthetic_task_ids)
-                or task_id not in synthetic_task_ids
+            synthetic_ids_valid = bool(synthetic_task_ids) and all(
+                _text(t) and t.startswith("synthetic:") for t in synthetic_task_ids
+            )
+            practice_allowed = False
+            if practice_permit is not None:
+                from .practice_capability_permit import PracticeCapabilityPermit
+
+                if type(practice_permit) is PracticeCapabilityPermit:
+                    try:
+                        practice_permit.verify_current(
+                            task_id=task_id,
+                            registry=registry,
+                            observed_image_id=observed_image_id,
+                        )
+                    except (RuntimeError, ValueError, TypeError):
+                        pass
+                    else:
+                        practice_allowed = True
+            if (synthetic_task_ids and not synthetic_ids_valid) or (
+                not (synthetic_ids_valid and task_id in synthetic_task_ids) and not practice_allowed
             ):
                 raise ValueError(
                     "component-only registry is restricted to explicit synthetic task IDs"
