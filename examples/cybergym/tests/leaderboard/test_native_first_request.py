@@ -14,7 +14,6 @@ def test_first_primary_request_requires_reserved_launch_and_gateway_start(tmp_pa
     from nooa_cybergym.leaderboard.native_first_request import NativeFirstRequestWitness
 
     launch_dir = tmp_path / "launch"
-    launch_dir.mkdir()
     receipt = {"event": "launch_reserved", "launch_id": "launch-1"}
 
     class Authority:
@@ -35,6 +34,7 @@ def test_first_primary_request_requires_reserved_launch_and_gateway_start(tmp_pa
     )
     assert witness.observed("launch-1") is False
 
+    launch_dir.mkdir()
     (launch_dir / "launcher-receipt.json").write_bytes(canonical_json(receipt))
     auxiliary = {
         "event": "request_reserved",
@@ -111,4 +111,26 @@ def test_first_request_rejects_mutated_audit_and_launch_receipt(tmp_path: Path):
     audit.write_bytes(canonical_json(event) + b"\n")
     path.write_bytes(canonical_json({"event": "launch_reserved", "launch_id": "changed"}))
     with pytest.raises(ValueError, match="launch receipt"):
+        witness.observed("launch-1")
+
+
+def test_first_request_rejects_non_directory_launch_evidence_after_preparation(tmp_path: Path):
+    from nooa_cybergym.leaderboard.native_first_request import NativeFirstRequestWitness
+
+    class Authority:
+        manifest = {"task_id": "arvo:1", "launch_id": "launch-1"}
+        launch_dir = tmp_path / "launch"
+
+        def _check_receipt(self, value):
+            raise AssertionError("receipt must not be read from invalid launch evidence")
+
+    witness = NativeFirstRequestWitness(
+        launch_authority=Authority(),
+        attempt_id="attempt-1",
+        model_audit=tmp_path / "model-requests.jsonl",
+        policy_sha256="a" * 64,
+        expected_model="glm-5.3",
+    )
+    Authority.launch_dir.write_text("unexpected file")
+    with pytest.raises(RuntimeError, match="launch evidence directory"):
         witness.observed("launch-1")

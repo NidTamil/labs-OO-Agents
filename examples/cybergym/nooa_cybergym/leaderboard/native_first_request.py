@@ -38,7 +38,7 @@ class NativeFirstRequestWitness:
             or not callable(getattr(launch_authority, "_check_receipt", None))
             or not launch_dir.is_absolute()
             or launch_dir.is_symlink()
-            or not launch_dir.is_dir()
+            or not launch_dir.parent.is_dir()
             or type(attempt_id) is not str
             or not attempt_id
             or not audit.is_absolute()
@@ -59,7 +59,10 @@ class NativeFirstRequestWitness:
     def observed(self, launch_id: str) -> bool:
         if launch_id != self.launch.manifest["launch_id"]:
             raise ValueError("campaign launch identity differs from native launch")
-        receipt_path = self.launch.launch_dir / "launcher-receipt.json"
+        launch_dir = Path(self.launch.launch_dir)
+        if launch_dir.is_symlink() or (launch_dir.exists() and not launch_dir.is_dir()):
+            raise RuntimeError("native launch evidence directory is linked or invalid")
+        receipt_path = launch_dir / "launcher-receipt.json"
         if not receipt_path.exists() and not receipt_path.is_symlink():
             return False
         if receipt_path.is_symlink() or not receipt_path.is_file():
