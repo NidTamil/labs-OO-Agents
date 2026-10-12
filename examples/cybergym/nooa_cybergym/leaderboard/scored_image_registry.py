@@ -9,6 +9,8 @@ to an agent workspace.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -18,6 +20,117 @@ from pathlib import Path
 _SHA = re.compile(r"[a-f0-9]{64}\Z")
 _IMAGE = re.compile(r"sha256:[a-f0-9]{64}\Z")
 _TASK = re.compile(r"(?:arvo|oss-fuzz):[0-9]+\Z")
+_REF = re.compile(r"(?:n132/arvo|cybergym/oss-fuzz):[0-9]+-(?:vul|fix)\Z")
+_MANIFEST_TYPES = frozenset(
+    {
+        "application/vnd.docker.distribution.manifest.v2+json",
+        "application/vnd.oci.image.manifest.v1+json",
+    }
+)
+
+
+def _unique_pairs(pairs: list[tuple[str, object]]) -> dict:
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate registry manifest key")
+        value[key] = item
+    return value
+
+
+def verify_docker_manifest_observation(raw_output: bytes, *, expected_ref: str) -> str:
+    """Hash a registry manifest's raw bytes, never its image-config digest."""
+    if (
+        type(raw_output) is not bytes
+        or not 0 < len(raw_output) <= 2 * 1024 * 1024
+        or type(expected_ref) is not str
+        or _REF.fullmatch(expected_ref) is None
+    ):
+        raise ValueError("bounded registry observation and reference required")
+    try:
+        observed = json.loads(raw_output, object_pairs_hook=_unique_pairs)
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("registry observation JSON is invalid") from None
+    if type(observed) is not dict or observed.get("Ref") != f"docker.io/{expected_ref}":
+        raise ValueError("registry observation reference differs")
+    descriptor = observed.get("Descriptor")
+    if type(descriptor) is not dict:
+        raise ValueError("registry manifest descriptor absent")
+    digest = descriptor.get("digest")
+    media_type = descriptor.get("mediaType")
+    platform = descriptor.get("platform")
+    size = descriptor.get("size")
+    if (
+        type(digest) is not str
+        or _IMAGE.fullmatch(digest) is None
+        or media_type not in _MANIFEST_TYPES
+        or type(size) is not int
+        or not 0 < size <= 1024 * 1024
+        or type(platform) is not dict
+        or platform.get("os") != "linux"
+        or platform.get("architecture") != "amd64"
+    ):
+        raise ValueError("Linux/amd64 registry manifest descriptor required")
+    try:
+        manifest_bytes = base64.b64decode(observed["Raw"], validate=True)
+        manifest = json.loads(manifest_bytes, object_pairs_hook=_unique_pairs)
+    except (KeyError, TypeError, binascii.Error, UnicodeDecodeError, ValueError):
+        raise ValueError("raw registry manifest is invalid") from None
+    if (
+        len(manifest_bytes) != size
+        or "sha256:" + hashlib.sha256(manifest_bytes).hexdigest() != digest
+    ):
+        raise ValueError("raw registry manifest size or digest differs")
+    if (
+        type(manifest) is not dict
+        or manifest.get("schemaVersion") != 2
+        or manifest.get("mediaType") != media_type
+        or type(manifest.get("config")) is not dict
+        or type(manifest["config"].get("digest")) is not str
+        or _IMAGE.fullmatch(manifest["config"]["digest"]) is None
+        or type(manifest.get("layers")) is not list
+        or observed.get("SchemaV2Manifest") != manifest
+    ):
+        raise ValueError("parsed registry manifest differs from raw image manifest")
+    return digest
+
+
+def assemble_scored_image_manifest(
+    *, task_ids: tuple[str, ...], observations: dict[str, bytes]
+) -> bytes:
+    """Create an unsigned exact-order candidate from independently hashed metadata."""
+    if (
+        type(task_ids) is not tuple
+        or len(task_ids) != 1507
+        or len(set(task_ids)) != 1507
+        or any(type(task) is not str or _TASK.fullmatch(task) is None for task in task_ids)
+        or type(observations) is not dict
+    ):
+        raise ValueError("complete signed-cohort image identities required")
+    refs = {}
+    for task_id in task_ids:
+        family, number = task_id.split(":", 1)
+        repository = "n132/arvo" if family == "arvo" else "cybergym/oss-fuzz"
+        refs[task_id] = (f"{repository}:{number}-vul", f"{repository}:{number}-fix")
+    if set(observations) != {ref for pair in refs.values() for ref in pair}:
+        raise ValueError(
+            "complete cohort registry observations required; missing or extra reference"
+        )
+    images = []
+    for task_id in task_ids:
+        vulnerable_ref, fixed_ref = refs[task_id]
+        vulnerable = verify_docker_manifest_observation(
+            observations[vulnerable_ref], expected_ref=vulnerable_ref
+        )
+        fixed = verify_docker_manifest_observation(observations[fixed_ref], expected_ref=fixed_ref)
+        if vulnerable == fixed:
+            raise ValueError("distinct vulnerable and fixed image manifests required")
+        images.append({"task_id": task_id, "vulnerable": vulnerable, "fixed": fixed})
+    return json.dumps(
+        {"schema_version": 1, "scope": "scored_official_images", "images": images},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
 
 
 @dataclass(frozen=True, slots=True)
