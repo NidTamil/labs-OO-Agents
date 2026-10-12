@@ -85,6 +85,11 @@ The exact lock has 1,507 distinct ordered IDs: 1,368 ARVO and 139 OSS-Fuzz. `coh
 - [ ] Keep the official launch decision mandatory and signed. Never create a decision in the CLI or choose a fallback key.
 - [ ] Run focused and existing suites; verify `--help` and the refusal path without launching a task.
 
+#### Progress, 2026-10-12
+
+- Ruling: keep signed-file custody separate from campaign creation until the real worker, trust roots and UI mailbox are bound — calling `check_go_live` before those dependencies exist could durably create a campaign that cannot launch. This costs one small CLI assembly layer; it does not change the signed admission rules.
+- First slice: `scored_campaign_inputs.py` reads the exact four externally signed envelopes, ordered `tasks.json` and frozen policy from bounded regular files in one unaliased controller directory. It rejects absent, linked, oversized and duplicate-key inputs; `admit_signed_campaign` passes the original signed bytes to `check_go_live` or `resume_campaign` without signing anything. The module-import test was observed red, then three focused tests passed. The full Windows leaderboard suite passed 1,091, skipped 23, deselected 2; Ruff check passed. This is input custody only: the CLI still refuses launch, no scored admission inputs exist, and no campaign marker or task was created.
+
 ### Task 4: Create a separately named full-cohort freeze and certification evidence
 
 **Files:** New immutable inventory and manifest under a separately named controller directory; leave v26q practice artifacts untouched. Add verification tests to the inventory/certification suite.
