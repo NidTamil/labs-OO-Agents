@@ -30,7 +30,7 @@ from xeus_cybergym.ledger import SignedEnvelope
 _IDENTITY = re.compile(r"[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}\Z")
 _ALIAS = re.compile(r"[a-z][a-z0-9-]{1,63}\Z")
 _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
-_ACTIONS = frozenset({"open", "submit", "close", "reap"})
+_ACTIONS = frozenset({"open", "submit", "close", "reap", "status"})
 _STATUSES = frozenset({"completed", "failed", "ambiguous"})
 
 
@@ -128,12 +128,12 @@ class NativeUiMailbox:
             raise ValueError("bounded UI operation key required")
         if type(action) is not str or action not in _ACTIONS:
             raise ValueError("supported UI action required")
-        if action == "reap":
+        if action in {"reap", "status"}:
             if any(
                 value is not None
                 for value in (task_id, remote_host, port, launch_id, launch_receipt)
             ):
-                raise ValueError("reap has run scope only")
+                raise ValueError("run-scoped UI command carries no task or launch")
         elif type(task_id) is not str or _IDENTITY.fullmatch(task_id) is None:
             raise ValueError("current task identity required")
         if action in {"open", "close"}:

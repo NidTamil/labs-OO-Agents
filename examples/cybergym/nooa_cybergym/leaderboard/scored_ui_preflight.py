@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import uuid4
 
 from .campaign_runner import MailboxNativeUi
 from .native_ui_mailbox import NativeUiMailbox
@@ -42,3 +43,26 @@ def prepare_previewed_scored_ui(
         verifier=signers.controller_verifier,
     )
     return ScoredUiPreflight(mailbox, MailboxNativeUi(mailbox))
+
+
+def require_previewed_scored_ui_client(
+    prepared: ScoredUiPreflight, *, timeout_seconds: float = 30
+) -> None:
+    """Require a fresh no-op acknowledgement from the outbound Windows client.
+
+    This proves a client consumed a signed command for this run without opening a
+    task window or touching the model. It does not attest VS Code or the SSH route.
+    """
+    if (
+        type(prepared) is not ScoredUiPreflight
+        or type(prepared.mailbox) is not NativeUiMailbox
+        or type(prepared.ui) is not MailboxNativeUi
+        or prepared.ui.mailbox is not prepared.mailbox
+        or type(timeout_seconds) not in {int, float}
+        or not 0 < timeout_seconds <= 120
+    ):
+        raise RuntimeError("bounded scored UI client preflight required")
+    command = prepared.mailbox.publish(operation_key=f"status-{uuid4().hex}", action="status")
+    ack = prepared.mailbox.wait_ack(command.command_id, timeout_seconds=timeout_seconds)
+    if ack.get("action") != "status" or ack.get("status") != "completed":
+        raise RuntimeError("scored UI client did not complete fresh status command")

@@ -57,6 +57,28 @@ class Ui:
         self.calls.append(("reap", args))
 
 
+def test_signed_status_proves_client_consumption_without_native_side_effect(tmp_path):
+    key = Ed25519PrivateKey.generate()
+    signer = Ed25519Signer(private_key=key, key_id="controller")
+    verifier = Ed25519Verifier({"controller": key.public_key()})
+    box = NativeUiMailbox(tmp_path, run_id="run-1", signer=signer, verifier=verifier)
+    box.publish(operation_key="preflight-status", action="status")
+    ui = Ui()
+    client = NativeUiClient(
+        run_id="run-1",
+        verifier=verifier,
+        transport=Transport(box),
+        ui=ui,
+        custody_dir=tmp_path / "host",
+        profiles_dir=tmp_path / "profiles",
+        submit=lambda **_: None,
+    )
+
+    assert client.poll_once()["status"] == "completed"
+    assert box.pending() is None
+    assert ui.calls == []
+
+
 def test_signed_open_executes_once_when_ack_transport_is_lost(tmp_path):
     key = Ed25519PrivateKey.generate()
     signer = Ed25519Signer(private_key=key, key_id="controller")

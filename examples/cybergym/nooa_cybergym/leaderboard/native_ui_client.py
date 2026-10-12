@@ -108,13 +108,13 @@ class NativeUiClient:
             or type(value.get("command_id")) is not str
             or _COMMAND_ID.fullmatch(value["command_id"]) is None
             or type(value.get("action")) is not str
-            or value["action"] not in {"open", "submit", "close", "reap"}
+            or value["action"] not in {"open", "submit", "close", "reap", "status"}
             or type(value.get("operation_key")) is not str
             or _ID.fullmatch(value["operation_key"]) is None
         ):
             raise ValueError("signed UI command identity differs")
         action = value["action"]
-        if action == "reap":
+        if action in {"reap", "status"}:
             if any(
                 value.get(key) is not None
                 for key in (
@@ -126,7 +126,7 @@ class NativeUiClient:
                     "launch_receipt_base64",
                 )
             ):
-                raise ValueError("reap command must be run-scoped")
+                raise ValueError("run-scoped UI command carries no task or launch")
             return value
         task = value.get("task_id")
         alias = value.get("remote_host")
@@ -200,6 +200,8 @@ class NativeUiClient:
             self.ui.close(self.run_id, command["task_id"], command["remote_host"])
         elif action == "reap":
             self.ui.reap(self.run_id)
+        elif action == "status":
+            pass
         else:
             command_id = command["command_id"]
             receipt = base64.b64decode(command["launch_receipt_base64"], validate=True)
