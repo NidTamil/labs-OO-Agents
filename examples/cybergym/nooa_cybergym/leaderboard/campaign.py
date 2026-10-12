@@ -381,7 +381,7 @@ class CampaignState:
         )
 
 
-def check_go_live(
+def preview_go_live(
     *,
     decision: bytes,
     certification: bytes,
@@ -392,11 +392,8 @@ def check_go_live(
     authority: CampaignAuthority,
     run_id: str,
     evidence_root: Path,
-    _resume: bool = False,
 ) -> CampaignState:
-    """Admit one approved campaign without dispatching an official task."""
-    if type(_resume) is not bool:
-        raise TypeError("campaign resume mode must be explicit")
+    """Verify every scored admission input without creating a campaign ledger."""
     if authority is None or type(run_id) is not str or not run_id:
         raise RuntimeError("trusted campaign authority and run identity required")
     if not isinstance(evidence_root, Path):
@@ -450,18 +447,6 @@ def check_go_live(
     if tuple(frozen_ids) != task_ids:
         raise RuntimeError("signed cohort differs from tasks.json order")
     asset_digest, benchmark_commit, dataset_commit, mask_digest = _cohort_inputs(frozen_cohort)
-    event = {
-        "type": "campaign_created",
-        "run_id": run_id,
-        "epoch": epoch,
-        "policy_sha256": policy_sha,
-        "cohort_sha256": _sha256(cohort),
-        "asset_hashes_sha256": asset_digest,
-        "benchmark_commit": benchmark_commit,
-        "dataset_commit": dataset_commit,
-        "mask_map_sha256": mask_digest,
-        "task_count": 1507,
-    }
     state = CampaignState(
         run_id=run_id,
         epoch=epoch,
@@ -476,9 +461,51 @@ def check_go_live(
         cohort_envelope=cohort,
         authority=authority,
     )
+    return state
+
+
+def check_go_live(
+    *,
+    decision: bytes,
+    certification: bytes,
+    harness_lock: bytes,
+    cohort: bytes,
+    campaign_policy: Mapping[str, Any],
+    tasks_json: bytes,
+    authority: CampaignAuthority,
+    run_id: str,
+    evidence_root: Path,
+    _resume: bool = False,
+) -> CampaignState:
+    """Admit one approved campaign without dispatching an official task."""
+    if type(_resume) is not bool:
+        raise TypeError("campaign resume mode must be explicit")
+    state = preview_go_live(
+        decision=decision,
+        certification=certification,
+        harness_lock=harness_lock,
+        cohort=cohort,
+        campaign_policy=campaign_policy,
+        tasks_json=tasks_json,
+        authority=authority,
+        run_id=run_id,
+        evidence_root=evidence_root,
+    )
     if _resume:
         _next_action_and_revision(state)
         return state
+    event = {
+        "type": "campaign_created",
+        "run_id": run_id,
+        "epoch": state.epoch,
+        "policy_sha256": state.policy_sha256,
+        "cohort_sha256": state.cohort_sha256,
+        "asset_hashes_sha256": state.asset_hashes_sha256,
+        "benchmark_commit": state.benchmark_commit,
+        "dataset_commit": state.dataset_commit,
+        "mask_map_sha256": state.mask_map_sha256,
+        "task_count": len(state.task_ids),
+    }
     try:
         created = authority.create_campaign_once(evidence_root, run_id, event)
     except Exception:

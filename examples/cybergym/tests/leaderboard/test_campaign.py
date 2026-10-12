@@ -14,6 +14,7 @@ from nooa_cybergym.leaderboard.campaign import (
     CampaignState,
     check_go_live,
     next_action,
+    preview_go_live,
     resume_campaign,
 )
 from nooa_cybergym.leaderboard.capabilities import (
@@ -382,6 +383,20 @@ def fixture(tmp_path):
         "evidence_root": tmp_path / "evidence",
     }
     return inputs, authority, payloads
+
+
+def test_preview_go_live_validates_signed_bundle_without_creating_campaign(tmp_path):
+    inputs, authority, _ = fixture(tmp_path)
+    state = preview_go_live(**inputs)
+    assert state.run_id == "run-1"
+    assert state.task_ids == IDS
+    assert authority.create_calls == 0
+    assert authority.events == []
+
+    changed = inputs | {"campaign_policy": {"max_parallel_tasks": 2}}
+    with pytest.raises(RuntimeError, match="campaign policy differs"):
+        preview_go_live(**changed)
+    assert authority.create_calls == 0
 
 
 @pytest.mark.parametrize(
