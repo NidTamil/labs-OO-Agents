@@ -5,16 +5,18 @@
 import hashlib
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from nooa_cybergym.leaderboard.capabilities import Role
+from nooa_cybergym.leaderboard.capabilities import CapabilityRegistry, Role, Status
 from nooa_cybergym.leaderboard.capability_inventory import (
     ObservedService,
     default_native_capability_specs,
     freeze_inventory,
     load_captured_native_schemas,
     load_frozen_bindings,
+    load_scored_binding_provenance,
     main,
     write_inventory,
 )
@@ -123,12 +125,41 @@ def test_freeze_uses_observed_schemas_and_reports_unknown_without_approving(tmp_
     assert json.loads(outputs["inventory_path"].read_bytes())["provider_dispatched"] is False
 
 
+def test_scored_binding_provenance_preserves_every_component_boundary(tmp_path):
+    inventory = frozen(tmp_path)
+    source = inventory.bundle.registry
+    outputs = write_inventory(tmp_path / "frozen", inventory)
+    live = CapabilityRegistry(
+        tuple(
+            replace(entry, evidence_refs=("candidate_for_live_native_certification",))
+            if entry.status is Status.APPROVED
+            else entry
+            for entry in source.entries
+        )
+    )
+    assert (
+        load_scored_binding_provenance(
+            outputs["bindings_path"], component_registry=source, scored_registry=live
+        )
+        == inventory.bundle.bindings
+    )
+    with pytest.raises(ValueError, match="synthetic-only"):
+        load_scored_binding_provenance(
+            outputs["bindings_path"], component_registry=source, scored_registry=source
+        )
+    entries = list(live.entries)
+    entries[0] = replace(entries[0], path_scopes=("/workspace",))
+    widened = CapabilityRegistry(tuple(entries))
+    with pytest.raises(ValueError, match="scope or identity"):
+        load_scored_binding_provenance(
+            outputs["bindings_path"], component_registry=source, scored_registry=widened
+        )
+
+
 def test_missing_legacy_read_tools_are_not_invented(tmp_path):
     capture, services, evidence, policy = setup(tmp_path)
     value = json.loads(capture.path.read_bytes())
-    value["tools"] = [
-        tool for tool in value["tools"] if tool["name"] not in {"Grep", "Glob"}
-    ]
+    value["tools"] = [tool for tool in value["tools"] if tool["name"] not in {"Grep", "Glob"}]
     actual = pin(tmp_path / "observed-current-native.json", canonical(value))
     inventory = freeze_inventory(
         calibration=actual,
@@ -150,19 +181,40 @@ def test_rejected_synthetic_child_request_can_freeze_actual_read_schemas(tmp_pat
     parent["tools"] = [t for t in parent["tools"] if t["name"] not in {"Grep", "Glob"}]
     parent_pin = pin(tmp_path / "parent-observed.json", canonical(parent))
     discovered = [
-        {"name": name, "description": name + " read", "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}}}
+        {
+            "name": name,
+            "description": name + " read",
+            "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}},
+        }
         for name in ("Grep", "Glob")
     ]
     database = tmp_path / "synthetic-child.sqlite"
     with sqlite3.connect(database) as connection:
         connection.execute("CREATE TABLE identity (id INTEGER PRIMARY KEY, value BLOB NOT NULL)")
-        connection.execute("CREATE TABLE child_schema_discovery (id INTEGER PRIMARY KEY, request_sha256 TEXT NOT NULL, schemas BLOB NOT NULL)")
+        connection.execute(
+            "CREATE TABLE child_schema_discovery (id INTEGER PRIMARY KEY, request_sha256 TEXT NOT NULL, schemas BLOB NOT NULL)"
+        )
         connection.execute(
             "INSERT INTO identity VALUES(1,?)",
-            (canonical({"task_id": "synthetic:length-header", "run_id": "synthetic-live-1", "captured_schemas": {tool["name"]: hashlib.sha256(canonical(tool)).hexdigest() for tool in parent["tools"]}}),),
+            (
+                canonical(
+                    {
+                        "task_id": "synthetic:length-header",
+                        "run_id": "synthetic-live-1",
+                        "captured_schemas": {
+                            tool["name"]: hashlib.sha256(canonical(tool)).hexdigest()
+                            for tool in parent["tools"]
+                        },
+                    }
+                ),
+            ),
         )
-        connection.execute("INSERT INTO child_schema_discovery VALUES(1,?,?)", ("a" * 64, canonical(discovered)))
-    child_pin = ArtifactPin("rejected-child-schema-db", database, hashlib.sha256(database.read_bytes()).hexdigest())
+        connection.execute(
+            "INSERT INTO child_schema_discovery VALUES(1,?,?)", ("a" * 64, canonical(discovered))
+        )
+    child_pin = ArtifactPin(
+        "rejected-child-schema-db", database, hashlib.sha256(database.read_bytes()).hexdigest()
+    )
     inventory = freeze_inventory(
         calibration=parent_pin,
         child_calibration=child_pin,

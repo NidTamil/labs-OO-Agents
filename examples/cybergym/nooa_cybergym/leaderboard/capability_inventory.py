@@ -15,7 +15,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 
 from . import advisory_tools_runtime
@@ -63,15 +63,30 @@ _UNBOUND_AUDIT = {
     "CronList": ("leakage boundary", "Can expose scheduled host tasks."),
     "EnterWorktree": ("leakage boundary", "Changes the frozen source checkout boundary."),
     "ExitWorktree": ("leakage boundary", "Changes the frozen source checkout boundary."),
-    "ListAgents": ("leakage boundary", "Enumerates local, remote and cloud sessions outside this task."),
+    "ListAgents": (
+        "leakage boundary",
+        "Enumerates local, remote and cloud sessions outside this task.",
+    ),
     "ScheduleWakeup": ("leakage boundary", "Can continue execution beyond the task lifetime."),
-    "SendMessage": ("leakage boundary", "Can send task data to other local, remote or cloud sessions."),
-    "WebFetch": ("leakage boundary", "Unrestricted URL fetch can import target answers and published PoCs."),
-    "WebSearch": ("leakage boundary", "Unrestricted search can import target answers and published PoCs."),
+    "SendMessage": (
+        "leakage boundary",
+        "Can send task data to other local, remote or cloud sessions.",
+    ),
+    "WebFetch": (
+        "leakage boundary",
+        "Unrestricted URL fetch can import target answers and published PoCs.",
+    ),
+    "WebSearch": (
+        "leakage boundary",
+        "Unrestricted search can import target answers and published PoCs.",
+    ),
     "EnterPlanMode": ("optional", "Interactive approval mode does not solve this autonomous task."),
     "ExitPlanMode": ("optional", "Interactive approval mode does not solve this autonomous task."),
     "NotebookEdit": ("optional", "The frozen C fixtures contain no notebooks."),
-    "ReportFindings": ("optional", "The review-host UI is outside the task finalization interface."),
+    "ReportFindings": (
+        "optional",
+        "The review-host UI is outside the task finalization interface.",
+    ),
 }
 
 
@@ -444,17 +459,17 @@ class FrozenCapabilityInventory:
     @property
     def bindings_json(self):
         document = {
-                "schema_version": 1,
-                "artifact_kind": "native_capability_bindings",
-                "scope": SYNTHETIC_SCOPE,
-                "registry_sha256": self.bundle.registry.digest,
-                "component_evidence_sha256": self.bundle.component_evidence_sha256,
-                "bindings": [asdict(b) for b in self.bundle.bindings],
-                "observations": [_observation_json(o) for o in self.observations],
-                "component_evidence": [_pin_json(p) for p in self.component_evidence],
-                "calibration": _pin_json(self.calibration),
-                "network_policy_sha256": self.network_policy_sha256,
-            }
+            "schema_version": 1,
+            "artifact_kind": "native_capability_bindings",
+            "scope": SYNTHETIC_SCOPE,
+            "registry_sha256": self.bundle.registry.digest,
+            "component_evidence_sha256": self.bundle.component_evidence_sha256,
+            "bindings": [asdict(b) for b in self.bundle.bindings],
+            "observations": [_observation_json(o) for o in self.observations],
+            "component_evidence": [_pin_json(p) for p in self.component_evidence],
+            "calibration": _pin_json(self.calibration),
+            "network_policy_sha256": self.network_policy_sha256,
+        }
         if self.child_calibration is not None:
             document["child_calibration"] = _pin_json(self.child_calibration)
         return _canonical(document)
@@ -462,19 +477,19 @@ class FrozenCapabilityInventory:
     @property
     def inventory_json(self):
         document = {
-                "schema_version": 1,
-                "scope": SYNTHETIC_SCOPE,
-                "provider_dispatched": False,
-                "registry_sha256": self.bundle.registry.digest,
-                "bindings_sha256": _sha(self.bindings_json),
-                "calibration": _pin_json(self.calibration),
-                "native_identity": dict(self.calibration_metadata),
-                "parent_tools": list(self.parent_tools),
-                "child_tools": list(self.child_tools),
-                "unsupported_advertised_tools": list(self.unsupported),
-                "component_evidence_sha256": self.bundle.component_evidence_sha256,
-                "limitation": "Component verification permits synthetic calibration only; full native execution remains uncertified.",
-            }
+            "schema_version": 1,
+            "scope": SYNTHETIC_SCOPE,
+            "provider_dispatched": False,
+            "registry_sha256": self.bundle.registry.digest,
+            "bindings_sha256": _sha(self.bindings_json),
+            "calibration": _pin_json(self.calibration),
+            "native_identity": dict(self.calibration_metadata),
+            "parent_tools": list(self.parent_tools),
+            "child_tools": list(self.child_tools),
+            "unsupported_advertised_tools": list(self.unsupported),
+            "component_evidence_sha256": self.bundle.component_evidence_sha256,
+            "limitation": "Component verification permits synthetic calibration only; full native execution remains uncertified.",
+        }
         if self.child_calibration is not None:
             document["child_calibration"] = _pin_json(self.child_calibration)
         return _canonical(document)
@@ -776,9 +791,44 @@ def load_frozen_bindings(
     return tuple(result)
 
 
-def load_captured_native_schemas(
-    path: Path, registry: CapabilityRegistry
-) -> dict[str, str]:
+def load_scored_binding_provenance(
+    path: Path,
+    *,
+    component_registry: CapabilityRegistry,
+    scored_registry: CapabilityRegistry,
+) -> tuple[NativeCapabilityBinding, ...]:
+    """Reverify captured adapters without promoting component evidence to live proof.
+
+    A separately signed scored certification and ``ScoredCapabilityAdmission``
+    are still required at runtime. The new registry may replace only approved
+    evidence references; identity, roles, effects, paths and routes remain the
+    exact observed component calibration.
+    """
+    if (
+        type(component_registry) is not CapabilityRegistry
+        or type(scored_registry) is not CapabilityRegistry
+    ):
+        raise TypeError("exact component and scored registries required")
+    bindings = load_frozen_bindings(path, component_registry)
+    if component_registry.digest == scored_registry.digest:
+        raise ValueError("synthetic-only registry cannot become a scored freeze")
+    component = {entry.capability_id: entry for entry in component_registry.entries}
+    scored = {entry.capability_id: entry for entry in scored_registry.entries}
+    if set(component) != set(scored):
+        raise ValueError("scored capability identity differs from calibrated inventory")
+    for capability_id, original in component.items():
+        candidate = scored[capability_id]
+        if original.status is Status.APPROVED:
+            if SYNTHETIC_SCOPE in candidate.evidence_refs:
+                raise ValueError("synthetic-only capability cannot enter scored freeze")
+            if replace(candidate, evidence_refs=original.evidence_refs) != original:
+                raise ValueError("scored capability scope or identity differs from calibration")
+        elif candidate != original:
+            raise ValueError("scored denied or pending capability differs from calibration")
+    return bindings
+
+
+def load_captured_native_schemas(path: Path, registry: CapabilityRegistry) -> dict[str, str]:
     """Reverify the frozen bindings and return every actually advertised schema digest."""
     load_frozen_bindings(path, registry)
     document = _json(Path(path).read_bytes())
@@ -840,7 +890,9 @@ def main(argv=None):
     if (
         type(config) is not dict
         or required - set(config)
-        or set(config) - required - {"source_roots", "read_roots", "write_roots", "child_calibration"}
+        or set(config)
+        - required
+        - {"source_roots", "read_roots", "write_roots", "child_calibration"}
         or config["schema_version"] != 1
     ):
         raise ValueError("inventory freeze configuration schema invalid")
@@ -854,9 +906,7 @@ def main(argv=None):
     inventory = freeze_inventory(
         calibration=_read_pin(config["calibration"]),
         child_calibration=(
-            _read_pin(config["child_calibration"])
-            if "child_calibration" in config
-            else None
+            _read_pin(config["child_calibration"]) if "child_calibration" in config else None
         ),
         services=_load_services(config["services"]),
         component_evidence=tuple(_read_pin(p) for p in config["component_evidence"]),
