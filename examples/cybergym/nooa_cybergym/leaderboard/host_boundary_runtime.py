@@ -107,7 +107,29 @@ class GatewayService:
         self.failed = threading.Event()
         self.challenges: dict[str, str] = {}
         self.audit = _Audit(audit_path)
+        self._requests = threading.Condition()
+        self._active_requests = 0
         service = self
+
+        class TrackedHTTPServer(ThreadingHTTPServer):
+            def process_request(self, request, client_address):
+                with service._requests:
+                    service._active_requests += 1
+                try:
+                    super().process_request(request, client_address)
+                except BaseException:
+                    with service._requests:
+                        service._active_requests -= 1
+                        service._requests.notify_all()
+                    raise
+
+            def process_request_thread(self, request, client_address):
+                try:
+                    super().process_request_thread(request, client_address)
+                finally:
+                    with service._requests:
+                        service._active_requests -= 1
+                        service._requests.notify_all()
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
@@ -330,7 +352,7 @@ class GatewayService:
             )
 
         try:
-            self.server = ThreadingHTTPServer(bind, Handler)
+            self.server = TrackedHTTPServer(bind, Handler)
         except BaseException:
             self.audit.close()
             raise
@@ -350,6 +372,20 @@ class GatewayService:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
+        with self._requests:
+            finished = self._requests.wait_for(lambda: self._active_requests == 0, timeout=5)
+        if not finished:
+            # A live handler may still be writing its terminal audit row. Keep
+            # the descriptor open until it exits; never close it under os.write.
+            self.failed.set()
+
+            def close_when_finished():
+                with self._requests:
+                    self._requests.wait_for(lambda: self._active_requests == 0)
+                self.audit.close()
+
+            threading.Thread(target=close_when_finished, daemon=True).start()
+            raise RuntimeError("gateway request did not finish before audit shutdown")
         self.audit.close()
 
 

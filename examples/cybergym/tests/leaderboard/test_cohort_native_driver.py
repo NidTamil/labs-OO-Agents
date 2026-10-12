@@ -12,15 +12,84 @@ import pytest
 from nooa_cybergym.leaderboard.campaign import CampaignAction, CampaignState
 from nooa_cybergym.leaderboard.capabilities import CapabilityRegistry
 from nooa_cybergym.leaderboard.cohort_native_driver import (
+    announce_prepared_scored_launch,
     prepare_current_scored_inputs,
     stage_current_cohort_task,
 )
+from nooa_cybergym.leaderboard.cohort_native_workspace import CohortNativeWorkspace
 from nooa_cybergym.leaderboard.scored_capability_admission import ScoredCapabilityAdmission
 from nooa_cybergym.leaderboard.scored_image_registry import ScoredImages
 from nooa_cybergym.leaderboard.workspace import ControllerPaths
 
 TASK = "oss-fuzz:42535201"
 IMAGE = "sha256:" + "a" * 64
+
+
+def test_scored_launch_reservation_precedes_native_prepared_callback(tmp_path: Path, monkeypatch):
+    import nooa_cybergym.leaderboard.cohort_native_driver as driver
+
+    task = "arvo:47101"
+    events = []
+    root = tmp_path / "workspace"
+    (root / ".sunchaser").mkdir(parents=True)
+    evidence = tmp_path / "evidence" / "run-1-arvo-47101"
+    evidence.mkdir(parents=True)
+    workspace = CohortNativeWorkspace(task, "run-1", root, evidence, {}, b"manifest")
+    state = SimpleNamespace(run_id="run-1", task_ids=(task,))
+    launch = SimpleNamespace(manifest={"launch_id": "launch-1"})
+    monkeypatch.setattr(
+        driver,
+        "persist_scored_launch",
+        lambda **kw: events.append("persist") or launch,
+    )
+    monkeypatch.setattr(
+        driver,
+        "write_new",
+        lambda path, raw, mode: events.append("write-agent-launch"),
+    )
+    monkeypatch.setattr(
+        driver,
+        "NativeFirstRequestWitness",
+        lambda **kw: events.append("witness") or "verified-witness",
+    )
+    prepared = announce_prepared_scored_launch(
+        state=state,
+        task_id=task,
+        workspace=workspace,
+        signed_envelope=b"signed-native-launch",
+        public_keys={"controller": object()},
+        attempt_id="attempt-1",
+        remote_alias="cybergym-cal-v26q",
+        ssh_port=23456,
+        policy_sha256="f" * 64,
+        on_prepared=lambda item: events.append(("callback", item.launch_id)),
+    )
+    assert events == ["persist", "write-agent-launch", "witness", ("callback", "launch-1")]
+    assert prepared.launch_authority is launch
+    assert prepared.witness == "verified-witness"
+    assert prepared.task_id == task
+
+    events.clear()
+
+    def denied_write(path, raw, mode):
+        events.append("write-agent-launch")
+        raise FileExistsError
+
+    monkeypatch.setattr(driver, "write_new", denied_write)
+    with pytest.raises(FileExistsError):
+        announce_prepared_scored_launch(
+            state=state,
+            task_id=task,
+            workspace=workspace,
+            signed_envelope=b"signed-native-launch",
+            public_keys={"controller": object()},
+            attempt_id="attempt-1",
+            remote_alias="cybergym-cal-v26q",
+            ssh_port=23456,
+            policy_sha256="f" * 64,
+            on_prepared=lambda item: events.append(("callback", item.launch_id)),
+        )
+    assert events == ["persist", "write-agent-launch"]
 
 
 def test_scored_prelaunch_observes_all_images_before_workspace_staging(monkeypatch):

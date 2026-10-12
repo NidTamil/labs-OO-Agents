@@ -11,16 +11,19 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from .campaign import CampaignAction, CampaignState
 from .capabilities import CapabilityRegistry
 from .cohort_native_workspace import CohortNativeWorkspace, overlay_cohort_template
+from .native_first_request import NativeFirstRequestWitness
 from .scored_capability_admission import ScoredCapabilityAdmission
 from .scored_image_registry import ScoredImages
 from .scored_runtime_binding import ScoredRuntimeBinding, bind_scored_runtime
+from .scored_terminal_recovery import persist_scored_launch
+from .synthetic_workspace import write_new
 from .workspace import ControllerPaths, prepare_workspace
 
 _TASK = re.compile(r"(?:arvo|oss-fuzz):[0-9]+\Z")
@@ -32,6 +35,76 @@ class PreparedScoredInputs:
     workspace: CohortNativeWorkspace
     runtime: ScoredRuntimeBinding
     images: ScoredImages
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedCohortLaunch:
+    task_id: str
+    launch_id: str
+    attempt_id: str
+    remote_alias: str
+    ssh_port: int
+    evidence: Path
+    launch_authority: object
+    witness: NativeFirstRequestWitness
+
+
+def announce_prepared_scored_launch(
+    *,
+    state: CampaignState,
+    task_id: str,
+    workspace: CohortNativeWorkspace,
+    signed_envelope: bytes,
+    public_keys: Mapping,
+    attempt_id: str,
+    remote_alias: str,
+    ssh_port: int,
+    policy_sha256: str,
+    on_prepared: Callable[[PreparedCohortLaunch], None],
+) -> PreparedCohortLaunch:
+    """Persist launch custody and agent bytes before allowing UI/model startup."""
+    if (
+        type(workspace) is not CohortNativeWorkspace
+        or workspace.task_id != task_id
+        or workspace.run_id != state.run_id
+        or type(attempt_id) is not str
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", attempt_id) is None
+        or type(remote_alias) is not str
+        or re.fullmatch(r"[a-z][a-z0-9-]{1,63}", remote_alias) is None
+        or type(ssh_port) is not int
+        or not 1024 <= ssh_port <= 65535
+        or type(policy_sha256) is not str
+        or re.fullmatch(r"[a-f0-9]{64}", policy_sha256) is None
+        or not callable(on_prepared)
+    ):
+        raise ValueError("current scored workspace and bounded native launch required")
+    launch = persist_scored_launch(
+        state=state,
+        task_id=task_id,
+        signed_envelope=signed_envelope,
+        public_keys=public_keys,
+        evidence_dir=workspace.evidence,
+    )
+    write_new(workspace.root / ".sunchaser/launch.json", signed_envelope, 0o444)
+    witness = NativeFirstRequestWitness(
+        launch_authority=launch,
+        attempt_id=attempt_id,
+        model_audit=workspace.evidence / "model-requests.jsonl",
+        policy_sha256=policy_sha256,
+        expected_model="glm-5.3",
+    )
+    prepared = PreparedCohortLaunch(
+        task_id,
+        launch.manifest["launch_id"],
+        attempt_id,
+        remote_alias,
+        ssh_port,
+        workspace.evidence,
+        launch,
+        witness,
+    )
+    on_prepared(prepared)
+    return prepared
 
 
 def _observed_image(docker_client, image_id: str, label: str) -> str:

@@ -30,6 +30,57 @@ def _request(port: int, request: bytes) -> bytes:
         return result
 
 
+def test_gateway_shutdown_waits_for_request_audit_before_closing_fd(tmp_path: Path):
+    runtime = _runtime()
+    peer = runtime.AdmittedPeer("a" * 64, "b" * 64, "127.0.0.1")
+    service = runtime.GatewayService(
+        ("127.0.0.1", 0),
+        {"model-gateway": lambda _: runtime.GatewayReply(200, b"ok")},
+        lambda _: peer,
+        tmp_path / "audit.jsonl",
+    )
+    entered, release, closed = threading.Event(), threading.Event(), threading.Event()
+    original_write = service.audit.write
+    failures = []
+
+    def delayed_write(record):
+        entered.set()
+        if not release.wait(3):
+            raise TimeoutError("test audit gate was not released")
+        original_write(record)
+
+    def close_service():
+        try:
+            service.__exit__(None, None, None)
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            closed.set()
+
+    service.audit.write = delayed_write
+    service.__enter__()
+    closer = None
+    try:
+        with socket.create_connection(("127.0.0.1", service.port), timeout=3) as connection:
+            connection.sendall(b"GET / HTTP/1.1\r\nHost: model-gateway\r\n\r\n")
+            response = b""
+            while b"200 OK" not in response:
+                response += connection.recv(4096)
+        assert entered.wait(2)
+        closer = threading.Thread(target=close_service)
+        closer.start()
+        assert not closed.wait(0.3), "gateway closed its audit fd while a request was auditing"
+    finally:
+        release.set()
+        if closer is None:
+            service.__exit__(None, None, None)
+        else:
+            closer.join(3)
+    assert closed.is_set()
+    assert failures == []
+    assert json.loads((tmp_path / "audit.jsonl").read_text())["status"] == 200
+
+
 @pytest.mark.parametrize(
     "wire_request",
     [
