@@ -10,6 +10,8 @@ Missing or ambiguous evidence is a refusal, never a reason to retry Send.
 from __future__ import annotations
 
 import hashlib
+import re
+from collections.abc import Mapping
 from pathlib import Path
 
 from .campaign import CampaignAction, _terminal_receipt
@@ -154,3 +156,78 @@ def recover_scored_terminal(
         raise RuntimeError("campaign authority rejected scored terminal signature")
     _terminal_receipt(terminal, state=state, task_id=task_id)
     return terminal_raw
+
+
+class ScoredTerminalRecovery:
+    """Reconstruct the verifier from durable controller-only attempt files."""
+
+    def __init__(
+        self,
+        *,
+        state,
+        evidence_dir: Path,
+        public_keys: Mapping,
+        controller_verifier,
+        evaluator_verifier,
+        expected_policy_sha256: str,
+        expected_model: str,
+    ) -> None:
+        root = Path(evidence_dir)
+        if (
+            not root.is_absolute()
+            or root.is_symlink()
+            or not root.is_dir()
+            or root.resolve() != root
+            or not isinstance(public_keys, Mapping)
+            or not public_keys
+            or not callable(getattr(controller_verifier, "verify", None))
+            or not callable(getattr(evaluator_verifier, "verify", None))
+            or type(expected_policy_sha256) is not str
+            or re.fullmatch(r"[a-f0-9]{64}", expected_policy_sha256) is None
+            or type(expected_model) is not str
+            or not expected_model
+        ):
+            raise ValueError("frozen scored recovery inputs required")
+        self.state = state
+        self.root = root
+        self.public_keys = public_keys
+        self.controller_verifier = controller_verifier
+        self.evaluator_verifier = evaluator_verifier
+        self.policy_sha256 = expected_policy_sha256
+        self.model = expected_model
+
+    def __call__(self, task_id: str, request_id: str) -> bytes | None:
+        terminal_path = self.root / "terminal-receipt.signed.json"
+        if not terminal_path.exists() and not terminal_path.is_symlink():
+            return None
+        launch_raw, manifest = _read_signed(
+            self.root / "native-launch.signed.json", self.controller_verifier
+        )
+        if (
+            manifest.get("run_id") != self.state.run_id
+            or manifest.get("task_id") != task_id
+            or manifest.get("launch_id") != request_id
+        ):
+            raise RuntimeError("durable scored launch differs from verified request")
+        launch = NativeLaunchAuthority.from_signed_envelope(launch_raw, self.public_keys, self.root)
+        _, intent = _read_signed(
+            self.root / "campaign-start-intent.signed.json", self.controller_verifier
+        )
+        attempt_id = intent.get("attempt_id")
+        witness = NativeFirstRequestWitness(
+            launch_authority=launch,
+            attempt_id=attempt_id,
+            model_audit=self.root / "model-requests.jsonl",
+            policy_sha256=self.policy_sha256,
+            expected_model=self.model,
+        )
+        return recover_scored_terminal(
+            state=self.state,
+            task_id=task_id,
+            launch_authority=launch,
+            attempt_id=attempt_id,
+            witness=witness,
+            evidence_dir=self.root,
+            controller_verifier=self.controller_verifier,
+            evaluator_verifier=self.evaluator_verifier,
+        )

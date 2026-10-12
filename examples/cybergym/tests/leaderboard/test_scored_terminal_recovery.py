@@ -18,7 +18,10 @@ from nooa_cybergym.leaderboard.native_launcher import (
     build_launch_manifest,
 )
 from nooa_cybergym.leaderboard.native_start_intent import publish_start_intent
-from nooa_cybergym.leaderboard.scored_terminal_recovery import recover_scored_terminal
+from nooa_cybergym.leaderboard.scored_terminal_recovery import (
+    ScoredTerminalRecovery,
+    recover_scored_terminal,
+)
 from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier, SignedEnvelope
 
@@ -63,8 +66,10 @@ def _setup(tmp_path: Path):
         native_launch_url="http://registered-tool-gateway/native-launch",
     )
     envelope = canonical_json(controller.sign(canonical_json(manifest)).model_dump())
+    evidence = tmp_path / "task"
+    evidence.mkdir()
     launch = NativeLaunchAuthority.from_signed_envelope(
-        envelope, {"controller": controller_key.public_key()}, tmp_path
+        envelope, {"controller": controller_key.public_key()}, evidence
     )
     launch.launch_dir.mkdir()
     from .test_native_launcher import receipt
@@ -73,7 +78,7 @@ def _setup(tmp_path: Path):
     observed_receipt["observed"]["hostname"] = manifest["hostname"]
     observed_receipt["observed"]["claude_extension_sha256"] = manifest["claude_extension_sha256"]
     (launch.launch_dir / "launcher-receipt.json").write_bytes(canonical_json(observed_receipt))
-    audit = tmp_path / "model-requests.jsonl"
+    audit = evidence / "model-requests.jsonl"
     common = {
         "task_id": TASK,
         "attempt_id": ATTEMPT,
@@ -95,8 +100,6 @@ def _setup(tmp_path: Path):
         policy_sha256="f" * 64,
         expected_model="glm-5.3",
     )
-    evidence = tmp_path / "task"
-    evidence.mkdir()
     publish_start_intent(
         evidence,
         signer=controller,
@@ -193,6 +196,8 @@ def _setup(tmp_path: Path):
         audit_bytes=audit.read_bytes(),
         result=result,
         evaluator=evaluator,
+        launch_envelope=envelope,
+        public_keys={"controller": controller_key.public_key()},
     )
 
 
@@ -240,3 +245,41 @@ def test_recovery_rejects_changed_ledger_launch_and_unsigned_terminal(tmp_path):
     terminal_path.write_bytes(b"{}")
     with pytest.raises((RuntimeError, ValueError)):
         recover_scored_terminal(**fixture.inputs)
+
+
+def _restart_callback(fixture):
+    (fixture.evidence / "native-launch.signed.json").write_bytes(fixture.launch_envelope)
+    return ScoredTerminalRecovery(
+        state=fixture.inputs["state"],
+        evidence_dir=fixture.evidence,
+        public_keys=fixture.public_keys,
+        controller_verifier=fixture.inputs["controller_verifier"],
+        evaluator_verifier=fixture.inputs["evaluator_verifier"],
+        expected_policy_sha256="f" * 64,
+        expected_model="glm-5.3",
+    )
+
+
+def test_restart_callback_reconstructs_signed_launch_and_replays_once(tmp_path):
+    fixture = _setup(tmp_path)
+    callback = _restart_callback(fixture)
+    assert callback(TASK, LAUNCH) == fixture.terminal
+    assert callback(TASK, LAUNCH) == fixture.terminal
+
+
+def test_restart_callback_refuses_missing_or_tampered_launch_evidence(tmp_path):
+    fixture = _setup(tmp_path)
+    callback = _restart_callback(fixture)
+    with pytest.raises(RuntimeError, match="launch"):
+        callback(TASK, "another-launch")
+    launch_path = fixture.evidence / "native-launch.signed.json"
+    launch_path.write_bytes(b"{}")
+    with pytest.raises((RuntimeError, ValueError), match="launch|signature"):
+        callback(TASK, LAUNCH)
+
+
+def test_restart_callback_does_not_infer_terminal_from_prepared_directory(tmp_path):
+    fixture = _setup(tmp_path)
+    callback = _restart_callback(fixture)
+    (fixture.evidence / "terminal-receipt.signed.json").unlink()
+    assert callback(TASK, LAUNCH) is None
