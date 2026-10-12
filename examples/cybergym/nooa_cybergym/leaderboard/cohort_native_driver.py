@@ -12,16 +12,78 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from .campaign import CampaignAction, CampaignState
 from .capabilities import CapabilityRegistry
 from .cohort_native_workspace import CohortNativeWorkspace, overlay_cohort_template
 from .scored_capability_admission import ScoredCapabilityAdmission
+from .scored_image_registry import ScoredImages
+from .scored_runtime_binding import ScoredRuntimeBinding, bind_scored_runtime
 from .workspace import ControllerPaths, prepare_workspace
 
 _TASK = re.compile(r"(?:arvo|oss-fuzz):[0-9]+\Z")
 _RUN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedScoredInputs:
+    workspace: CohortNativeWorkspace
+    runtime: ScoredRuntimeBinding
+    images: ScoredImages
+
+
+def _observed_image(docker_client, image_id: str, label: str) -> str:
+    try:
+        actual = docker_client.images.get(image_id).id
+    except Exception:
+        raise RuntimeError(f"scored {label} unavailable") from None
+    if actual != image_id:
+        raise RuntimeError(f"scored {label} differs from pinned identity")
+    return actual
+
+
+def prepare_current_scored_inputs(
+    *,
+    docker_client,
+    donor,
+    state: CampaignState,
+    task_id: str,
+    controller_paths: ControllerPaths,
+    asset_manifest: Path,
+    template_files: Mapping[str, tuple[Path, str]],
+    admission: ScoredCapabilityAdmission,
+    registry: CapabilityRegistry,
+    bindings_path: Path,
+    image_manifest: Path,
+) -> PreparedScoredInputs:
+    """Observe exact private images before hydrating the one admitted task."""
+    observed_image_id = _observed_image(docker_client, donor.image_id, "native image")
+    runtime = bind_scored_runtime(
+        donor=donor,
+        state=state,
+        task_id=task_id,
+        admission=admission,
+        registry=registry,
+        bindings_path=bindings_path,
+        image_manifest=image_manifest,
+        observed_image_id=observed_image_id,
+    )
+    images = runtime.images.images_for(task_id)
+    _observed_image(docker_client, images.vulnerable, "private image")
+    _observed_image(docker_client, images.fixed, "private image")
+    workspace = stage_current_cohort_task(
+        state=state,
+        task_id=task_id,
+        controller_paths=controller_paths,
+        asset_manifest=asset_manifest,
+        template_files=template_files,
+        admission=admission,
+        registry=registry,
+        observed_image_id=observed_image_id,
+    )
+    return PreparedScoredInputs(workspace, runtime, images)
 
 
 def stage_current_cohort_task(

@@ -11,12 +11,77 @@ from types import SimpleNamespace
 import pytest
 from nooa_cybergym.leaderboard.campaign import CampaignAction, CampaignState
 from nooa_cybergym.leaderboard.capabilities import CapabilityRegistry
-from nooa_cybergym.leaderboard.cohort_native_driver import stage_current_cohort_task
+from nooa_cybergym.leaderboard.cohort_native_driver import (
+    prepare_current_scored_inputs,
+    stage_current_cohort_task,
+)
 from nooa_cybergym.leaderboard.scored_capability_admission import ScoredCapabilityAdmission
+from nooa_cybergym.leaderboard.scored_image_registry import ScoredImages
 from nooa_cybergym.leaderboard.workspace import ControllerPaths
 
 TASK = "oss-fuzz:42535201"
 IMAGE = "sha256:" + "a" * 64
+
+
+def test_scored_prelaunch_observes_all_images_before_workspace_staging(monkeypatch):
+    import nooa_cybergym.leaderboard.cohort_native_driver as driver
+
+    task = "oss-fuzz:42535201"
+    vulnerable, fixed = "sha256:" + "b" * 64, "sha256:" + "c" * 64
+    images = ScoredImages(vulnerable, fixed)
+    calls = []
+    observed = {IMAGE: IMAGE, vulnerable: vulnerable, fixed: fixed}
+
+    class ImageAccess:
+        def get(self, image_id):
+            calls.append(("observe", image_id))
+            return SimpleNamespace(id=observed[image_id])
+
+    client = SimpleNamespace(images=ImageAccess())
+    donor = SimpleNamespace(image_id=IMAGE)
+    binding = SimpleNamespace(images=SimpleNamespace(images_for=lambda task_id: images))
+    monkeypatch.setattr(
+        driver,
+        "bind_scored_runtime",
+        lambda **kw: calls.append(("bind", kw["observed_image_id"])) or binding,
+    )
+    monkeypatch.setattr(
+        driver,
+        "stage_current_cohort_task",
+        lambda **kw: calls.append(("stage", kw["task_id"])) or "workspace",
+    )
+    inputs = {
+        "docker_client": client,
+        "donor": donor,
+        "state": object(),
+        "task_id": task,
+        "controller_paths": object(),
+        "asset_manifest": Path("asset-hashes.json"),
+        "template_files": {},
+        "admission": object(),
+        "registry": CapabilityRegistry(()),
+        "bindings_path": Path("bindings.json"),
+        "image_manifest": Path("images.json"),
+    }
+    result = prepare_current_scored_inputs(**inputs)
+    assert (result.workspace, result.runtime, result.images) == ("workspace", binding, images)
+    assert calls == [
+        ("observe", IMAGE),
+        ("bind", IMAGE),
+        ("observe", vulnerable),
+        ("observe", fixed),
+        ("stage", task),
+    ]
+    observed[fixed] = "sha256:" + "d" * 64
+    calls.clear()
+    with pytest.raises(RuntimeError, match="private image"):
+        prepare_current_scored_inputs(**inputs)
+    assert ("stage", task) not in calls
+    observed[IMAGE] = "sha256:" + "e" * 64
+    calls.clear()
+    with pytest.raises(RuntimeError, match="native image"):
+        prepare_current_scored_inputs(**inputs)
+    assert calls == [("observe", IMAGE)]
 
 
 def test_current_scored_task_stages_only_after_admission_and_signed_path_check(
