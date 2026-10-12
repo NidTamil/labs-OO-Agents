@@ -17,6 +17,7 @@ from nooa_cybergym.leaderboard.scored_campaign_inputs import (
 )
 from nooa_cybergym.leaderboard.scored_launch_config import (
     load_previewed_scored_launch_config,
+    load_previewed_scored_signers,
     load_scored_evaluator_signer,
     load_scored_launch_config,
 )
@@ -115,7 +116,7 @@ def test_previewed_scored_config_binds_attested_harness_and_evidence_root(tmp_pa
     authority = Authority()
     state = State()
     state.authority = authority
-    preview = ScoredLaunchPreview(inputs, authority, state)
+    preview = ScoredLaunchPreview(inputs, authority, state, {})
     assert load_previewed_scored_launch_config(preview, source)["run_id"] == "run-1"
 
     other = tmp_path / "other-ledger"
@@ -128,6 +129,75 @@ def test_previewed_scored_config_binds_attested_harness_and_evidence_root(tmp_pa
     harness["epoch"] = "different"
     with pytest.raises(RuntimeError, match="identity"):
         load_previewed_scored_launch_config(preview, source)
+
+
+def test_previewed_scored_signers_require_trusted_controller_and_separate_evaluator(
+    tmp_path: Path, monkeypatch
+):
+    import nooa_cybergym.leaderboard.scored_launch_config as module
+
+    source, harness, config = _bundle(tmp_path)
+    controller = Ed25519PrivateKey.generate()
+    evaluator = Ed25519PrivateKey.generate()
+    Path(config["evaluator"]["private_key_path"]).write_bytes(
+        evaluator.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    config["evaluator"]["public_key_sha256"] = hashlib.sha256(
+        evaluator.public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    ).hexdigest()
+    source.write_text(json.dumps(config, sort_keys=True), encoding="utf-8")
+    harness["scored_launch_config_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    class Signing:
+        key_id = "controller-1"
+
+        @staticmethod
+        def load_private_key():
+            return controller
+
+    class Donor:
+        signing = Signing()
+        verified = False
+
+        def verify_unchanged(self):
+            self.verified = True
+
+    donor = Donor()
+    monkeypatch.setattr(module, "load_runtime_config", lambda path: donor)
+    inputs = SignedCampaignInputs(b"decision", b"cert", b"signed-lock", b"cohort", b"[]", {})
+
+    class Authority:
+        def attest_signed(self, kind, envelope):
+            assert (kind, envelope) == ("harness_lock", b"signed-lock")
+            return harness
+
+    class State:
+        run_id = "run-1"
+        epoch = "scored-epoch-1"
+        evidence_root = Path(config["paths"]["evidence_root"])
+
+    authority = Authority()
+    state = State()
+    state.authority = authority
+    preview = ScoredLaunchPreview(
+        inputs, authority, state, {"controller-1": controller.public_key()}
+    )
+    prepared = load_previewed_scored_signers(preview, source)
+    assert donor.verified
+    assert prepared.controller_signer.sign(b"synthetic-probe").key_id == "controller-1"
+    assert prepared.evaluator_signer.sign(b"synthetic-probe").key_id == "evaluator-1"
+
+    untrusted = ScoredLaunchPreview(
+        inputs, authority, state, {"controller-1": Ed25519PrivateKey.generate().public_key()}
+    )
+    with pytest.raises(RuntimeError, match="trusted controller"):
+        load_previewed_scored_signers(untrusted, source)
 
 
 def test_scored_evaluator_key_must_match_signed_public_identity(tmp_path: Path):

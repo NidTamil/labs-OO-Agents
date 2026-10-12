@@ -11,8 +11,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from cryptography.hazmat.primitives import serialization
@@ -42,6 +44,7 @@ class ScoredLaunchPreview:
     inputs: SignedCampaignInputs
     authority: XeusCampaignAuthority
     state: CampaignState
+    public_keys: Mapping[str, Ed25519PublicKey]
 
 
 def _regular_bytes(root: Path, name: str, limit: int) -> bytes:
@@ -176,7 +179,7 @@ def preview_signed_campaign(
         run_id=run_id,
         evidence_root=evidence_root,
     )
-    return ScoredLaunchPreview(inputs, authority, state)
+    return ScoredLaunchPreview(inputs, authority, state, MappingProxyType(public_keys))
 
 
 def admit_signed_campaign(

@@ -158,6 +158,7 @@ def test_scored_preview_binds_trust_and_signed_bytes_without_creating_campaign(
     )
     assert result.state == "verified-state"
     assert result.authority is authority
+    assert set(result.public_keys) == {"operator"}
     assert result.inputs.decision == b"signed:decision"
     assert calls[0] == ("authority", {"operator"})
     assert calls[1][0] == "preview"

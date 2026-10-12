@@ -7,12 +7,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier
 
+from .runtime_config import NativeRuntimeConfig, load_runtime_config
 from .scored_campaign_inputs import ScoredLaunchPreview
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -177,6 +179,44 @@ def load_previewed_scored_launch_config(preview: ScoredLaunchPreview, path: Path
     if Path(config["paths"]["evidence_root"]) != preview.state.evidence_root:
         raise RuntimeError("scored launch evidence root differs from signed campaign")
     return config
+
+
+@dataclass(frozen=True, slots=True)
+class ScoredSignerPreflight:
+    config: dict = field(repr=False)
+    donor: NativeRuntimeConfig = field(repr=False)
+    controller_signer: Ed25519Signer = field(repr=False)
+    controller_verifier: Ed25519Verifier = field(repr=False)
+    evaluator_signer: Ed25519Signer = field(repr=False)
+    evaluator_verifier: Ed25519Verifier = field(repr=False)
+
+
+def load_previewed_scored_signers(
+    preview: ScoredLaunchPreview, path: Path
+) -> ScoredSignerPreflight:
+    """Preflight exact donor and distinct trusted signers before campaign creation."""
+    config = load_previewed_scored_launch_config(preview, path)
+    donor = load_runtime_config(Path(config["files"]["donor_config"]["path"]))
+    donor.verify_unchanged()
+    private = donor.signing.load_private_key()
+    key_id = donor.signing.key_id
+    trusted = preview.public_keys.get(key_id)
+    actual = private.public_key()
+    if not isinstance(trusted, Ed25519PublicKey) or trusted.public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    ) != actual.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw):
+        raise RuntimeError("scored trusted controller key differs from pinned registry")
+    evaluator_signer, evaluator_verifier = load_scored_evaluator_signer(
+        config, controller_key_id=key_id, controller_public_key=actual
+    )
+    return ScoredSignerPreflight(
+        config,
+        donor,
+        Ed25519Signer(private_key=private, key_id=key_id),
+        Ed25519Verifier({key_id: actual}),
+        evaluator_signer,
+        evaluator_verifier,
+    )
 
 
 def load_scored_evaluator_signer(
