@@ -231,3 +231,74 @@ class ScoredTerminalRecovery:
             controller_verifier=self.controller_verifier,
             evaluator_verifier=self.evaluator_verifier,
         )
+
+
+class CohortTerminalRecovery:
+    """Choose one controller-owned attempt directory from the verified cohort state.
+
+    The per-task verifier above intentionally takes an exact directory. This
+    adapter supplies that directory without accepting a path from a mailbox,
+    model, or resumed launch record. A missing prepared directory is an error;
+    only a missing terminal inside an existing directory means still running.
+    """
+
+    def __init__(
+        self,
+        *,
+        state,
+        evidence_root: Path,
+        public_keys: Mapping,
+        controller_verifier,
+        evaluator_verifier,
+        expected_policy_sha256: str,
+        expected_model: str,
+    ) -> None:
+        root = Path(evidence_root)
+        run_id = getattr(state, "run_id", None)
+        task_ids = getattr(state, "task_ids", None)
+        if (
+            not root.is_absolute()
+            or root.is_symlink()
+            or not root.is_dir()
+            or root.resolve() != root
+            or type(run_id) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", run_id) is None
+            or type(task_ids) is not tuple
+            or not task_ids
+            or not callable(getattr(state, "next_action", None))
+        ):
+            raise ValueError("verified scored cohort and controller evidence root required")
+        self.state = state
+        self.root = root
+        self.public_keys = public_keys
+        self.controller_verifier = controller_verifier
+        self.evaluator_verifier = evaluator_verifier
+        self.policy_sha256 = expected_policy_sha256
+        self.model = expected_model
+
+    def __call__(self, task_id: str, request_id: str) -> bytes | None:
+        if (
+            type(task_id) is not str
+            or re.fullmatch(r"(?:arvo|oss-fuzz):[0-9]+", task_id) is None
+            or task_id not in self.state.task_ids
+            or self.state.next_action() != CampaignAction("observe_started", task_id)
+        ):
+            raise RuntimeError("recovery is limited to the current signed cohort task")
+        evidence = self.root / f"{self.state.run_id}-{task_id.replace(':', '-')}"
+        if (
+            evidence.is_symlink()
+            or not evidence.is_dir()
+            or evidence.resolve() != evidence
+            or evidence.parent != self.root
+        ):
+            raise RuntimeError("current scored task evidence is missing or linked")
+        recovery = ScoredTerminalRecovery(
+            state=self.state,
+            evidence_dir=evidence,
+            public_keys=self.public_keys,
+            controller_verifier=self.controller_verifier,
+            evaluator_verifier=self.evaluator_verifier,
+            expected_policy_sha256=self.policy_sha256,
+            expected_model=self.model,
+        )
+        return recovery(task_id, request_id)

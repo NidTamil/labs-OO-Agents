@@ -19,6 +19,7 @@ from nooa_cybergym.leaderboard.native_launcher import (
 )
 from nooa_cybergym.leaderboard.native_start_intent import publish_start_intent
 from nooa_cybergym.leaderboard.scored_terminal_recovery import (
+    CohortTerminalRecovery,
     ScoredTerminalRecovery,
     recover_scored_terminal,
 )
@@ -39,7 +40,7 @@ def _signed(root: Path, name: str, value: dict, signer: Ed25519Signer) -> bytes:
     return raw
 
 
-def _setup(tmp_path: Path):
+def _setup(tmp_path: Path, *, evidence_name: str = "task"):
     controller_key = Ed25519PrivateKey.generate()
     evaluator_key = Ed25519PrivateKey.generate()
     controller = Ed25519Signer(private_key=controller_key, key_id="controller")
@@ -66,7 +67,7 @@ def _setup(tmp_path: Path):
         native_launch_url="http://registered-tool-gateway/native-launch",
     )
     envelope = canonical_json(controller.sign(canonical_json(manifest)).model_dump())
-    evidence = tmp_path / "task"
+    evidence = tmp_path / evidence_name
     evidence.mkdir()
     launch = NativeLaunchAuthority.from_signed_envelope(
         envelope, {"controller": controller_key.public_key()}, evidence
@@ -283,3 +284,61 @@ def test_restart_callback_does_not_infer_terminal_from_prepared_directory(tmp_pa
     callback = _restart_callback(fixture)
     (fixture.evidence / "terminal-receipt.signed.json").unlink()
     assert callback(TASK, LAUNCH) is None
+
+
+def test_cohort_recovery_selects_only_current_task_evidence(tmp_path):
+    fixture = _setup(tmp_path, evidence_name=f"{RUN}-{TASK.replace(':', '-')}")
+    (fixture.evidence / "native-launch.signed.json").write_bytes(fixture.launch_envelope)
+    state = fixture.inputs["state"]
+    state.task_ids = (TASK, "arvo:47101")
+    recovery = CohortTerminalRecovery(
+        state=state,
+        evidence_root=tmp_path,
+        public_keys=fixture.public_keys,
+        controller_verifier=fixture.inputs["controller_verifier"],
+        evaluator_verifier=fixture.inputs["evaluator_verifier"],
+        expected_policy_sha256="f" * 64,
+        expected_model="glm-5.3",
+    )
+    assert recovery(TASK, LAUNCH) == fixture.terminal
+    with pytest.raises(RuntimeError, match="current|cohort"):
+        recovery("arvo:47101", LAUNCH)
+    with pytest.raises(RuntimeError, match="current|cohort"):
+        recovery("../task", LAUNCH)
+
+
+def test_cohort_recovery_refuses_linked_attempt_directory(tmp_path):
+    fixture = _setup(tmp_path)
+    link = tmp_path / f"{RUN}-{TASK.replace(':', '-')}"
+    try:
+        link.symlink_to(fixture.evidence, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("directory symlinks unavailable")
+    fixture.inputs["state"].task_ids = (TASK,)
+    recovery = CohortTerminalRecovery(
+        state=fixture.inputs["state"],
+        evidence_root=tmp_path,
+        public_keys=fixture.public_keys,
+        controller_verifier=fixture.inputs["controller_verifier"],
+        evaluator_verifier=fixture.inputs["evaluator_verifier"],
+        expected_policy_sha256="f" * 64,
+        expected_model="glm-5.3",
+    )
+    with pytest.raises(RuntimeError, match="evidence|linked"):
+        recovery(TASK, LAUNCH)
+
+
+def test_cohort_recovery_refuses_missing_prepared_directory(tmp_path):
+    fixture = _setup(tmp_path)
+    fixture.inputs["state"].task_ids = (TASK,)
+    recovery = CohortTerminalRecovery(
+        state=fixture.inputs["state"],
+        evidence_root=tmp_path,
+        public_keys=fixture.public_keys,
+        controller_verifier=fixture.inputs["controller_verifier"],
+        evaluator_verifier=fixture.inputs["evaluator_verifier"],
+        expected_policy_sha256="f" * 64,
+        expected_model="glm-5.3",
+    )
+    with pytest.raises(RuntimeError, match="evidence"):
+        recovery(TASK, LAUNCH)
