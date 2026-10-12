@@ -11,7 +11,12 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from nooa_cybergym.leaderboard.scored_campaign_inputs import (
+    ScoredLaunchPreview,
+    SignedCampaignInputs,
+)
 from nooa_cybergym.leaderboard.scored_launch_config import (
+    load_previewed_scored_launch_config,
     load_scored_evaluator_signer,
     load_scored_launch_config,
 )
@@ -89,6 +94,40 @@ def test_scored_launch_config_rejects_unsigned_or_parallel_drift(tmp_path: Path)
     harness["scored_launch_config_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
     with pytest.raises(RuntimeError, match="serial"):
         load_scored_launch_config(source, harness=harness, run_id="run-1")
+
+
+def test_previewed_scored_config_binds_attested_harness_and_evidence_root(tmp_path: Path):
+    source, harness, config = _bundle(tmp_path)
+    evidence = Path(config["paths"]["evidence_root"])
+    signed_harness = b"signed scored harness lock"
+    inputs = SignedCampaignInputs(b"decision", b"cert", signed_harness, b"cohort", b"[]", {})
+
+    class Authority:
+        def attest_signed(self, kind, envelope):
+            assert (kind, envelope) == ("harness_lock", signed_harness)
+            return harness
+
+    class State:
+        run_id = "run-1"
+        epoch = "scored-epoch-1"
+        evidence_root = evidence
+
+    authority = Authority()
+    state = State()
+    state.authority = authority
+    preview = ScoredLaunchPreview(inputs, authority, state)
+    assert load_previewed_scored_launch_config(preview, source)["run_id"] == "run-1"
+
+    other = tmp_path / "other-ledger"
+    other.mkdir()
+    state.evidence_root = other
+    with pytest.raises(RuntimeError, match="evidence root"):
+        load_previewed_scored_launch_config(preview, source)
+
+    state.evidence_root = evidence
+    harness["epoch"] = "different"
+    with pytest.raises(RuntimeError, match="identity"):
+        load_previewed_scored_launch_config(preview, source)
 
 
 def test_scored_evaluator_key_must_match_signed_public_identity(tmp_path: Path):

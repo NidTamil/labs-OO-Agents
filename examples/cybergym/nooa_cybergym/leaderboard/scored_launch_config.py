@@ -13,6 +13,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier
 
+from .scored_campaign_inputs import ScoredLaunchPreview
+
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _ALIAS = re.compile(r"cybergym-[a-z0-9-]{1,56}\Z")
@@ -160,6 +162,21 @@ def load_scored_launch_config(path: Path, *, harness: dict, run_id: str) -> dict
         raise RuntimeError("scored evaluator identity differs")
     _absolute(evaluator["private_key_path"])
     return value
+
+
+def load_previewed_scored_launch_config(preview: ScoredLaunchPreview, path: Path) -> dict:
+    """Bind local worker inputs to a previously verified signed campaign preview."""
+    if type(preview) is not ScoredLaunchPreview or preview.state.authority is not preview.authority:
+        raise RuntimeError("verified scored launch preview required")
+    harness = preview.authority.attest_signed("harness_lock", preview.inputs.harness_lock)
+    if type(harness) is not dict:
+        raise RuntimeError("attested scored harness lock required")
+    config = load_scored_launch_config(path, harness=harness, run_id=preview.state.run_id)
+    if config["epoch"] != preview.state.epoch:
+        raise RuntimeError("scored launch epoch differs from signed campaign")
+    if Path(config["paths"]["evidence_root"]) != preview.state.evidence_root:
+        raise RuntimeError("scored launch evidence root differs from signed campaign")
+    return config
 
 
 def load_scored_evaluator_signer(
