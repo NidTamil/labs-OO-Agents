@@ -18,7 +18,8 @@ from typing import Any
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from .campaign import check_go_live, resume_campaign
+from .campaign import CampaignState, check_go_live, preview_go_live, resume_campaign
+from .xeus_authority import XeusCampaignAuthority
 
 _MAX_SIGNED = 1024 * 1024
 _MAX_POLICY = 64 * 1024
@@ -34,6 +35,13 @@ class SignedCampaignInputs:
     cohort: bytes
     tasks_json: bytes
     campaign_policy: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ScoredLaunchPreview:
+    inputs: SignedCampaignInputs
+    authority: XeusCampaignAuthority
+    state: CampaignState
 
 
 def _regular_bytes(root: Path, name: str, limit: int) -> bytes:
@@ -133,6 +141,42 @@ def read_signed_campaign_inputs(root: Path) -> SignedCampaignInputs:
     if type(policy) is not dict:
         raise RuntimeError("campaign-policy.json must be an object")
     return SignedCampaignInputs(decision, certification, harness_lock, cohort, tasks_json, policy)
+
+
+def preview_signed_campaign(
+    *,
+    input_root: Path,
+    trust_registry: Path,
+    trust_sha256: str,
+    run_id: str,
+    evidence_root: Path,
+) -> ScoredLaunchPreview:
+    """Verify pinned trust and every signed input before durable admission."""
+    if (
+        type(run_id) is not str
+        or _RUN_ID.fullmatch(run_id) is None
+        or not isinstance(evidence_root, Path)
+        or not evidence_root.is_absolute()
+        or evidence_root.is_symlink()
+        or not evidence_root.is_dir()
+        or evidence_root.resolve() != evidence_root
+    ):
+        raise RuntimeError("verified scored campaign identity and evidence root required")
+    inputs = read_signed_campaign_inputs(input_root)
+    public_keys = load_scored_public_keys(trust_registry, expected_sha256=trust_sha256)
+    authority = XeusCampaignAuthority(public_keys)
+    state = preview_go_live(
+        decision=inputs.decision,
+        certification=inputs.certification,
+        harness_lock=inputs.harness_lock,
+        cohort=inputs.cohort,
+        campaign_policy=inputs.campaign_policy,
+        tasks_json=inputs.tasks_json,
+        authority=authority,
+        run_id=run_id,
+        evidence_root=evidence_root,
+    )
+    return ScoredLaunchPreview(inputs, authority, state)
 
 
 def admit_signed_campaign(

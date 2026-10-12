@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from nooa_cybergym.leaderboard.scored_campaign_inputs import (
     admit_signed_campaign,
     load_scored_public_keys,
+    preview_signed_campaign,
     read_signed_campaign_inputs,
 )
 
@@ -117,3 +118,60 @@ def test_scored_trust_registry_requires_exact_pinned_public_keys(tmp_path: Path)
         load_scored_public_keys(
             registry, expected_sha256=hashlib.sha256(registry.read_bytes()).hexdigest()
         )
+
+
+def test_scored_preview_binds_trust_and_signed_bytes_without_creating_campaign(
+    tmp_path: Path, monkeypatch
+):
+    import nooa_cybergym.leaderboard.scored_campaign_inputs as module
+
+    inputs_root = tmp_path / "inputs"
+    _bundle(inputs_root)
+    trust = tmp_path / "trusted.json"
+    private = Ed25519PrivateKey.generate()
+    pem = (
+        private.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode("ascii")
+    )
+    trust.write_text(json.dumps({"operator": pem}), encoding="utf-8")
+    ledger = tmp_path / "ledger"
+    ledger.mkdir()
+    calls = []
+    authority = object()
+    monkeypatch.setattr(
+        module,
+        "XeusCampaignAuthority",
+        lambda keys: calls.append(("authority", set(keys))) or authority,
+    )
+    monkeypatch.setattr(
+        module,
+        "preview_go_live",
+        lambda **kwargs: calls.append(("preview", kwargs)) or "verified-state",
+    )
+    result = preview_signed_campaign(
+        input_root=inputs_root,
+        trust_registry=trust,
+        trust_sha256=hashlib.sha256(trust.read_bytes()).hexdigest(),
+        run_id="scored-1",
+        evidence_root=ledger,
+    )
+    assert result.state == "verified-state"
+    assert result.authority is authority
+    assert result.inputs.decision == b"signed:decision"
+    assert calls[0] == ("authority", {"operator"})
+    assert calls[1][0] == "preview"
+    assert calls[1][1]["authority"] is authority
+    assert calls[1][1]["decision"] == b"signed:decision"
+
+    (inputs_root / "decision.signed.json").unlink()
+    calls.clear()
+    with pytest.raises(RuntimeError, match="decision"):
+        preview_signed_campaign(
+            input_root=inputs_root,
+            trust_registry=trust,
+            trust_sha256=hashlib.sha256(trust.read_bytes()).hexdigest(),
+            run_id="scored-1",
+            evidence_root=ledger,
+        )
+    assert calls == []
