@@ -136,6 +136,8 @@ Subset image custody check (2026-10-12): the pinned official ten-task registry n
 
 Read-only minimum-retention audit (2026-10-12 08:17 UTC): `docker image ls --all --quiet --no-trunc` reported 122 unique image IDs, including intermediate/dangling images; the earlier 87-image figure was the ordinary top-level Docker report. Two extant containers reference two image IDs. The ten-task registry's 20 pinned IDs and the v26q native agent image are present. Their union with the two container images has 23 distinct IDs, leaving 99 outside this *minimum* set. Those 99 are **not deletion candidates** without checking all other task/image obligations and shared layers; this count does not estimate reclaimable bytes. No Docker object was changed. Capacity admission remains pending a complete retention decision and measured free-space headroom.
 
+Top-level image retention classification (2026-10-12): 48 `n132/arvo` and eight `cybergym/oss-fuzz` vulnerable/fixed tags correspond to 28 complete task pairs; every one of those 28 IDs belongs to the locked 1,507-task cohort. Ten pairs are the official subset, leaving 18 additional scored-cohort pairs already cached. The host also has multiple historical native-agent, OO-Agent and base/fixture images. Neither ordinary tags nor `docker system df` establishes which non-task layers can be safely removed; keep all 28 task pairs and all extant-container images in the retention analysis. This was a read-only name/ID comparison against `cohort.json`, with no Docker mutation.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
