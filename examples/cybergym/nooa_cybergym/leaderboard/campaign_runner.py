@@ -273,12 +273,29 @@ def run_campaign(
                 state.mark_started(task_id, request_id=request_id)
 
             elif action.kind == "observe_started":
+                request_id = _started_request_id(state, task_id)
+                recover_terminal = getattr(executor, "recovered_terminal_receipt", None)
+                if callable(recover_terminal):
+                    recovered = recover_terminal(task_id, request_id)
+                    if recovered is not None:
+                        # A restarted controller can settle an already-signed
+                        # terminal without reopening the UI or sending again.
+                        # The campaign authority re-attests the exact bytes.
+                        state.mark_terminal(task_id, recovered)
+                        ui.reap(state.run_id)
+                        open_host = None
+                        open_task_id = None
+                        log(f"terminal {task_id}")
+                        if task_id == stop_after_terminal_task_id:
+                            log(f"practice segment terminal {task_id}")
+                            return
+                        continue
                 if open_task_id != task_id:
                     target = executor.ui_target(task_id)
                     ui.open(state.run_id, task_id, target.remote_host, target.ssh_port)
                     open_host = target.remote_host
                     open_task_id = task_id
-                executor.start(task_id, _started_request_id(state, task_id))
+                executor.start(task_id, request_id)
                 receipt = executor.await_terminal(task_id)
                 state.mark_terminal(task_id, receipt)
                 if open_host is not None:

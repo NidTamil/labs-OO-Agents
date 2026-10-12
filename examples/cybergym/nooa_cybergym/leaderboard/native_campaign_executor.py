@@ -48,6 +48,7 @@ class NativeCampaignTaskExecutor:
         remote_alias: str,
         publish_intent: Callable[..., bytes] = _publish_intent,
         submitter_factory: Callable[..., Any] = _submitter,
+        terminal_recovery: Callable[[str, str], bytes | None] | None = None,
     ) -> None:
         task_ids = getattr(state, "task_ids", None)
         if (
@@ -69,6 +70,7 @@ class NativeCampaignTaskExecutor:
             or re.fullmatch(r"[a-z][a-z0-9-]{1,63}", remote_alias) is None
             or not callable(publish_intent)
             or not callable(submitter_factory)
+            or (terminal_recovery is not None and not callable(terminal_recovery))
         ):
             raise ValueError("verified full cohort, worker and pinned UI route required")
         self.state = state
@@ -79,7 +81,28 @@ class NativeCampaignTaskExecutor:
         self.remote_alias = remote_alias
         self.publish_intent = publish_intent
         self.submitter_factory = submitter_factory
+        self.terminal_recovery = terminal_recovery
         self._launches: dict[str, Any] = {}
+
+    def recovered_terminal_receipt(self, task_id: str, request_id: str) -> bytes | None:
+        """Read a preexisting verified terminal without preparing or sending again."""
+        if (
+            task_id not in self.state.task_ids
+            or self.state.next_action() != CampaignAction("observe_started", task_id)
+            or type(request_id) is not str
+            or _ID.fullmatch(request_id) is None
+        ):
+            raise RuntimeError("recovered terminal lacks current verified request")
+        try:
+            self.state.started_event_sha256(task_id, request_id)
+        except Exception:
+            raise RuntimeError("recovered terminal differs from verified request") from None
+        if self.terminal_recovery is None:
+            return None
+        receipt = self.terminal_recovery(task_id, request_id)
+        if receipt is not None and (type(receipt) is not bytes or not receipt):
+            raise RuntimeError("recovered terminal receipt is not signed bytes")
+        return receipt
 
     def _prepared(self, task_id: str):
         if task_id not in self.state.task_ids or self.state.next_action().task_id != task_id:

@@ -13,7 +13,7 @@ TASK_ID = "oss-fuzz:42538616"
 IDS = (TASK_ID, *(f"arvo:{index}" for index in range(1, 1507)))
 
 
-def make_executor(tmp_path, *, manifest_task=TASK_ID):
+def make_executor(tmp_path, *, manifest_task=TASK_ID, terminal_recovery=None):
     events = []
     observed = set()
     launch = SimpleNamespace(
@@ -83,6 +83,7 @@ def make_executor(tmp_path, *, manifest_task=TASK_ID):
         remote_alias="cybergym-scored",
         publish_intent=publish,
         submitter_factory=submitter,
+        **({"terminal_recovery": terminal_recovery} if terminal_recovery is not None else {}),
     )
     return executor, events
 
@@ -111,3 +112,27 @@ def test_cohort_executor_rejects_task_swapped_launch(tmp_path):
     with pytest.raises(RuntimeError, match="launch identity"):
         executor.first_request_id(TASK_ID)
     assert "send" not in events
+
+
+def test_cohort_executor_replays_terminal_without_preparing_or_sending(tmp_path):
+    seen = []
+
+    def recover(task_id, request_id):
+        seen.append((task_id, request_id))
+        return b"signed-terminal"
+
+    executor, events = make_executor(tmp_path, terminal_recovery=recover)
+    assert executor.recovered_terminal_receipt(TASK_ID, "launch-oss-fuzz") == b"signed-terminal"
+    assert seen == [(TASK_ID, "launch-oss-fuzz")]
+    assert events == ["verified-start"]
+
+
+def test_cohort_executor_rejects_wrong_recovered_request_before_callback(tmp_path):
+    seen = []
+    executor, _ = make_executor(
+        tmp_path,
+        terminal_recovery=lambda task, request: seen.append((task, request)),
+    )
+    with pytest.raises(RuntimeError, match="verified request"):
+        executor.recovered_terminal_receipt(TASK_ID, "different-launch")
+    assert seen == []

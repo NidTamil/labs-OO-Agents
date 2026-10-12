@@ -506,6 +506,60 @@ def test_runner_resumes_started_intent_with_ledger_request_id(tmp_path):
     assert ui.calls[0][0] == "open"
 
 
+def test_runner_replays_verified_started_terminal_without_second_ui_or_send(tmp_path):
+    state, authority = _state(tmp_path)
+    _seed_terminal_prefix(authority, 1506)
+    task_id = IDS[-1]
+    request_id = f"req:{task_id}"
+    authority.events.extend(
+        (
+            {"type": "prepared", "task_id": task_id},
+            {"type": "started", "task_id": task_id, "request_id": request_id},
+        )
+    )
+    receipt = f"signed:terminal_receipt:{task_id}".encode()
+    authority.signed_receipts[receipt] = failure_receipt(task_id)
+
+    class RecoveringExecutor(FakeExecutor):
+        def recovered_terminal_receipt(self, candidate_task, candidate_request):
+            self.events.append(("recover", candidate_task, candidate_request))
+            assert (candidate_task, candidate_request) == (task_id, request_id)
+            return receipt
+
+    executor = RecoveringExecutor(authority)
+    ui = RecordingUi()
+    run_campaign(state, executor, ui)
+
+    assert executor.events == [("recover", task_id, request_id)]
+    assert ui.calls == [("reap", "run-1"), ("reap", "run-1")]
+    assert next_action(state).kind == "complete"
+
+
+def test_runner_reaps_and_refuses_bad_recovered_terminal_before_ui(tmp_path):
+    state, authority = _state(tmp_path)
+    _seed_terminal_prefix(authority, 1506)
+    task_id = IDS[-1]
+    authority.events.extend(
+        (
+            {"type": "prepared", "task_id": task_id},
+            {"type": "started", "task_id": task_id, "request_id": f"req:{task_id}"},
+        )
+    )
+
+    class BadExecutor(FakeExecutor):
+        def recovered_terminal_receipt(self, candidate_task, candidate_request):
+            self.events.append(("recover", candidate_task, candidate_request))
+            return b"unsigned"
+
+    executor = BadExecutor(authority)
+    ui = RecordingUi()
+    with pytest.raises(RuntimeError, match="terminal[_ ]receipt"):
+        run_campaign(state, executor, ui)
+    assert [event["type"] for event in authority.events[-2:]] == ["prepared", "started"]
+    assert executor.events == [("recover", task_id, f"req:{task_id}")]
+    assert ui.calls == [("reap", "run-1")]
+
+
 def test_mailbox_ui_uses_stable_task_keys_and_requires_completed_host_ack():
     from types import SimpleNamespace
 
