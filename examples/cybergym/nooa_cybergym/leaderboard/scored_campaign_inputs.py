@@ -8,17 +8,22 @@ authority for signatures, frozen policy, task order and durable creation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 from .campaign import check_go_live, resume_campaign
 
 _MAX_SIGNED = 1024 * 1024
 _MAX_POLICY = 64 * 1024
 _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+_KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +59,56 @@ def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ValueError("duplicate campaign policy key")
         result[key] = value
     return result
+
+
+def _unique_trust_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate scored trust key")
+        result[key] = value
+    return result
+
+
+def load_scored_public_keys(path: Path, *, expected_sha256: str) -> dict[str, Ed25519PublicKey]:
+    """Load only externally pinned public verification keys; never choose a fallback."""
+    path = Path(path)
+    if (
+        not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+        or path.resolve() != path
+        or type(expected_sha256) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+        or not 0 < path.stat().st_size <= _MAX_POLICY
+    ):
+        raise RuntimeError("absolute pinned scored public-key registry required")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise RuntimeError("scored public-key registry digest differs")
+    try:
+        entries = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_trust_pairs)
+    except (UnicodeDecodeError, ValueError) as error:
+        raise RuntimeError(f"invalid scored public-key registry: {error}") from None
+    if type(entries) is not dict or not entries or len(entries) > 16:
+        raise RuntimeError("bounded scored public-key registry required")
+    keys = {}
+    for key_id, pem in entries.items():
+        if (
+            type(key_id) is not str
+            or _KEY_ID.fullmatch(key_id) is None
+            or type(pem) is not str
+            or len(pem) > 4096
+        ):
+            raise RuntimeError("invalid scored public-key entry")
+        try:
+            public = serialization.load_pem_public_key(pem.encode("ascii"))
+        except (UnicodeEncodeError, ValueError, TypeError):
+            raise RuntimeError("invalid scored Ed25519 public key") from None
+        if not isinstance(public, Ed25519PublicKey):
+            raise RuntimeError("scored trust requires Ed25519 public keys")
+        keys[key_id] = public
+    return keys
 
 
 def read_signed_campaign_inputs(root: Path) -> SignedCampaignInputs:

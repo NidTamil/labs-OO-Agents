@@ -4,12 +4,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from nooa_cybergym.leaderboard.scored_campaign_inputs import (
     admit_signed_campaign,
+    load_scored_public_keys,
     read_signed_campaign_inputs,
 )
 
@@ -86,3 +90,30 @@ def test_scored_admission_passes_exact_signed_bytes_without_signing(tmp_path: Pa
     assert calls[0]["run_id"] == "scored-1"
     assert calls[0]["evidence_root"] == evidence
     assert calls[0]["campaign_policy"] == json.loads('{"max_parallel_tasks":1}')
+
+
+def test_scored_trust_registry_requires_exact_pinned_public_keys(tmp_path: Path):
+    private = Ed25519PrivateKey.generate()
+    pem = (
+        private.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode("ascii")
+    )
+    registry = tmp_path / "trusted-public-keys.json"
+    registry.write_text(json.dumps({"operator": pem}), encoding="utf-8")
+    digest = hashlib.sha256(registry.read_bytes()).hexdigest()
+    keys = load_scored_public_keys(registry, expected_sha256=digest)
+    assert set(keys) == {"operator"}
+    assert keys["operator"].public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    ) == private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+
+    with pytest.raises(RuntimeError, match="digest"):
+        load_scored_public_keys(registry, expected_sha256="0" * 64)
+    registry.write_text('{"operator":"bad","operator":"bad"}', encoding="utf-8")
+    with pytest.raises(RuntimeError, match="duplicate"):
+        load_scored_public_keys(
+            registry, expected_sha256=hashlib.sha256(registry.read_bytes()).hexdigest()
+        )
