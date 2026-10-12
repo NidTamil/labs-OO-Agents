@@ -6,17 +6,29 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from nooa_cybergym.leaderboard.capabilities import (
+    Capability,
+    CapabilityRegistry,
+    ControlLabel,
+    Effect,
+    Role,
+    Status,
+    ToolIdentity,
+)
+from nooa_cybergym.leaderboard.capability_runtime import SYNTHETIC_SCOPE
 from nooa_cybergym.leaderboard.cohort import freeze_harness_manifest
 from nooa_cybergym.leaderboard.scored_campaign_inputs import (
     ScoredLaunchPreview,
     SignedCampaignInputs,
 )
 from nooa_cybergym.leaderboard.scored_launch_config import (
+    load_previewed_scored_capabilities,
     load_previewed_scored_controller_material,
     load_previewed_scored_launch_config,
     load_previewed_scored_signers,
@@ -292,6 +304,89 @@ def test_scored_controller_material_checks_full_cohort_and_harness_before_creati
     cohort["generator_sha256"] = "0" * 64
     with pytest.raises(RuntimeError, match="generator"):
         load_previewed_scored_controller_material(preview, source)
+
+
+def test_scored_capability_preflight_requires_35_live_signed_uses(tmp_path: Path):
+    source, harness, config = _bundle(tmp_path)
+    identity = ToolIdentity(
+        "service", "1", "a" * 64, "tool", "1", "b" * 64, "adapter", "1", "c" * 64
+    )
+    registry = CapabilityRegistry(
+        tuple(
+            Capability(
+                capability_id=f"cap-{index:02d}",
+                identity=identity,
+                operation="read",
+                status=Status.APPROVED,
+                control_label=ControlLabel.OPTIONAL,
+                purpose="synthetic preflight test",
+                roles=(Role.PARENT,),
+                effects=(Effect.READ,),
+                data_scopes=("task",),
+                path_scopes=(),
+                routes=(),
+                provider_ids=(),
+                model_ids=(),
+                credential_refs=(),
+                accounting="counted",
+                log_schema="audit-v1",
+                evidence_refs=("live-fixture-attestation",),
+                certification_digest="d" * 64,
+            )
+            for index in range(35)
+        )
+    )
+    registry_path = Path(config["files"]["capability_registry"]["path"])
+    registry_path.write_text(registry.manifest_json, encoding="utf-8")
+    config["files"]["capability_registry"]["sha256"] = registry.digest
+    source.write_text(json.dumps(config, sort_keys=True), encoding="utf-8")
+    harness["scored_launch_config_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    harness["capability_registry_sha256"] = registry.digest
+    approved_ids = sorted(entry.capability_id for entry in registry.entries)
+    certified = {
+        "status": "accepted",
+        "scope": "live_native",
+        "capability_registry_sha256": registry.digest,
+        "capability_coverage": "all_enabled_exercised",
+        "enabled_capability_ids": approved_ids,
+        "required_approved_capability_ids": approved_ids,
+    }
+    inputs = SignedCampaignInputs(b"decision", b"cert", b"signed-lock", b"cohort", b"[]", {})
+
+    class Authority:
+        def attest_signed(self, kind, envelope):
+            if (kind, envelope) == ("harness_lock", b"signed-lock"):
+                return harness
+            if (kind, envelope) == ("certification", b"cert"):
+                return certified
+            raise AssertionError("unexpected attestation")
+
+    class State:
+        run_id = "run-1"
+        epoch = "scored-epoch-1"
+        evidence_root = Path(config["paths"]["evidence_root"])
+
+    authority = Authority()
+    state = State()
+    state.authority = authority
+    preview = ScoredLaunchPreview(inputs, authority, state, {})
+    assert load_previewed_scored_capabilities(preview, source).digest == registry.digest
+
+    certified["enabled_capability_ids"] = approved_ids[:-1]
+    with pytest.raises(RuntimeError, match="coverage"):
+        load_previewed_scored_capabilities(preview, source)
+    certified["enabled_capability_ids"] = approved_ids
+    tainted = CapabilityRegistry(
+        (replace(registry.entries[0], evidence_refs=(SYNTHETIC_SCOPE,)), *registry.entries[1:])
+    )
+    registry_path.write_text(tainted.manifest_json, encoding="utf-8")
+    config["files"]["capability_registry"]["sha256"] = tainted.digest
+    source.write_text(json.dumps(config, sort_keys=True), encoding="utf-8")
+    harness["scored_launch_config_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    harness["capability_registry_sha256"] = tainted.digest
+    certified["capability_registry_sha256"] = tainted.digest
+    with pytest.raises(RuntimeError, match="synthetic-only"):
+        load_previewed_scored_capabilities(preview, source)
 
 
 def test_scored_evaluator_key_must_match_signed_public_identity(tmp_path: Path):

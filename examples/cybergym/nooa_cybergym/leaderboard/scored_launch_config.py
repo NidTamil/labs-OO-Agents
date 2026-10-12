@@ -14,6 +14,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier
 
+from .capabilities import CapabilityRegistry, Status
+from .capability_runtime import SYNTHETIC_SCOPE
 from .cohort import FrozenAssetRegistry, read_harness_manifest, verify_harness_tree
 from .runtime_config import NativeRuntimeConfig, load_runtime_config
 from .scored_campaign_inputs import ScoredLaunchPreview
@@ -289,6 +291,38 @@ def load_previewed_scored_controller_material(
         official_registry=assets,
     )
     return ScoredControllerMaterial(config, paths, assets, images)
+
+
+def load_previewed_scored_capabilities(
+    preview: ScoredLaunchPreview, path: Path
+) -> CapabilityRegistry:
+    """Reject a missing, synthetic-only or incompletely certified scored registry."""
+    config = load_previewed_scored_launch_config(preview, path)
+    harness = preview.authority.attest_signed("harness_lock", preview.inputs.harness_lock)
+    certified = preview.authority.attest_signed("certification", preview.inputs.certification)
+    ref = config["files"]["capability_registry"]
+    if (
+        type(harness) is not dict
+        or type(certified) is not dict
+        or certified.get("status") != "accepted"
+        or certified.get("scope") != "live_native"
+        or harness.get("capability_registry_sha256") != ref["sha256"]
+    ):
+        raise RuntimeError("signed scored capability registry pin is absent")
+    registry = CapabilityRegistry.load(Path(ref["path"]), expected_sha256=ref["sha256"])
+    approved = tuple(entry for entry in registry.entries if entry.status is Status.APPROVED)
+    if any(SYNTHETIC_SCOPE in entry.evidence_refs for entry in approved):
+        raise RuntimeError("synthetic-only capability cannot enter scored cohort")
+    approved_ids = sorted(entry.capability_id for entry in approved)
+    if (
+        len(approved_ids) != 35
+        or certified.get("capability_registry_sha256") != registry.digest
+        or certified.get("capability_coverage") != "all_enabled_exercised"
+        or certified.get("enabled_capability_ids") != approved_ids
+        or certified.get("required_approved_capability_ids") != approved_ids
+    ):
+        raise RuntimeError("signed live capability coverage differs from scored registry")
+    return registry
 
 
 def load_scored_evaluator_signer(
