@@ -89,6 +89,12 @@ The exact lock has 1,507 distinct ordered IDs: 1,368 ARVO and 139 OSS-Fuzz. `coh
 - [ ] If SunChaser is insufficient, present a concrete DigitalOcean proposal and wait for explicit operator approval before provisioning it.
 - [ ] Admit the official ten-task subset through a separately scoped dry-run decision and exact assets; run serially with signed receipts and teardown, then independently audit every receipt.
 
+#### Capacity sizing from the locked manifest (2026-10-12, local read only)
+
+The exact `asset-hashes.json` has 1,507 vulnerable archives totaling 110.04 GiB. Per-archive compressed sizes are 16.51 MiB at p50, 249.54 MiB at p95, 911.66 MiB at p99, and 2.11 GiB at maximum; two exceed 1 GiB. The last observed SunChaser free space was approximately 8.6 GB on 2026-10-10, so preloading the whole cohort there is impossible (the compressed archives alone exceed that free space by more than twelve times). Serial one-task-at-a-time delivery might fit, but the maximum archive would consume a material share of free space before its image, extracted workspace, Docker layers, logs and safety margin. This is a sizing constraint, not a current host-capacity attestation: remeasure after Tailscale sign-in and before any subset or scored admission.
+
+At strict serial execution, 1,507 tasks require an average of at most 28.7 minutes per task to finish in 30 days, 57.3 minutes for 60 days, or 86.0 minutes for 90 days, including staging, native startup, oracle and teardown. The configured 12-hour per-task ceiling would allow a 753.5-day worst case. The two prior practice receipts do not contain a representative duration distribution, and their model-cost fields are not a full-cohort price estimate. Measure all ten subset tasks and reconcile provider billing before choosing a time or money budget. No DigitalOcean capacity or paid provider commitment is inferred from this arithmetic.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
