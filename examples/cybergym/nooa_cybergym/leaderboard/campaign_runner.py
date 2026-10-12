@@ -27,6 +27,7 @@ import os
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -316,14 +317,54 @@ def run_campaign(
         raise
 
 
-def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI shell
-    """CLI shell: the signed authority, cohort inputs, and executor are wired by the
-    operator's launch environment (no committed fallback exists for the authority).
-    This entrypoint only documents the required inputs and refuses to invent them."""
+def launch_signed_scored_campaign(
+    *,
+    input_root: Path,
+    trust_registry: Path,
+    trust_sha256: str,
+    run_id: str,
+    evidence_root: Path,
+    launch_config: Path,
+    resume: bool = False,
+) -> None:
+    """Require signed preview and live worker readiness before durable admission."""
+    from .scored_campaign_inputs import admit_signed_campaign, preview_signed_campaign
+    from .scored_worker_preflight import (
+        bind_admitted_scored_worker,
+        prepare_previewed_scored_worker,
+    )
+
+    preview = preview_signed_campaign(
+        input_root=input_root,
+        trust_registry=trust_registry,
+        trust_sha256=trust_sha256,
+        run_id=run_id,
+        evidence_root=evidence_root,
+    )
+    plan = prepare_previewed_scored_worker(preview, launch_config)
+    state = admit_signed_campaign(
+        preview.inputs,
+        authority=preview.authority,
+        run_id=run_id,
+        evidence_root=evidence_root,
+        resume=resume,
+    )
+    binding = bind_admitted_scored_worker(plan, state)
+    run_campaign(binding.state, binding.executor, binding.ui)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Launch only an externally signed, separately certified scored campaign."""
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--native-ui-script", help="path to cybergym-windows.ps1")
+    parser.add_argument("--input-root", type=Path, help="directory of six scored inputs")
+    parser.add_argument("--trust-registry", type=Path, help="operator-pinned public keys")
+    parser.add_argument("--trust-sha256", help="SHA-256 of the public-key registry")
+    parser.add_argument("--run-id", help="signed scored campaign run ID")
+    parser.add_argument("--evidence-root", type=Path, help="durable controller evidence root")
+    parser.add_argument("--launch-config", type=Path, help="signed-harness-pinned worker config")
+    parser.add_argument("--resume", action="store_true", help="replay an existing verified ledger")
     parser.add_argument(
         "--print-contract",
         action="store_true",
@@ -337,15 +378,34 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI s
                     "state": "campaign.check_go_live(signed decision/certification/"
                     "harness_lock/cohort, frozen policy, tasks.json, trusted authority)",
                     "executor": "TaskExecutor (prepare/ui_target/first_request_id/start/await_terminal; start idempotent by request_id)",
-                    "ui": "NativeUiController (PowerShellNativeUi by default)",
-                    "native_ui_script_env": "CYBERGYM_NATIVE_UI_SCRIPT",
+                    "ui": "signed run-scoped Windows mailbox with a fresh pre-admission status acknowledgement",
+                    "trust": "external SHA-256 pin for the Ed25519 public-key registry",
                 },
                 indent=2,
             )
         )
         return 0
-    parser.error("no committed authority/executor fallback; import run_campaign and inject them")
-    return 2
+    required = (
+        "input_root",
+        "trust_registry",
+        "trust_sha256",
+        "run_id",
+        "evidence_root",
+        "launch_config",
+    )
+    missing = [name for name in required if getattr(args, name) is None]
+    if missing:
+        parser.error("missing scored inputs: " + ", ".join(missing))
+    launch_signed_scored_campaign(
+        input_root=args.input_root,
+        trust_registry=args.trust_registry,
+        trust_sha256=args.trust_sha256,
+        run_id=args.run_id,
+        evidence_root=args.evidence_root,
+        launch_config=args.launch_config,
+        resume=args.resume,
+    )
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover
