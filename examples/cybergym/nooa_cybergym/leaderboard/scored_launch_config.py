@@ -14,8 +14,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier
 
+from .cohort import FrozenAssetRegistry, read_harness_manifest, verify_harness_tree
 from .runtime_config import NativeRuntimeConfig, load_runtime_config
 from .scored_campaign_inputs import ScoredLaunchPreview
+from .scored_image_registry import ScoredImageRegistry
+from .workspace import ControllerPaths
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
@@ -217,6 +220,75 @@ def load_previewed_scored_signers(
         evaluator_signer,
         evaluator_verifier,
     )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ScoredControllerMaterial:
+    config: dict
+    paths: ControllerPaths
+    assets: FrozenAssetRegistry
+    images: ScoredImageRegistry
+
+
+def load_previewed_scored_controller_material(
+    preview: ScoredLaunchPreview, path: Path
+) -> ScoredControllerMaterial:
+    """Verify full-cohort controller paths and private image IDs before creation."""
+    config = load_previewed_scored_launch_config(preview, path)
+    state = preview.state
+    files = config["files"]
+    roots = config["paths"]
+    harness = preview.authority.attest_signed("harness_lock", preview.inputs.harness_lock)
+    if (
+        type(harness) is not dict
+        or harness.get("scored_images_sha256") != files["image_manifest"]["sha256"]
+    ):
+        raise RuntimeError("scored image manifest differs from signed harness lock")
+    cohort = preview.authority.attest_signed("cohort", preview.inputs.cohort)
+    if type(cohort) is not dict:
+        raise RuntimeError("attested scored cohort required")
+    for signed_name, file_name in (
+        ("generator_sha256", "generator_source"),
+        ("harness_manifest_sha256", "harness_manifest"),
+        ("mask_map_sha256", "mask_map"),
+    ):
+        if cohort.get(signed_name) != files[file_name]["sha256"]:
+            raise RuntimeError(f"scored {signed_name} differs from signed cohort")
+    assets = FrozenAssetRegistry.load(
+        Path(files["asset_manifest"]["path"]),
+        expected_sha256=state.asset_hashes_sha256,
+        expected_benchmark_commit=state.benchmark_commit,
+        expected_dataset_commit=state.dataset_commit,
+    )
+    if assets.task_ids != state.task_ids:
+        raise RuntimeError("scored asset manifest order differs from signed cohort")
+    images = ScoredImageRegistry.load(
+        Path(files["image_manifest"]["path"]),
+        expected_sha256=harness["scored_images_sha256"],
+        task_ids=state.task_ids,
+    )
+    if files["mask_map"]["sha256"] != state.mask_map_sha256:
+        raise RuntimeError("scored mask map differs from signed cohort")
+    manifest = read_harness_manifest(
+        Path(files["harness_manifest"]["path"]),
+        expected_sha256=files["harness_manifest"]["sha256"],
+    )
+    verify_harness_tree(Path(roots["harness_dir"]), manifest)
+    paths = ControllerPaths(
+        data_dir=Path(roots["data_dir"]),
+        mask_map_path=Path(files["mask_map"]["path"]),
+        server=config["server"],
+        staging_root=Path(roots["staging_root"]),
+        evidence_root=Path(roots["evidence_root"]),
+        harness_dir=Path(roots["harness_dir"]),
+        harness_manifest_path=Path(files["harness_manifest"]["path"]),
+        harness_manifest_sha256=files["harness_manifest"]["sha256"],
+        mask_map_sha256=state.mask_map_sha256,
+        generator_source=Path(files["generator_source"]["path"]),
+        generator_sha256=files["generator_source"]["sha256"],
+        official_registry=assets,
+    )
+    return ScoredControllerMaterial(config, paths, assets, images)
 
 
 def load_scored_evaluator_signer(

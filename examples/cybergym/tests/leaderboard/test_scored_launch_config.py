@@ -11,11 +11,13 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from nooa_cybergym.leaderboard.cohort import freeze_harness_manifest
 from nooa_cybergym.leaderboard.scored_campaign_inputs import (
     ScoredLaunchPreview,
     SignedCampaignInputs,
 )
 from nooa_cybergym.leaderboard.scored_launch_config import (
+    load_previewed_scored_controller_material,
     load_previewed_scored_launch_config,
     load_previewed_scored_signers,
     load_scored_evaluator_signer,
@@ -198,6 +200,98 @@ def test_previewed_scored_signers_require_trusted_controller_and_separate_evalua
     )
     with pytest.raises(RuntimeError, match="trusted controller"):
         load_previewed_scored_signers(untrusted, source)
+
+
+def test_scored_controller_material_checks_full_cohort_and_harness_before_creation(
+    tmp_path: Path,
+):
+    source, harness, config = _bundle(tmp_path)
+    task_ids = tuple(f"arvo:{index}" for index in range(1507))
+    assets = {
+        "schema_version": 1,
+        "benchmark_commit": "1" * 40,
+        "dataset_commit": "2" * 40,
+        "assets": [
+            {
+                "task_id": task_id,
+                "description_sha256": "a" * 64,
+                "description_bytes": 12,
+                "description_lfs_pointer": True,
+                "vulnerable_archive_sha256": "b" * 64,
+                "vulnerable_archive_bytes": 14,
+                "vulnerable_archive_lfs_pointer": True,
+            }
+            for task_id in task_ids
+        ],
+    }
+    images = {
+        "schema_version": 1,
+        "scope": "scored_official_images",
+        "images": [
+            {"task_id": task_id, "vulnerable": "sha256:" + "c" * 64, "fixed": "sha256:" + "d" * 64}
+            for task_id in task_ids
+        ],
+    }
+
+    def replace(name: str, raw: bytes):
+        path = Path(config["files"][name]["path"])
+        path.write_bytes(raw)
+        config["files"][name]["sha256"] = hashlib.sha256(raw).hexdigest()
+
+    replace("asset_manifest", json.dumps(assets).encode())
+    replace("image_manifest", json.dumps(images, sort_keys=True, separators=(",", ":")).encode())
+    replace("mask_map", b"{}")
+    harness_dir = Path(config["paths"]["harness_dir"])
+    (harness_dir / "prompt.md").write_bytes(b"synthetic harness\n")
+    replace("harness_manifest", freeze_harness_manifest(harness_dir))
+    harness["scored_images_sha256"] = config["files"]["image_manifest"]["sha256"]
+    source.write_text(json.dumps(config, sort_keys=True), encoding="utf-8")
+    harness["scored_launch_config_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    cohort = {
+        "generator_sha256": config["files"]["generator_source"]["sha256"],
+        "harness_manifest_sha256": config["files"]["harness_manifest"]["sha256"],
+        "mask_map_sha256": config["files"]["mask_map"]["sha256"],
+    }
+    inputs = SignedCampaignInputs(b"decision", b"cert", b"signed-lock", b"cohort", b"[]", {})
+
+    class Authority:
+        def attest_signed(self, kind, envelope):
+            if (kind, envelope) == ("harness_lock", b"signed-lock"):
+                return harness
+            if (kind, envelope) == ("cohort", b"cohort"):
+                return cohort
+            raise AssertionError("unexpected attestation")
+
+    class State:
+        run_id = "run-1"
+        epoch = "scored-epoch-1"
+        evidence_root = Path(config["paths"]["evidence_root"])
+        asset_hashes_sha256 = config["files"]["asset_manifest"]["sha256"]
+        benchmark_commit = "1" * 40
+        dataset_commit = "2" * 40
+        mask_map_sha256 = config["files"]["mask_map"]["sha256"]
+
+    authority = Authority()
+    state = State()
+    state.task_ids = task_ids
+    state.authority = authority
+    preview = ScoredLaunchPreview(inputs, authority, state, {})
+    material = load_previewed_scored_controller_material(preview, source)
+    assert material.paths.official_registry is material.assets
+    assert material.assets.task_ids == task_ids
+    assert material.images.task_ids == task_ids
+
+    harness["scored_images_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="image manifest"):
+        load_previewed_scored_controller_material(preview, source)
+    harness["scored_images_sha256"] = config["files"]["image_manifest"]["sha256"]
+    (harness_dir / "prompt.md").write_bytes(b"changed harness\n")
+    with pytest.raises(RuntimeError, match="generic harness hash mismatch"):
+        load_previewed_scored_controller_material(preview, source)
+    (harness_dir / "prompt.md").write_bytes(b"synthetic harness\n")
+    cohort["generator_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="generator"):
+        load_previewed_scored_controller_material(preview, source)
 
 
 def test_scored_evaluator_key_must_match_signed_public_identity(tmp_path: Path):
