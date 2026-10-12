@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -162,9 +162,17 @@ def load_scored_launch_config(path: Path, *, harness: dict, run_id: str) -> dict
     return value
 
 
-def load_scored_evaluator_signer(config: dict) -> tuple[Ed25519Signer, Ed25519Verifier]:
+def load_scored_evaluator_signer(
+    config: dict, *, controller_key_id: str, controller_public_key: Ed25519PublicKey
+) -> tuple[Ed25519Signer, Ed25519Verifier]:
     """Preflight the separate controller-held oracle signer before campaign creation."""
-    if type(config) is not dict or type(config.get("evaluator")) is not dict:
+    if (
+        type(config) is not dict
+        or type(config.get("evaluator")) is not dict
+        or type(controller_key_id) is not str
+        or _ID.fullmatch(controller_key_id) is None
+        or not isinstance(controller_public_key, Ed25519PublicKey)
+    ):
         raise RuntimeError("signed scored evaluator configuration required")
     identity = config["evaluator"]
     if (
@@ -190,5 +198,11 @@ def load_scored_evaluator_signer(config: dict) -> tuple[Ed25519Signer, Ed25519Ve
     )
     if hashlib.sha256(pem).hexdigest() != identity["public_key_sha256"]:
         raise RuntimeError("scored evaluator public key differs from signed config")
+    if identity["key_id"] == controller_key_id or public.public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    ) == controller_public_key.public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    ):
+        raise RuntimeError("separate scored evaluator and controller keys required")
     key_id = identity["key_id"]
     return Ed25519Signer(private_key=private, key_id=key_id), Ed25519Verifier({key_id: public})

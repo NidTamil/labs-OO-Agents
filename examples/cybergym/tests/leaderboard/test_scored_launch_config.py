@@ -106,10 +106,27 @@ def test_scored_evaluator_key_must_match_signed_public_identity(tmp_path: Path):
         serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
     )
     config["evaluator"]["public_key_sha256"] = hashlib.sha256(public_pem).hexdigest()
-    signer, verifier = load_scored_evaluator_signer(config)
+    controller = Ed25519PrivateKey.generate().public_key()
+    signer, verifier = load_scored_evaluator_signer(
+        config, controller_key_id="controller-1", controller_public_key=controller
+    )
     assert signer.sign(b"synthetic-evaluator-probe").key_id == "evaluator-1"
     assert verifier is not None
 
     config["evaluator"]["public_key_sha256"] = "0" * 64
     with pytest.raises(RuntimeError, match="public key"):
-        load_scored_evaluator_signer(config)
+        load_scored_evaluator_signer(
+            config, controller_key_id="controller-1", controller_public_key=controller
+        )
+
+    config["evaluator"]["public_key_sha256"] = hashlib.sha256(public_pem).hexdigest()
+    with pytest.raises(RuntimeError, match="separate"):
+        load_scored_evaluator_signer(
+            config, controller_key_id="controller-1", controller_public_key=private.public_key()
+        )
+    with pytest.raises(RuntimeError, match="separate"):
+        load_scored_evaluator_signer(
+            config | {"evaluator": config["evaluator"] | {"key_id": "controller-1"}},
+            controller_key_id="controller-1",
+            controller_public_key=controller,
+        )
