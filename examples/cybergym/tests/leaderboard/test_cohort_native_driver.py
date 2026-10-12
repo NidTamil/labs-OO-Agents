@@ -153,6 +153,68 @@ def test_scored_prelaunch_observes_all_images_before_workspace_staging(monkeypat
     assert calls == [("observe", IMAGE)]
 
 
+def test_scored_native_runtime_probe_follows_signed_binding_and_precedes_staging(monkeypatch):
+    import nooa_cybergym.leaderboard.cohort_native_driver as driver
+
+    task = "oss-fuzz:42535201"
+    vulnerable, fixed = "sha256:" + "b" * 64, "sha256:" + "c" * 64
+    images = ScoredImages(vulnerable, fixed)
+    calls = []
+
+    class ImageAccess:
+        def get(self, image_id):
+            calls.append(("observe", image_id))
+            return SimpleNamespace(id=image_id)
+
+    monkeypatch.setattr(
+        driver,
+        "bind_scored_runtime",
+        lambda **kw: (
+            calls.append(("bind", kw["task_id"]))
+            or SimpleNamespace(images=SimpleNamespace(images_for=lambda task_id: images))
+        ),
+    )
+    monkeypatch.setattr(
+        driver,
+        "stage_current_cohort_task",
+        lambda **kw: calls.append(("stage", kw["task_id"])) or "workspace",
+    )
+    inputs = {
+        "docker_client": SimpleNamespace(images=ImageAccess()),
+        "donor": SimpleNamespace(image_id=IMAGE),
+        "state": object(),
+        "task_id": task,
+        "controller_paths": object(),
+        "asset_manifest": Path("assets.json"),
+        "template_files": {},
+        "admission": object(),
+        "registry": CapabilityRegistry(()),
+        "bindings_path": Path("bindings.json"),
+        "image_manifest": Path("images.json"),
+    }
+    driver.prepare_current_scored_inputs(
+        **inputs, probe_native_runtime=lambda: calls.append(("probe", IMAGE))
+    )
+    assert calls == [
+        ("observe", IMAGE),
+        ("bind", task),
+        ("probe", IMAGE),
+        ("observe", vulnerable),
+        ("observe", fixed),
+        ("stage", task),
+    ]
+
+    calls.clear()
+
+    def changed_runtime():
+        calls.append(("probe", IMAGE))
+        raise RuntimeError("native runtime changed")
+
+    with pytest.raises(RuntimeError, match="native runtime changed"):
+        driver.prepare_current_scored_inputs(**inputs, probe_native_runtime=changed_runtime)
+    assert calls == [("observe", IMAGE), ("bind", task), ("probe", IMAGE)]
+
+
 def test_current_scored_task_stages_only_after_admission_and_signed_path_check(
     tmp_path: Path, monkeypatch
 ):

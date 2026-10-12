@@ -130,6 +130,7 @@ def prepare_current_scored_inputs(
     registry: CapabilityRegistry,
     bindings_path: Path,
     image_manifest: Path,
+    probe_native_runtime: Callable[[], None] | None = None,
 ) -> PreparedScoredInputs:
     """Observe exact private images before hydrating the one admitted task."""
     observed_image_id = _observed_image(docker_client, donor.image_id, "native image")
@@ -143,6 +144,10 @@ def prepare_current_scored_inputs(
         image_manifest=image_manifest,
         observed_image_id=observed_image_id,
     )
+    if probe_native_runtime is not None:
+        if not callable(probe_native_runtime):
+            raise TypeError("controller-owned native runtime probe required")
+        probe_native_runtime()
     images = runtime.images.images_for(task_id)
     _observed_image(docker_client, images.vulnerable, "private image")
     _observed_image(docker_client, images.fixed, "private image")
