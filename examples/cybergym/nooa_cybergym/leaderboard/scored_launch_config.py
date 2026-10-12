@@ -9,6 +9,10 @@ import json
 import re
 from pathlib import Path
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from xeus_cybergym.ledger import Ed25519Signer, Ed25519Verifier
+
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 _ALIAS = re.compile(r"cybergym-[a-z0-9-]{1,56}\Z")
@@ -156,3 +160,35 @@ def load_scored_launch_config(path: Path, *, harness: dict, run_id: str) -> dict
         raise RuntimeError("scored evaluator identity differs")
     _absolute(evaluator["private_key_path"])
     return value
+
+
+def load_scored_evaluator_signer(config: dict) -> tuple[Ed25519Signer, Ed25519Verifier]:
+    """Preflight the separate controller-held oracle signer before campaign creation."""
+    if type(config) is not dict or type(config.get("evaluator")) is not dict:
+        raise RuntimeError("signed scored evaluator configuration required")
+    identity = config["evaluator"]
+    if (
+        set(identity) != {"key_id", "public_key_sha256", "private_key_path"}
+        or type(identity["key_id"]) is not str
+        or _ID.fullmatch(identity["key_id"]) is None
+        or type(identity["public_key_sha256"]) is not str
+        or _SHA.fullmatch(identity["public_key_sha256"]) is None
+    ):
+        raise RuntimeError("signed scored evaluator identity differs")
+    path = _absolute(identity["private_key_path"])
+    if not path.is_file() or not 0 < path.stat().st_size <= 8192:
+        raise RuntimeError("controller-only scored evaluator key is unavailable")
+    try:
+        private = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    except (TypeError, ValueError):
+        raise RuntimeError("separate Ed25519 scored evaluator key required") from None
+    if not isinstance(private, Ed25519PrivateKey):
+        raise RuntimeError("separate Ed25519 scored evaluator key required")
+    public = private.public_key()
+    pem = public.public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    if hashlib.sha256(pem).hexdigest() != identity["public_key_sha256"]:
+        raise RuntimeError("scored evaluator public key differs from signed config")
+    key_id = identity["key_id"]
+    return Ed25519Signer(private_key=private, key_id=key_id), Ed25519Verifier({key_id: public})

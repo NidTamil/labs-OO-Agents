@@ -9,7 +9,12 @@ import json
 from pathlib import Path
 
 import pytest
-from nooa_cybergym.leaderboard.scored_launch_config import load_scored_launch_config
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from nooa_cybergym.leaderboard.scored_launch_config import (
+    load_scored_evaluator_signer,
+    load_scored_launch_config,
+)
 
 FILES = (
     "donor_config",
@@ -84,3 +89,27 @@ def test_scored_launch_config_rejects_unsigned_or_parallel_drift(tmp_path: Path)
     harness["scored_launch_config_sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
     with pytest.raises(RuntimeError, match="serial"):
         load_scored_launch_config(source, harness=harness, run_id="run-1")
+
+
+def test_scored_evaluator_key_must_match_signed_public_identity(tmp_path: Path):
+    _, _, config = _bundle(tmp_path)
+    private = Ed25519PrivateKey.generate()
+    path = Path(config["evaluator"]["private_key_path"])
+    path.write_bytes(
+        private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    public_pem = private.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    config["evaluator"]["public_key_sha256"] = hashlib.sha256(public_pem).hexdigest()
+    signer, verifier = load_scored_evaluator_signer(config)
+    assert signer.sign(b"synthetic-evaluator-probe").key_id == "evaluator-1"
+    assert verifier is not None
+
+    config["evaluator"]["public_key_sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="public key"):
+        load_scored_evaluator_signer(config)
