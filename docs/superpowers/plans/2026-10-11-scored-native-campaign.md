@@ -162,6 +162,8 @@ Collection progress (2026-10-12 14:54 UTC): repeated bounded invocations reverif
 
 Collection progress (2026-10-12 19:04 UTC): the bounded collector reached 400 of 3,014 exact-order manifest observations after re-verifying all previous checkpoints on each run. This remains candidate metadata only; no image layers, full manifest, freeze or live scored task resulted.
 
+Collection progress (2026-10-12 23:14 UTC): the bounded collector reached 600 of 3,014 exact-order manifest observations after re-verifying existing checkpoints on each invocation. These remain controller-only candidate metadata; no layers were pulled, no full image manifest or scored freeze exists, and no live scored task was started. A final independent tag-drift check remains required before pinning.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
