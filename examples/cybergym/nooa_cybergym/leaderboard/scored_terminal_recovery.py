@@ -10,6 +10,7 @@ Missing or ambiguous evidence is a refusal, never a reason to retry Send.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -20,6 +21,7 @@ from .native_launcher import NativeLaunchAuthority
 from .native_start_intent import wait_start_intent
 from .practice_arvo_evaluator import _read_signed
 from .practice_arvo_runner import official_raw_solved
+from .synthetic_workspace import write_new
 
 _REQUEST_FIELDS = {
     "schema_version",
@@ -50,6 +52,63 @@ _RESULT_FIELDS = {
 
 def _sha(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
+
+
+def persist_scored_launch(
+    *,
+    state,
+    task_id: str,
+    signed_envelope: bytes,
+    public_keys: Mapping,
+    evidence_dir: Path,
+) -> NativeLaunchAuthority:
+    """Durably bind one signed native launch before declaring it prepared.
+
+    An existing file is never replaced or accepted as a fresh reservation. A
+    crash after this write therefore blocks a second launch until the signed
+    ledger and the original attempt are reconciled.
+    """
+    task_ids = getattr(state, "task_ids", None)
+    run_id = getattr(state, "run_id", None)
+    root = Path(evidence_dir)
+    if (
+        type(task_id) is not str
+        or re.fullmatch(r"(?:arvo|oss-fuzz):[0-9]+", task_id) is None
+        or type(task_ids) is not tuple
+        or task_id not in task_ids
+        or type(run_id) is not str
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", run_id) is None
+        or state.next_action() != CampaignAction("prepare", task_id)
+    ):
+        raise RuntimeError("signed current cohort preparation required for native launch")
+    if (
+        not root.is_absolute()
+        or root.is_symlink()
+        or not root.is_dir()
+        or root.resolve() != root
+        or root.name != f"{run_id}-{task_id.replace(':', '-')}"
+    ):
+        raise RuntimeError("current scored task evidence directory required")
+    launch = NativeLaunchAuthority.from_signed_envelope(signed_envelope, public_keys, root)
+    manifest = launch.manifest
+    if (
+        manifest.get("scope") != "official"
+        or manifest.get("run_id") != run_id
+        or manifest.get("task_id") != task_id
+        or manifest.get("ordinal") != task_ids.index(task_id) + 1
+    ):
+        raise RuntimeError("signed native launch differs from current cohort task")
+    try:
+        write_new(root / "native-launch.signed.json", signed_envelope)
+    except FileExistsError:
+        raise RuntimeError("scored native launch evidence already exists") from None
+    if os.name == "posix":
+        descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    return launch
 
 
 def recover_scored_terminal(

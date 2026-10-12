@@ -21,6 +21,7 @@ from nooa_cybergym.leaderboard.native_start_intent import publish_start_intent
 from nooa_cybergym.leaderboard.scored_terminal_recovery import (
     CohortTerminalRecovery,
     ScoredTerminalRecovery,
+    persist_scored_launch,
     recover_scored_terminal,
 )
 from xeus_cybergym.canonical import canonical_json
@@ -342,3 +343,35 @@ def test_cohort_recovery_refuses_missing_prepared_directory(tmp_path):
     )
     with pytest.raises(RuntimeError, match="evidence"):
         recovery(TASK, LAUNCH)
+
+
+def test_scored_launch_is_durable_before_prepared_callback(tmp_path):
+    fixture = _setup(tmp_path, evidence_name=f"{RUN}-{TASK.replace(':', '-')}")
+    state = fixture.inputs["state"]
+    state.task_ids = (TASK,)
+    state.next_action = lambda: CampaignAction("prepare", TASK)
+    persisted = persist_scored_launch(
+        state=state,
+        task_id=TASK,
+        signed_envelope=fixture.launch_envelope,
+        public_keys=fixture.public_keys,
+        evidence_dir=fixture.evidence,
+    )
+    assert persisted.manifest["launch_id"] == LAUNCH
+    assert (fixture.evidence / "native-launch.signed.json").read_bytes() == fixture.launch_envelope
+    with pytest.raises(RuntimeError, match="already|exists"):
+        persist_scored_launch(
+            state=state,
+            task_id=TASK,
+            signed_envelope=fixture.launch_envelope,
+            public_keys=fixture.public_keys,
+            evidence_dir=fixture.evidence,
+        )
+    with pytest.raises(RuntimeError, match="current"):
+        persist_scored_launch(
+            state=state,
+            task_id="arvo:47101",
+            signed_envelope=fixture.launch_envelope,
+            public_keys=fixture.public_keys,
+            evidence_dir=fixture.evidence,
+        )
