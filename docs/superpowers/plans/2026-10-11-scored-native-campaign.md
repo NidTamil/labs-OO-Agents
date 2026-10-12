@@ -138,6 +138,8 @@ Read-only minimum-retention audit (2026-10-12 08:17 UTC): `docker image ls --all
 
 Top-level image retention classification (2026-10-12): 48 `n132/arvo` and eight `cybergym/oss-fuzz` vulnerable/fixed tags correspond to 28 complete task pairs; every one of those 28 IDs belongs to the locked 1,507-task cohort. Ten pairs are the official subset, leaving 18 additional scored-cohort pairs already cached. The host also has multiple historical native-agent, OO-Agent and base/fixture images. Neither ordinary tags nor `docker system df` establishes which non-task layers can be safely removed; keep all 28 task pairs and all extant-container images in the retention analysis. This was a read-only name/ID comparison against `cohort.json`, with no Docker mutation.
 
+Storage topology check (2026-10-12): read-only `lsblk` through the pinned SunChaser route shows one 343,597,383,680-byte virtual disk (`vda`), an ext4 root partition covering nearly all of it, and no spare writable volume; the tiny `vdb` is ISO9660. Thus the observed 8.62 GB free has no already attached alternate disk for task staging. A dry run needs either independently audited safe reclamation on the root disk or explicitly approved added capacity, followed by a measured headroom check. No storage operation was performed.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
