@@ -182,6 +182,8 @@ Collection progress (2026-10-13 09:39 UTC): seven subsequent bounded 15-ref hear
 
 Collection progress (2026-10-13 11:49 UTC): thirteen further bounded 15-ref heartbeat batches completed without another Docker CLI error, reaching 1,615 of 3,014 verified candidate observations. Every invocation reverified the cohort SHA and all prior checkpoints. The earlier exit-1 cause remains unknown; continue at most one 15-ref batch per ten-minute heartbeat and stop on any error. No layers, complete manifest, scored freeze or live scored task resulted.
 
+Collection interruption (2026-10-13 12:19 UTC): the next bounded invocation reverified existing checkpoints and wrote seven new observations, reaching 1,652 of 3,014, then `docker manifest inspect --verbose n132/arvo:23653-vul` exited 1. Docker stderr was captured by the collector but not printed, so the cause is unknown; no 429 or tag-drift claim is justified. Stop collection for this heartbeat and perform only one bounded, stderr-redacted diagnostic inspect after at least ten minutes. Do not run a full collector batch in that diagnostic heartbeat. No layers, complete manifest, scored freeze or live scored task resulted.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
