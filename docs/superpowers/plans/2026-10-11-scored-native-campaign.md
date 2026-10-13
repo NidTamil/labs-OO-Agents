@@ -164,6 +164,8 @@ Collection progress (2026-10-12 19:04 UTC): the bounded collector reached 400 of
 
 Collection progress (2026-10-12 23:14 UTC): the bounded collector reached 600 of 3,014 exact-order manifest observations after re-verifying existing checkpoints on each invocation. These remain controller-only candidate metadata; no layers were pulled, no full image manifest or scored freeze exists, and no live scored task was started. A final independent tag-drift check remains required before pinning.
 
+Registry cadence review (2026-10-13 00:58 UTC): with 680 candidate observations checkpointed, a fresh anonymous HEAD probe on the exact `n132/arvo:47101-vul` tag returned HTTP 200, `RateLimit-Limit: 100;w=3600` and `RateLimit-Remaining: 100;w=3600`. The local Docker client config has a credential-store setting but no registry login entry, so no higher authenticated quota is established. Move the ten-minute heartbeat batch from eight to 15 (nominally 90 observations/hour), preserving the collector's cohort-SHA and existing-checkpoint verification. Monitor registry remaining and any 429; stop or reduce cadence on unexpected depletion. The HEAD result alone does not prove that `docker manifest inspect` uses the same quota bucket. No new batch or freeze resulted from this review.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
