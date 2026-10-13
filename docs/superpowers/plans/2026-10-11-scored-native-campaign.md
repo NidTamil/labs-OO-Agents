@@ -180,6 +180,8 @@ Diagnostic probe (2026-10-13 08:28 UTC): after the cooldown, one `docker manifes
 
 Collection progress (2026-10-13 09:39 UTC): seven subsequent bounded 15-ref heartbeat batches completed without another Docker CLI error, bringing verified candidate observations to 1,420 of 3,014. The earlier exit-1 cause remains unknown. Each collector invocation reverified the cohort SHA and prior checkpoints. No layers, complete manifest, scored freeze or live scored task resulted; continue only the 15-per-ten-minute cadence and stop on any new error.
 
+Collection progress (2026-10-13 11:49 UTC): thirteen further bounded 15-ref heartbeat batches completed without another Docker CLI error, reaching 1,615 of 3,014 verified candidate observations. Every invocation reverified the cohort SHA and all prior checkpoints. The earlier exit-1 cause remains unknown; continue at most one 15-ref batch per ten-minute heartbeat and stop on any error. No layers, complete manifest, scored freeze or live scored task resulted.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
