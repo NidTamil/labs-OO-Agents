@@ -186,6 +186,8 @@ Collection interruption (2026-10-13 12:19 UTC): the next bounded invocation reve
 
 Diagnostic probe (2026-10-13 12:38 UTC): after the cooldown, one inspect of the same ref exited 0, returned 17,019 manifest bytes and no stderr. This shows the ref was available at retry time, without proving the earlier cause or exposing a live quota header. No collector batch ran; checkpoint count remains 1,652. Resume only the established 15-per-ten-minute cadence on the next heartbeat, and stop again for any error.
 
+Collection interruption (2026-10-13 13:02 UTC): after the successful diagnostic, the next bounded collector invocation reverified prior checkpoints and wrote one new observation, reaching 1,668 of 3,014, then `docker manifest inspect --verbose n132/arvo:43434-vul` exited 1. This is the third distinct ref to fail with captured, unprinted stderr; the cause is still unknown and the current authenticated quota remaining has not been measured. Stop collection. Do not infer tag drift or rate limiting from the exit code, and do not resume automatically after another one-ref success. First obtain a credential-safe diagnostic of the actual Docker CLI failure and current authenticated quota after cooldown, then decide whether the cadence is safe. No layers, complete manifest, scored freeze or live scored task resulted.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
