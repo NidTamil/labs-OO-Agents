@@ -172,6 +172,8 @@ Authenticated CLI quota preflight (2026-10-13): the Docker credential helper has
 
 Collection progress (2026-10-13 04:38 UTC): bounded 15-ref heartbeat batches reached 1,010 of 3,014 exact-order manifest observations. Each invocation reverified the cohort SHA and prior checkpoints; no Docker CLI quota errors occurred. These remain candidate metadata only, with no image layers, complete manifest, scored freeze or live scored task. Continue at most 15 per ten-minute heartbeat under the measured authenticated 200/hour bucket, not as an unthrottled loop.
 
+Collection progress (2026-10-13 06:59 UTC): bounded 15-ref heartbeat batches reached 1,220 of 3,014 exact-order manifest observations. Every invocation reverified the cohort SHA and prior checkpoints; no Docker CLI quota error occurred. These are controller-only candidate metadata. No image layers, complete manifest, scored freeze or live scored task resulted. Continue at most 15 per ten-minute heartbeat, with a final independent tag-drift check before pinning.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
