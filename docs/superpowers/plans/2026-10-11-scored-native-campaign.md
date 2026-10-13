@@ -178,6 +178,8 @@ Collection interruption (2026-10-13 08:09 UTC): the 15-ref invocation reverified
 
 Diagnostic probe (2026-10-13 08:28 UTC): after the cooldown, one `docker manifest inspect --verbose` of that same ref exited 0, returned 17,488 manifest bytes, and produced no stderr. This confirms the ref is available at the time of the retry, but does not identify the previous failure or expose a live quota-remaining header. No collector batch ran in this heartbeat; checkpoint count remains 1,315. Resume only the established 15-per-ten-minute cadence on the next heartbeat, stopping again for any error, and do not treat the successful probe as evidence for a faster cadence.
 
+Collection progress (2026-10-13 09:39 UTC): seven subsequent bounded 15-ref heartbeat batches completed without another Docker CLI error, bringing verified candidate observations to 1,420 of 3,014. The earlier exit-1 cause remains unknown. Each collector invocation reverified the cohort SHA and prior checkpoints. No layers, complete manifest, scored freeze or live scored task resulted; continue only the 15-per-ten-minute cadence and stop on any new error.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
