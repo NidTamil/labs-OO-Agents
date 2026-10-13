@@ -190,6 +190,8 @@ Collection interruption (2026-10-13 13:02 UTC): after the successful diagnostic,
 
 Credential-safe diagnostic (2026-10-13 13:19 UTC): after cooldown, an authenticated direct registry GET of that exact ref returned HTTP 200 with `RateLimit-Limit: 200;w=3600` and `RateLimit-Remaining: 199;w=3600`. A single Docker CLI inspect of the same ref then exited 0 with 16,535 manifest bytes and no stderr; a subsequent authenticated HEAD still reported 199 remaining. Credentials, token and manifest bytes were not printed or written. The original exit-1 stderr is unavailable, so the cause remains unknown; coincident GitHub DNS failures make transient network trouble plausible but unproved. This evidence rules out current quota exhaustion and missing tag for this ref, but does not prove the CLI consumed no quota because the direct GET may have warmed its cache. No collector batch ran, and the checkpoint count remains 1,668. Resume only one bounded 15-ref batch on the next heartbeat, stopping again on any error.
 
+Collection progress (2026-10-13 14:59 UTC): ten subsequent bounded 15-ref heartbeat batches completed without another Docker CLI error, reaching 1,818 of 3,014 verified candidate observations. Every invocation reverified the cohort SHA and all prior checkpoints. The earlier three exit-1 causes remain unknown. Continue at most one 15-ref batch per ten-minute heartbeat, stopping on any error. No layers, complete manifest, scored freeze or live scored task resulted.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
