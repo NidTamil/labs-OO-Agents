@@ -174,6 +174,8 @@ Collection progress (2026-10-13 04:38 UTC): bounded 15-ref heartbeat batches rea
 
 Collection progress (2026-10-13 06:59 UTC): bounded 15-ref heartbeat batches reached 1,220 of 3,014 exact-order manifest observations. Every invocation reverified the cohort SHA and prior checkpoints; no Docker CLI quota error occurred. These are controller-only candidate metadata. No image layers, complete manifest, scored freeze or live scored task resulted. Continue at most 15 per ten-minute heartbeat, with a final independent tag-drift check before pinning.
 
+Collection interruption (2026-10-13 08:09 UTC): the 15-ref invocation reverified the existing checkpoints and wrote five new observations, reaching 1,315 of 3,014, then `docker manifest inspect --verbose n132/arvo:42560-fix` exited 1. The collector captures Docker's stderr without printing it, so the cause is not yet established; do not label it a 429 or tag drift without evidence. Stop collection for this heartbeat. Diagnose with one bounded, stderr-redacted probe after the ten-minute interval, inspect the quota/error, and resume only if safe. No layers, complete manifest, scored freeze or live scored task resulted.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
