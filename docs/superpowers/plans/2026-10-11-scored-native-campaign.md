@@ -192,6 +192,8 @@ Credential-safe diagnostic (2026-10-13 13:19 UTC): after cooldown, an authentica
 
 Collection progress (2026-10-13 14:59 UTC): ten subsequent bounded 15-ref heartbeat batches completed without another Docker CLI error, reaching 1,818 of 3,014 verified candidate observations. Every invocation reverified the cohort SHA and all prior checkpoints. The earlier three exit-1 causes remain unknown. Continue at most one 15-ref batch per ten-minute heartbeat, stopping on any error. No layers, complete manifest, scored freeze or live scored task resulted.
 
+Collection progress (2026-10-13 17:08 UTC): thirteen further bounded 15-ref heartbeat batches completed without a Docker CLI error, reaching 2,013 of 3,014 verified candidate observations. Each invocation freshly computed the cohort SHA and reverified prior checkpoints before fetching. The earlier three exit-1 causes remain unknown, and the authenticated 200-GET/hour route does not satisfy the operator's pinned-remaining condition for a continuous loop. Continue at most one 15-ref batch per ten-minute heartbeat, stopping on any error. No layers, complete manifest, scored freeze or live scored task resulted; independently check tag drift before final pinning.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
