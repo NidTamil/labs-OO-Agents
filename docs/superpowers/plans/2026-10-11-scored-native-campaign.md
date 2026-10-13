@@ -170,6 +170,8 @@ Collection and quota checkpoint (2026-10-13 02:14 UTC): eight ten-minute batches
 
 Authenticated CLI quota preflight (2026-10-13): the Docker credential helper has a Docker Hub entry. A direct authenticated registry GET returned `RateLimit-Limit: 200;w=3600` and `RateLimit-Remaining: 191;w=3600`. An inspect of a previously read tag did not move that counter, but a single `docker manifest inspect --verbose` of the next previously unobserved cohort tag, `n132/arvo:66415-fix`, changed authenticated remaining from 191 to 190. This ties fresh collector requests to a measured 200/hour bucket. The user-authorized continuous loop was conditional on the remaining count staying pinned; this preflight disproved that condition, so no back-to-back batch loop was started. Retain 15 per ten-minute heartbeat and monitor failures; no higher rate or scored task was admitted. The fresh-ref probe was metadata-only and did not write a collector checkpoint, so normal ledger-resume will verify and collect it later.
 
+Collection progress (2026-10-13 04:38 UTC): bounded 15-ref heartbeat batches reached 1,010 of 3,014 exact-order manifest observations. Each invocation reverified the cohort SHA and prior checkpoints; no Docker CLI quota errors occurred. These remain candidate metadata only, with no image layers, complete manifest, scored freeze or live scored task. Continue at most 15 per ten-minute heartbeat under the measured authenticated 200/hour bucket, not as an unthrottled loop.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
