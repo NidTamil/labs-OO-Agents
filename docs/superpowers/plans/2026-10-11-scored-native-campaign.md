@@ -200,6 +200,8 @@ Collection progress (2026-10-13 21:48 UTC): fourteen further bounded 15-ref hear
 
 Collection progress (2026-10-14 00:08 UTC): fourteen further bounded 15-ref heartbeat batches completed without a Docker CLI error, reaching 2,643 of 3,014 verified candidate observations. Each invocation freshly computed the cohort SHA and reverified prior checkpoints before fetching. Continue at most one 15-ref batch per ten-minute heartbeat, stopping on any error; the earlier three exit-1 causes remain unknown. No layers, complete manifest, scored freeze or live scored task resulted; independently check tag drift before final pinning.
 
+Collection progress (2026-10-14 02:28 UTC): fourteen further bounded 15-ref heartbeat batches completed without a Docker CLI error, reaching 2,853 of 3,014 verified candidate observations. Each invocation freshly computed the cohort SHA and reverified prior checkpoints before fetching. Continue at most one 15-ref batch per ten-minute heartbeat, stopping on any error; the earlier three exit-1 causes remain unknown. No layers, complete manifest, scored freeze or live scored task resulted; independently check tag drift before final pinning.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
