@@ -204,6 +204,8 @@ Collection progress (2026-10-14 02:28 UTC): fourteen further bounded 15-ref hear
 
 Collection interruption (2026-10-14 03:08 UTC): after five more completed bounded heartbeat batches reached 2,898, the next invocation reverified prior checkpoints and wrote two observations, reaching 2,900 of 3,014, then `docker manifest inspect --verbose cybergym/oss-fuzz:42538131-vul` exited 1. The collector captured but did not print stderr, so this fourth distinct-ref failure's cause is unknown; do not infer 429, missing tag or drift. Collection stopped immediately. After at least ten minutes, perform only one credential-safe, stderr-redacted diagnostic inspect of this ref and check authenticated quota if possible; do not run a collector batch in that diagnostic heartbeat. Resume the established 15-per-ten-minute cadence only after the diagnostic supports it, and stop on any later error. No layers, complete manifest, scored freeze or live scored task resulted.
 
+Diagnostic probe (2026-10-14 03:18 UTC): after more than ten minutes of cooldown, one credential-safe Docker CLI inspect of the same ref exited 0, returned 29,723 manifest bytes and no stderr. The diagnostic printed neither credentials nor raw manifest. The CLI did not expose a live authenticated quota header, and the earlier failure's cause remains unknown. No collector batch ran in this diagnostic heartbeat; checkpoint count remains 2,900. Resume at most one bounded 15-ref batch on the next ten-minute heartbeat, stopping again on any error.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
