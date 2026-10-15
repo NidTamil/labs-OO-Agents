@@ -117,10 +117,30 @@ def fetch_docker_manifest(ref: str) -> bytes:
     """Read public manifest metadata without pulling layers or printing it."""
     result = subprocess.run(
         ["docker", "manifest", "inspect", "--verbose", ref],
-        check=True,
+        check=False,
         capture_output=True,
         timeout=60,
     )
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").lower()
+        if any(
+            term in stderr
+            for term in ("429 too many requests", "http 429", "status code: 429", "rate limit", "toomanyrequests")
+        ):
+            category = "rate_limit"
+        elif any(term in stderr for term in ("unauthorized", "authentication required", "denied")):
+            category = "auth"
+        elif any(term in stderr for term in ("not found", "manifest unknown")):
+            category = "not_found"
+        elif any(term in stderr for term in ("timed out", "timeout")):
+            category = "timeout"
+        else:
+            category = "unknown"
+        raise RuntimeError(
+            f"docker manifest inspect failed: exit_code={result.returncode}; "
+            f"category={category}; stdout_bytes={len(result.stdout)}; "
+            f"stderr_bytes={len(result.stderr)}"
+        )
     return result.stdout
 
 

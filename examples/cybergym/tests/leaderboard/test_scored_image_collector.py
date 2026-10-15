@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 
 import pytest
-from nooa_cybergym.leaderboard.scored_image_collector import collect_batch
+from nooa_cybergym.leaderboard.scored_image_collector import collect_batch, fetch_docker_manifest
 
 from .test_scored_image_registry import _docker_observation
 
@@ -38,3 +39,35 @@ def test_collector_rejects_changed_lock_and_tampered_checkpoint(tmp_path):
     (tmp_path / "n132-arvo-0-vul.json").write_bytes(b"{}")
     with pytest.raises(ValueError, match="observation|manifest"):
         collect_batch(IDS, LOCK, tmp_path, limit=1, fetch=fetch)
+
+
+@pytest.mark.parametrize(
+    ("stderr", "category"),
+    [
+        (b"429 Too Many Requests token=private", "rate_limit"),
+        (b"unauthorized token=private", "auth"),
+        (b"manifest unknown token=private", "not_found"),
+        (b"unexpected n132/arvo:429-vul token=private", "unknown"),
+        (b"unexpected token=private", "unknown"),
+    ],
+)
+def test_fetch_failure_reports_safe_category_without_captured_bytes(monkeypatch, stderr, category):
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 1, b'manifest 429 token=private', stderr)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match=f"category={category}") as error:
+        fetch_docker_manifest("n132/arvo:1-vul")
+    assert "token=private" not in str(error.value)
+    assert "stdout_bytes=26" in str(error.value)
+    assert f"stderr_bytes={len(stderr)}" in str(error.value)
+
+
+def test_fetch_success_does_not_classify_manifest_text_as_rate_limit(monkeypatch):
+    manifest = b'manifest 429 token=private'
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, manifest, b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert fetch_docker_manifest("n132/arvo:1-vul") == manifest
