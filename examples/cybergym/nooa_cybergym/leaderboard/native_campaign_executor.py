@@ -51,12 +51,39 @@ class NativeCampaignTaskExecutor:
         terminal_recovery: Callable[[str, str], bytes | None] | None = None,
     ) -> None:
         task_ids = getattr(state, "task_ids", None)
+        if type(task_ids) is not tuple or len(task_ids) != 1507 or len(set(task_ids)) != 1507:
+            raise ValueError("verified full cohort, worker and pinned UI route required")
+        self._bind_common(
+            state=state,
+            worker=worker,
+            mailbox=mailbox,
+            signer=signer,
+            verifier=verifier,
+            remote_alias=remote_alias,
+            publish_intent=publish_intent,
+            submitter_factory=submitter_factory,
+            terminal_recovery=terminal_recovery,
+        )
+
+    def _bind_common(
+        self,
+        *,
+        state,
+        worker,
+        mailbox,
+        signer,
+        verifier,
+        remote_alias: str,
+        publish_intent: Callable[..., bytes],
+        submitter_factory: Callable[..., Any],
+        terminal_recovery: Callable[[str, str], bytes | None] | None,
+    ) -> None:
+        task_ids = getattr(state, "task_ids", None)
         if (
             type(getattr(state, "run_id", None)) is not str
             or state.run_id != getattr(mailbox, "run_id", None)
             or type(task_ids) is not tuple
-            or len(task_ids) != 1507
-            or len(set(task_ids)) != 1507
+            or len(set(task_ids)) != len(task_ids)
             or not all(type(item) is str and _ID.fullmatch(item) for item in task_ids)
             or not all(
                 callable(getattr(state, name, None))
@@ -72,7 +99,7 @@ class NativeCampaignTaskExecutor:
             or not callable(submitter_factory)
             or (terminal_recovery is not None and not callable(terminal_recovery))
         ):
-            raise ValueError("verified full cohort, worker and pinned UI route required")
+            raise ValueError("verified task scope, worker and pinned UI route required")
         self.state = state
         self.worker = worker
         self.mailbox = mailbox
@@ -189,3 +216,37 @@ class NativeCampaignTaskExecutor:
         if type(receipt) is not bytes or not receipt:
             raise RuntimeError("signed cohort terminal receipt unavailable")
         return receipt
+
+
+class NativeSubsetTaskExecutor(NativeCampaignTaskExecutor):
+    """Native Send adapter restricted to the separately signed official ten."""
+
+    def __init__(
+        self,
+        *,
+        state,
+        worker,
+        mailbox,
+        signer,
+        verifier,
+        remote_alias: str,
+        publish_intent: Callable[..., bytes] = _publish_intent,
+        submitter_factory: Callable[..., Any] = _submitter,
+        terminal_recovery: Callable[[str, str], bytes | None] | None = None,
+    ) -> None:
+        from .subset_dry_run_admission import OFFICIAL_SUBSET_TASK_IDS, SubsetDryRunState
+
+        if type(state) is not SubsetDryRunState or state.task_ids != OFFICIAL_SUBSET_TASK_IDS:
+            raise ValueError("verified subset dry-run state required")
+        state.creation_event()
+        self._bind_common(
+            state=state,
+            worker=worker,
+            mailbox=mailbox,
+            signer=signer,
+            verifier=verifier,
+            remote_alias=remote_alias,
+            publish_intent=publish_intent,
+            submitter_factory=submitter_factory,
+            terminal_recovery=terminal_recovery,
+        )
