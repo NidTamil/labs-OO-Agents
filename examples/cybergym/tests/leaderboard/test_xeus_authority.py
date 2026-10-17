@@ -261,6 +261,23 @@ def test_native_attestation_requires_domain_bound_terminal_receipt(adapter):
     assert authority.attest_signed("terminal_receipt", signed(payload)) is None
 
 
+def test_native_attestation_requires_distinct_subset_scope_and_exposure_fields(adapter):
+    authority, _, _ = adapter
+    payload = {
+        "schema_version": 1,
+        "artifact_kind": "subset_dry_run_admission",
+        "scope": "native_subset_dry_run_level1",
+        "run_id": "subset-1",
+        "epoch": "scored-epoch-1",
+        "task_ids": ["arvo:47101"],
+    }
+    assert authority.attest_signed("subset_dry_run_admission", signed(payload)) is None
+    payload["previously_exposed_task_ids"] = ["arvo:47101"]
+    assert authority.attest_signed("subset_dry_run_admission", signed(payload)) == payload
+    payload["artifact_kind"] = "practice_admission"
+    assert authority.attest_signed("subset_dry_run_admission", signed(payload)) is None
+
+
 def test_created_once_across_run_ids_and_verified_artifact_replay(adapter):
     authority, root, sync_calls = adapter
     event = created_event()

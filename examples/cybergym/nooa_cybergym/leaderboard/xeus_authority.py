@@ -42,6 +42,17 @@ _REQUIRED_SIGNED_KEYS = {
     "practice_admission": frozenset(
         {"schema_version", "artifact_kind", "scope", "run_id", "epoch", "task_ids"}
     ),
+    "subset_dry_run_admission": frozenset(
+        {
+            "schema_version",
+            "artifact_kind",
+            "scope",
+            "run_id",
+            "epoch",
+            "task_ids",
+            "previously_exposed_task_ids",
+        }
+    ),
     "terminal_receipt": frozenset(
         {"schema_version", "artifact_kind", "run_id", "epoch", "task_id", "status"}
     ),
