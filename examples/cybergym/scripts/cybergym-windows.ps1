@@ -14,17 +14,23 @@ param(
     [Parameter(ParameterSetName = 'Close', Mandatory)] [switch] $Close,
     [Parameter(ParameterSetName = 'Reap', Mandatory)] [switch] $Reap,
     [Parameter(ParameterSetName = 'Status', Mandatory)] [switch] $Status,
+    [Parameter(ParameterSetName = 'Preflight', Mandatory)] [switch] $Preflight,
     [Parameter(ParameterSetName = 'Open', Mandatory)]
     [Parameter(ParameterSetName = 'Close', Mandatory)]
+    [Parameter(ParameterSetName = 'Preflight', Mandatory)]
     [Parameter(ParameterSetName = 'Reap', Mandatory)]
     [ValidateNotNullOrEmpty()] [string] $RunId,
     [Parameter(ParameterSetName = 'Open', Mandatory)]
     [Parameter(ParameterSetName = 'Close', Mandatory)]
+    [Parameter(ParameterSetName = 'Preflight', Mandatory)]
     [ValidateNotNullOrEmpty()] [string] $TaskId,
     [Parameter(ParameterSetName = 'Open', Mandatory)]
     [Parameter(ParameterSetName = 'Close', Mandatory)]
+    [Parameter(ParameterSetName = 'Preflight', Mandatory)]
     [ValidateNotNullOrEmpty()] [string] $RemoteHost,
-    [Parameter(ParameterSetName = 'Open', Mandatory)] [ValidateRange(1,65535)] [int] $Port,
+    [Parameter(ParameterSetName = 'Open', Mandatory)]
+    [Parameter(ParameterSetName = 'Preflight', Mandatory)]
+    [ValidateRange(1,65535)] [int] $Port,
     [Parameter(ParameterSetName = 'Open')] [ValidateRange(1,100)] [int] $MaxConcurrent = 1,
     [Parameter(ParameterSetName = 'Open')] [switch] $Force,
     [string] $ProfilesDir = 'D:\GLM\profiles',
@@ -48,6 +54,66 @@ function Get-UserData([string] $key) {
 }
 function Get-TunnelConfig([string] $key) {
     return Join-Path (Split-Path (Get-UserData $key) -Parent) 'tunnel-ssh-config'
+}
+function Assert-PreparedProfile {
+    $key = Get-Key $TaskId
+    $root = Split-Path (Get-UserData $key) -Parent
+    $settingsPath = Join-Path $root 'user-data\User\settings.json'
+    $sshConfigPath = Join-Path $root 'ssh-config'
+    $extensionsPath = Join-Path $root 'extensions'
+    $manifestPath = Join-Path $extensionsPath 'extensions.json'
+    foreach ($path in @($settingsPath, $sshConfigPath, $manifestPath)) {
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or
+            ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Native UI profile prerequisites are missing or linked: $path"
+        }
+    }
+    try {
+        $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json -ErrorAction Stop
+        $manifest = @(Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -ErrorAction Stop)
+        $sshConfig = Get-Content -LiteralPath $sshConfigPath -Raw
+    } catch { throw 'Native UI profile prerequisites are malformed' }
+    $hostFileLine = [regex]::Match($sshConfig, '(?m)^\s+UserKnownHostsFile (.+?)\s*$')
+    $knownHostsPath = $hostFileLine.Groups[1].Value.Trim('"')
+    if (-not $hostFileLine.Success -or -not [IO.Path]::IsPathRooted($knownHostsPath) -or
+        -not (Test-Path -LiteralPath $knownHostsPath -PathType Leaf) -or
+        ((Get-Item -LiteralPath $knownHostsPath).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Native UI profile prerequisites lack the task host key file'
+    }
+    $knownHosts = Get-Content -LiteralPath $knownHostsPath -Raw
+    if ($settings.'remote.SSH.configFile' -ne $sshConfigPath -or
+        $settings.'remote.SSH.remotePlatform'.$RemoteHost -ne 'linux' -or
+        $settings.'extensions.autoUpdate' -ne 'off' -or
+        $settings.'extensions.autoCheckUpdates' -ne $false -or
+        $sshConfig -notmatch "(?m)^Host $([regex]::Escape($RemoteHost))\r?$" -or
+        $sshConfig -notmatch "(?m)^\s+Port $Port\r?$" -or
+        $sshConfig -notmatch '(?m)^\s+StrictHostKeyChecking yes\r?$' -or
+        $knownHosts -notmatch "^\[127\.0\.0\.1\]:$Port ssh-ed25519 ") {
+        throw 'Native UI profile prerequisites differ from the task host'
+    }
+    $required = @(
+        @('ms-vscode-remote.remote-ssh', '0.128.0', 'ms-vscode-remote.remote-ssh-0.128.0'),
+        @('ms-vscode-remote.remote-ssh-edit', '0.87.0', 'ms-vscode-remote.remote-ssh-edit-0.87.0'),
+        @('ms-vscode.remote-explorer', '0.5.0', 'ms-vscode.remote-explorer-0.5.0')
+    )
+    if ($manifest.Count -ne $required.Count) {
+        throw 'Native UI profile prerequisites lack the pinned Remote SSH extensions'
+    }
+    foreach ($expected in $required) {
+        $entry = @($manifest | Where-Object { $_.identifier.id -eq $expected[0] })
+        $packagePath = Join-Path (Join-Path $extensionsPath $expected[2]) 'package.json'
+        if ($entry.Count -ne 1 -or $entry[0].version -ne $expected[1] -or
+            $entry[0].relativeLocation -ne $expected[2] -or
+            -not (Test-Path -LiteralPath $packagePath -PathType Leaf)) {
+            throw "Native UI profile prerequisites lack pinned extension $($expected[0])"
+        }
+        try { $package = Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "Native UI profile prerequisites have malformed extension $($expected[0])" }
+        if ("$($package.publisher).$($package.name)" -ne $expected[0] -or
+            $package.version -ne $expected[1]) {
+            throw "Native UI profile prerequisites differ for extension $($expected[0])"
+        }
+    }
 }
 function Read-Manifest {
     if (-not (Test-Path -LiteralPath $Manifest)) { return @() }
@@ -148,6 +214,7 @@ function Invoke-Close {
 }
 function Invoke-Open {
     if (-not (Test-Path -LiteralPath $CodeExe)) { throw "VS Code not found at $CodeExe" }
+    Assert-PreparedProfile
     $rows = @(Read-Manifest)
     $key = Get-Key $TaskId
     if (@($rows | Where-Object { $_.taskKey -eq $key }).Count) {
@@ -220,6 +287,7 @@ function Show-Status {
 }
 switch ($PSCmdlet.ParameterSetName) {
     'Open' { Invoke-Open }
+    'Preflight' { Assert-PreparedProfile; Write-Host 'Native UI profile prerequisites verified.' }
     'Close' { Invoke-Close }
     'Reap' { Invoke-Reap }
     'Status' { Show-Status }
