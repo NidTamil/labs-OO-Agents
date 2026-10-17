@@ -80,6 +80,8 @@ def build_container_kwargs(
     native_trust_file: Path | None = None,
 ) -> dict[str, Any]:
     """Construct the reviewed Docker SDK run configuration without side effects."""
+    from docker.types import LogConfig
+
     if type(ssh_port) is not int or not 1 <= ssh_port <= 65535:
         raise ValueError("ssh_port must be an integer between 1 and 65535")
     for name, value in (
@@ -146,6 +148,10 @@ def build_container_kwargs(
         "security_opt": ["no-new-privileges:true"],
         "pids_limit": 2048,
         "mem_limit": "16g",
+        "log_config": LogConfig(
+            type=LogConfig.types.JSON,
+            config={"max-size": "10m", "max-file": "3"},
+        ),
         "tmpfs": {
             "/tmp": "rw,noexec,nosuid,size=4g",
             "/run": "rw,nosuid,size=64m",

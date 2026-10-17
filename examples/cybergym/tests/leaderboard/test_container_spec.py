@@ -128,6 +128,20 @@ def test_container_has_only_reviewed_host_interfaces(tmp_path: Path) -> None:
     assert "CYBERGYM_TASK_TOKEN" not in kwargs["environment"]
 
 
+def test_task_container_docker_logs_are_bounded_on_root(tmp_path: Path) -> None:
+    kwargs = build_container_kwargs(
+        image="agent:test",
+        workspace=tmp_path / "workspace",
+        output=tmp_path / "output",
+        network="isolated",
+        ssh_port=22222,
+    )
+    assert kwargs["log_config"] == {
+        "Type": "json-file",
+        "Config": {"max-size": "10m", "max-file": "3"},
+    }
+
+
 @pytest.mark.parametrize("ssh_port", [0, -1, 65536, True])
 def test_rejects_invalid_ssh_port(tmp_path: Path, ssh_port: object) -> None:
     with pytest.raises(ValueError, match="ssh_port"):
