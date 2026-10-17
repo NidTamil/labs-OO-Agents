@@ -8,6 +8,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import re
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -143,6 +144,7 @@ def test_independent_recon_uses_budgeted_real_controller_and_readonly_actions(se
     assert '"action":"CAPABILITY"' not in protocol
     assert '"action":"local_read"' in protocol
     assert '"path":"/workspace/src"' in protocol
+    assert re.search(r"operation=search[^;]+required path", protocol)
     assert all(
         request["reasoning_effort"] == "max" and request["thinking"] == {"type": "enabled"}
         for request in transport.calls

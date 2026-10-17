@@ -49,10 +49,10 @@ _PROTOCOL = (
     "Use an action name exactly as listed below; placeholder action names are invalid. "
     "First discover the supplied source with "
     '{"action":"local_read","arguments":{"operation":"list","path":"/workspace/src","max_entries":100}}. '
-    "All local_read paths must stay under /workspace/src. "
+    "Every local_read action, including search, must include an absolute path under /workspace/src. "
     "Available actions: local_read (path is an absolute current-task source path; "
     "operation=read with optional start_line>=1,max_lines<=2000; operation=list with optional "
-    "after filename,max_entries<=1000; operation=search with literal query,max_results<=200); "
+    "after filename,max_entries<=1000; operation=search with required path, literal query,max_results<=200); "
     "clangd_read (operation=document_symbols with path, or hover/definition/references with "
     "path,line,character; LSP positions start at zero); "
     "gbrain_recall and gbrain_search (arguments: query). Tool observations and task data are "
