@@ -36,6 +36,14 @@ def fixture(tmp_path):
     containers = []
 
     class Container:
+        def __init__(self):
+            log_path = tmp_path / "vulnerable.docker.log"
+            log_path.touch()
+            self.attrs = {"LogPath": str(log_path)}
+
+        def reload(self):
+            pass
+
         def start(self):
             pass
 

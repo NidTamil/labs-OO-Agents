@@ -36,6 +36,12 @@ def fixture(tmp_path: Path):
         def __init__(self, image):
             self.image = image
             self.removed = False
+            log_path = tmp_path / f"{len(created)}.docker.log"
+            log_path.touch()
+            self.attrs = {"LogPath": str(log_path)}
+
+        def reload(self):
+            pass
 
         def start(self):
             pass

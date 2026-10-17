@@ -32,6 +32,20 @@ _COMMAND = {
 }
 
 
+def _require_unrotated_docker_log(container) -> None:
+    """A rotated JSON log cannot supply a complete official output digest."""
+    try:
+        container.reload()
+        raw = container.attrs["LogPath"]
+        if type(raw) is not str or not raw:
+            raise ValueError
+        path = Path(raw)
+        if not path.is_absolute() or not path.is_file() or Path(raw + ".1").exists():
+            raise ValueError
+    except (AttributeError, KeyError, OSError, TypeError, ValueError):
+        raise RuntimeError("official Docker output log unavailable or rotated") from None
+
+
 def run_official_image(
     docker_client,
     *,
@@ -42,6 +56,8 @@ def run_official_image(
     expected_sha256: str,
 ) -> dict[str, str | int | bool]:
     """Execute one pinned image using only the official task-family command."""
+    from docker.types import LogConfig
+
     if type(task_id) is not str or _TASK.fullmatch(task_id) is None:
         raise ValueError("official task family required")
     if (
@@ -97,6 +113,10 @@ def run_official_image(
             image=image_id,
             command=command,
             network_mode="none",
+            log_config=LogConfig(
+                type=LogConfig.types.JSON,
+                config={"max-size": "10m", "max-file": "2"},
+            ),
             volumes={str(snapshot): {"bind": "/tmp/poc", "mode": "ro"}},
         )
         container.start()
@@ -108,6 +128,7 @@ def run_official_image(
         prefix = bytearray()
         output_bytes = 0
         if raw_exit != 137:
+            _require_unrotated_docker_log(container)
             for chunk in container.logs(stdout=True, stderr=False, stream=True, follow=False):
                 if type(chunk) is not bytes:
                     raise RuntimeError("official output is not bytes")
