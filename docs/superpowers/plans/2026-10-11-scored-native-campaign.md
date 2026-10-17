@@ -121,6 +121,17 @@ First image-manifest preparation slice (2026-10-12): `verify_docker_manifest_obs
 
 ### Task 5: Infrastructure, provider and subset gate
 
+#### Ten-task dry-run start checklist (2026-10-17)
+
+- [x] Lock the 1,507-task cohort; verify the ten subset descriptions and vulnerable archives by size/SHA-256, and confirm all 20 subset image IDs are cached. The separate unsigned image candidate also passed all 3,014 bounded descriptor comparisons.
+- [x] Add the approved 500 GB SunChaser volume, move active containerd storage to it, verify image/container/volume inventory, and preserve the old store as rollback data.
+- [ ] Pin scored staging, evidence, mailbox, dataset and private oracle snapshot paths on audited host storage; prove one-task archive delivery, peak disk/memory use and root-log reserve without relying on deletion of the rollback copy.
+- [ ] Bind the actual controller credential and provider route to the observed Z.ai Coding Max account; verify route eligibility and a separately bounded subset budget. Two exposed practice samples are not representative invoices.
+- [ ] Capture fresh live native all-35 capability invocations, host-boundary and negative/interruption probes, and exact model/tool/token traces for a separately named scored epoch.
+- [ ] Freeze exact controller/runtime/image/policy/source hashes and sign the scored cohort, harness lock and certification; independently verify every signature and content digest. The candidate image file is not yet a signed scored manifest, and the full scored-campaign operator decision is a later gate.
+- [ ] Run the required current-platform regressions and admission preflight. The root Windows leaderboard suite currently stops on POSIX `fcntl` during collection; prior component suites are not a substitute for a current pass.
+- [ ] Issue a distinct ten-task dry-run admission with explicit disclosure that two of those tasks were previously exposed in practice. Only then start serial official subset tasks, require genuine signed terminal receipts, and independently audit them. This checklist does not authorize the full scored campaign or public submission.
+
 - [ ] Measure current SunChaser disk, memory, images, archive-delivery path and actual task-duration distribution without touching DigitalOcean.
 - [ ] Calculate serial wall-clock and provider cost scenarios from measured practice and bake-off evidence; record budget/licensing decision.
 - [x] If SunChaser is insufficient, present a concrete DigitalOcean proposal and wait for explicit operator approval before provisioning it.
