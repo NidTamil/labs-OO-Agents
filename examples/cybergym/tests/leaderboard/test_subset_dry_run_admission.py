@@ -6,9 +6,11 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from nooa_cybergym.leaderboard.campaign import CampaignAction
 from nooa_cybergym.leaderboard.subset_dry_run_admission import (
     OFFICIAL_SUBSET_TASK_IDS,
     PREVIOUSLY_EXPOSED_TASK_IDS,
+    bind_subset_dry_run_state,
     preview_subset_dry_run_admission,
 )
 
@@ -26,6 +28,27 @@ class _Authority:
     def create_campaign_once(self, *_args, **_kwargs):
         self.create_calls += 1
         raise AssertionError("preview must not create a ledger")
+
+
+class _LedgerAuthority(_Authority):
+    def __init__(self, payload: dict) -> None:
+        super().__init__(payload)
+        self.events: list[dict] = []
+        self.receipts: dict[bytes, dict] = {}
+
+    def attest_signed(self, kind: str, envelope: bytes):
+        if kind == "terminal_receipt":
+            return deepcopy(self.receipts.get(envelope))
+        return super().attest_signed(kind, envelope)
+
+    def read_verified_events(self, _root, _run_id):
+        return tuple(deepcopy(self.events))
+
+    def append_event(self, _root, _run_id, event, expected_revision):
+        if expected_revision != len(self.events):
+            return False
+        self.events.append(dict(event))
+        return True
 
 
 def _payload() -> dict:
@@ -89,3 +112,64 @@ def test_preview_rejects_changed_scope_order_disclosure_or_signed_pin(tmp_path, 
     with pytest.raises(RuntimeError, match="subset dry-run admission"):
         _preview(authority, tmp_path)
     assert authority.create_calls == 0
+
+
+def test_subset_state_replays_exact_ten_signed_terminals_without_creating_ledger(tmp_path):
+    authority = _LedgerAuthority(_payload())
+    preview = _preview(authority, tmp_path)
+    state = bind_subset_dry_run_state(preview, authority=authority)
+    assert authority.events == []
+    with pytest.raises(RuntimeError, match="creation"):
+        state.next_action()
+    authority.events.append(state.creation_event())
+    for number, task_id in enumerate(OFFICIAL_SUBSET_TASK_IDS, start=1):
+        assert state.next_action() == CampaignAction("prepare", task_id)
+        state.mark_prepared(task_id)
+        request_id = f"request-{number}"
+        state.mark_started(task_id, request_id=request_id)
+        assert len(state.started_event_sha256(task_id, request_id)) == 64
+        receipt = f"signed-terminal-{number}".encode()
+        authority.receipts[receipt] = {
+            "schema_version": 1,
+            "artifact_kind": "terminal_receipt",
+            "run_id": state.run_id,
+            "epoch": state.epoch,
+            "task_id": task_id,
+            "status": "timeout",
+            "evidence_sha256": "e" * 64,
+        }
+        state.mark_terminal(task_id, receipt)
+    assert state.next_action() == CampaignAction("complete", None)
+    assert authority.create_calls == 0
+
+
+def test_subset_state_rejects_changed_admission_and_out_of_order_transition(tmp_path):
+    authority = _LedgerAuthority(_payload())
+    state = bind_subset_dry_run_state(_preview(authority, tmp_path), authority=authority)
+    authority.events.append(state.creation_event())
+    with pytest.raises(RuntimeError, match="task order"):
+        state.mark_prepared(OFFICIAL_SUBSET_TASK_IDS[1])
+    authority.payload["task_ids"] = list(reversed(OFFICIAL_SUBSET_TASK_IDS))
+    with pytest.raises(RuntimeError, match="admission"):
+        state.next_action()
+
+
+def test_subset_state_rejects_receipt_for_another_task(tmp_path):
+    authority = _LedgerAuthority(_payload())
+    state = bind_subset_dry_run_state(_preview(authority, tmp_path), authority=authority)
+    authority.events.append(state.creation_event())
+    task_id = OFFICIAL_SUBSET_TASK_IDS[0]
+    state.mark_prepared(task_id)
+    state.mark_started(task_id, request_id="request-1")
+    authority.receipts[b"other-task-receipt"] = {
+        "schema_version": 1,
+        "artifact_kind": "terminal_receipt",
+        "run_id": state.run_id,
+        "epoch": state.epoch,
+        "task_id": OFFICIAL_SUBSET_TASK_IDS[1],
+        "status": "timeout",
+        "evidence_sha256": "e" * 64,
+    }
+    with pytest.raises(RuntimeError, match="identity"):
+        state.mark_terminal(task_id, b"other-task-receipt")
+    assert state.next_action() == CampaignAction("observe_started", task_id)
