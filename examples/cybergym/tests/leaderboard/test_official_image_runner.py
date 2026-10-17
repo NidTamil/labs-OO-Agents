@@ -50,6 +50,7 @@ def test_scored_runner_uses_official_family_command_and_isolation(tmp_path, task
     candidate.write_bytes(b"candidate")
     private = tmp_path / "private"
     private.mkdir()
+    private.chmod(0o700)
     container = FakeContainer()
     calls = []
 
@@ -103,6 +104,7 @@ def test_scored_runner_maps_timeout_and_rejects_candidate_drift(tmp_path):
     candidate.write_bytes(b"candidate")
     private = tmp_path / "private"
     private.mkdir()
+    private.chmod(0o700)
     container = FakeContainer(exit_code=137)
     client = SimpleNamespace(
         images=SimpleNamespace(get=lambda _: SimpleNamespace(id=IMAGE)),

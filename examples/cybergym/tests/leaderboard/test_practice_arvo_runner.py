@@ -54,6 +54,7 @@ def test_arvo_runner_uses_pinned_image_no_network_and_removes_container(tmp_path
     candidate.write_bytes(b"candidate")
     private = tmp_path / "private"
     private.mkdir()
+    private.chmod(0o700)
     container = FakeContainer()
     calls = []
 
@@ -93,6 +94,7 @@ def test_arvo_runner_maps_official_timeout_and_rejects_changed_candidate(tmp_pat
     candidate.write_bytes(b"candidate")
     private = tmp_path / "private"
     private.mkdir()
+    private.chmod(0o700)
     container = FakeContainer(exit_code=137, output=b"timeout")
     client = SimpleNamespace(
         images=SimpleNamespace(get=lambda _: SimpleNamespace(id=IMAGE)),
