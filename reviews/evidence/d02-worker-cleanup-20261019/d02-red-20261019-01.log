@@ -1,0 +1,69 @@
+warning: `--no-sync` has no effect when used alongside `--no-project`
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_signed_scored_launch_previews_then_preflights_then_admits_then_runs ___
+
+tmp_path = PosixPath('/tmp/codex-d02-20261019/pytest-red/test_signed_scored_launch_prev0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f9d57cfda70>
+
+    def test_signed_scored_launch_previews_then_preflights_then_admits_then_runs(
+        tmp_path: Path, monkeypatch
+    ):
+        import nooa_cybergym.leaderboard.scored_campaign_inputs as inputs
+>       import nooa_cybergym.leaderboard.scored_worker_preflight as worker
+
+test_scored_campaign_cli.py:32: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+    """Bind scored worker dependencies before creating the durable campaign ledger.
+    
+    The resulting plan has no task-dispatch method. A later binding step must use the
+    admitted state and repeat the signed checks before constructing a live worker.
+    """
+    
+    from __future__ import annotations
+    
+    import re
+    from dataclasses import dataclass
+    from pathlib import Path
+    
+>   import docker
+E   ModuleNotFoundError: No module named 'docker'
+
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/scored_worker_preflight.py:15: ModuleNotFoundError
+_________ test_signed_scored_launch_aborts_worker_after_runner_failure _________
+
+tmp_path = PosixPath('/tmp/codex-d02-20261019/pytest-red/test_signed_scored_launch_abor0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f9d57cfd810>
+
+    def test_signed_scored_launch_aborts_worker_after_runner_failure(tmp_path: Path, monkeypatch):
+        import nooa_cybergym.leaderboard.scored_campaign_inputs as inputs
+>       import nooa_cybergym.leaderboard.scored_worker_preflight as worker
+
+test_scored_campaign_cli.py:88: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+    """Bind scored worker dependencies before creating the durable campaign ledger.
+    
+    The resulting plan has no task-dispatch method. A later binding step must use the
+    admitted state and repeat the signed checks before constructing a live worker.
+    """
+    
+    from __future__ import annotations
+    
+    import re
+    from dataclasses import dataclass
+    from pathlib import Path
+    
+>   import docker
+E   ModuleNotFoundError: No module named 'docker'
+
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/scored_worker_preflight.py:15: ModuleNotFoundError
+=========================== short test summary info ============================
+FAILED test_scored_campaign_cli.py::test_signed_scored_launch_previews_then_preflights_then_admits_then_runs
+FAILED test_scored_campaign_cli.py::test_signed_scored_launch_aborts_worker_after_runner_failure
+2 failed, 3 deselected in 0.37s

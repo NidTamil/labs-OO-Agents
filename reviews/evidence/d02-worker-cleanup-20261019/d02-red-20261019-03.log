@@ -1,0 +1,117 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_signed_scored_launch_previews_then_preflights_then_admits_then_runs ___
+
+tmp_path = PosixPath('/tmp/codex-d02-20261019/pytest-red3/test_signed_scored_launch_prev0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fce04991940>
+
+    def test_signed_scored_launch_previews_then_preflights_then_admits_then_runs(
+        tmp_path: Path, monkeypatch
+    ):
+        import nooa_cybergym.leaderboard.scored_campaign_inputs as inputs
+        import nooa_cybergym.leaderboard.scored_worker_preflight as worker
+    
+        calls = []
+        preview = SimpleNamespace(inputs=object(), authority=object())
+        plan = object()
+        admitted = object()
+        binding = SimpleNamespace(
+            state=admitted,
+            executor=object(),
+            ui=object(),
+            worker=SimpleNamespace(abort=lambda: calls.append("abort")),
+        )
+    
+        def preview_spy(**kwargs):
+            calls.append("preview")
+            return preview
+    
+        def preflight_spy(value, path):
+            assert value is preview
+            calls.append("preflight")
+            return plan
+    
+        def admit_spy(value, **kwargs):
+            assert value is preview.inputs
+            assert kwargs["authority"] is preview.authority
+            calls.append("admit")
+            return admitted
+    
+        def bind_spy(value, state):
+            assert value is plan and state is admitted
+            calls.append("bind")
+            return binding
+    
+        def run_spy(state, executor, ui):
+            assert (state, executor, ui) == (admitted, binding.executor, binding.ui)
+            calls.append("run")
+    
+        monkeypatch.setattr(inputs, "preview_signed_campaign", preview_spy)
+        monkeypatch.setattr(inputs, "admit_signed_campaign", admit_spy)
+        monkeypatch.setattr(worker, "prepare_previewed_scored_worker", preflight_spy)
+        monkeypatch.setattr(worker, "bind_admitted_scored_worker", bind_spy)
+        monkeypatch.setattr(campaign_runner, "run_campaign", run_spy)
+    
+        campaign_runner.launch_signed_scored_campaign(
+            input_root=tmp_path,
+            trust_registry=tmp_path / "trust.json",
+            trust_sha256="a" * 64,
+            run_id="run-1",
+            evidence_root=tmp_path,
+            launch_config=tmp_path / "launch.json",
+        )
+>       assert calls == ["preview", "preflight", "admit", "bind", "run", "abort"]
+E       AssertionError: assert ['preview', '...'bind', 'run'] == ['preview', '...run', 'abort']
+E         
+E         Right contains one more item: 'abort'
+E         Use -v to get more diff
+
+test_scored_campaign_cli.py:83: AssertionError
+_________ test_signed_scored_launch_aborts_worker_after_runner_failure _________
+
+tmp_path = PosixPath('/tmp/codex-d02-20261019/pytest-red3/test_signed_scored_launch_abor0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fce049916e0>
+
+    def test_signed_scored_launch_aborts_worker_after_runner_failure(tmp_path: Path, monkeypatch):
+        import nooa_cybergym.leaderboard.scored_campaign_inputs as inputs
+        import nooa_cybergym.leaderboard.scored_worker_preflight as worker
+    
+        calls = []
+        preview = SimpleNamespace(inputs=object(), authority=object())
+        admitted = object()
+        binding = SimpleNamespace(
+            state=admitted,
+            executor=object(),
+            ui=object(),
+            worker=SimpleNamespace(abort=lambda: calls.append("abort")),
+        )
+        monkeypatch.setattr(inputs, "preview_signed_campaign", lambda **kwargs: preview)
+        monkeypatch.setattr(worker, "prepare_previewed_scored_worker", lambda *args: object())
+        monkeypatch.setattr(inputs, "admit_signed_campaign", lambda *args, **kwargs: admitted)
+        monkeypatch.setattr(worker, "bind_admitted_scored_worker", lambda *args: binding)
+    
+        def fail_run(*args):
+            calls.append("run")
+            raise RuntimeError("injected campaign failure")
+    
+        monkeypatch.setattr(campaign_runner, "run_campaign", fail_run)
+        with pytest.raises(RuntimeError, match="injected campaign failure"):
+            campaign_runner.launch_signed_scored_campaign(
+                input_root=tmp_path,
+                trust_registry=tmp_path / "trust.json",
+                trust_sha256="a" * 64,
+                run_id="run-1",
+                evidence_root=tmp_path,
+                launch_config=tmp_path / "launch.json",
+            )
+>       assert calls == ["run", "abort"]
+E       AssertionError: assert ['run'] == ['run', 'abort']
+E         
+E         Right contains one more item: 'abort'
+E         Use -v to get more diff
+
+test_scored_campaign_cli.py:118: AssertionError
+=========================== short test summary info ============================
+FAILED test_scored_campaign_cli.py::test_signed_scored_launch_previews_then_preflights_then_admits_then_runs
+FAILED test_scored_campaign_cli.py::test_signed_scored_launch_aborts_worker_after_runner_failure
+2 failed, 3 deselected in 0.63s

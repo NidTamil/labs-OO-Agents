@@ -1,0 +1,16 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2
+configfile: pyproject.toml
+plugins: timeout-2.4.0, asyncio-1.4.0, cov-7.1.0, rerunfailures-16.4, anyio-4.14.1
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 13 items
+
+../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py . [  7%]
+............                                                             [100%]
+
+---- generated xml file: /tmp/codex-d02-20261019/d02-runner-20261019-02.xml ----
+============================== 13 passed in 1.04s ==============================

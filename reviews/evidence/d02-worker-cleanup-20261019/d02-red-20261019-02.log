@@ -1,0 +1,84 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_signed_scored_launch_previews_then_preflights_then_admits_then_runs ___
+
+tmp_path = PosixPath('/tmp/codex-d02-20261019/pytest-red2/test_signed_scored_launch_prev0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f74df0e9a70>
+
+    def test_signed_scored_launch_previews_then_preflights_then_admits_then_runs(
+        tmp_path: Path, monkeypatch
+    ):
+        import nooa_cybergym.leaderboard.scored_campaign_inputs as inputs
+>       import nooa_cybergym.leaderboard.scored_worker_preflight as worker
+
+test_scored_campaign_cli.py:32: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/scored_worker_preflight.py:28: in <module>
+    from .scored_capability_admission import verify_scored_capability_admission
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/scored_capability_admission.py:18: in <module>
+    from .capability_runtime import SYNTHETIC_SCOPE
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/capability_runtime.py:37: in <module>
+    from .memory_runtime import TrustedMemoryCaller
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+    """Signed native GBrain discovery and the controller's read-only HTTP/MCP route."""
+    
+    from __future__ import annotations
+    
+    import hashlib
+    import json
+    import re
+    from collections.abc import Callable, Mapping, Sequence
+    from dataclasses import asdict, dataclass
+    from datetime import UTC, datetime
+    from typing import Any
+    from uuid import uuid4
+    
+>   from xeus_cybergym.canonical import canonical_json
+E   ModuleNotFoundError: No module named 'xeus_cybergym'
+
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/memory_runtime.py:16: ModuleNotFoundError
+_________ test_signed_scored_launch_aborts_worker_after_runner_failure _________
+
+tmp_path = PosixPath('/tmp/codex-d02-20261019/pytest-red2/test_signed_scored_launch_abor0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f74df0e9810>
+
+    def test_signed_scored_launch_aborts_worker_after_runner_failure(tmp_path: Path, monkeypatch):
+        import nooa_cybergym.leaderboard.scored_campaign_inputs as inputs
+>       import nooa_cybergym.leaderboard.scored_worker_preflight as worker
+
+test_scored_campaign_cli.py:88: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/scored_worker_preflight.py:28: in <module>
+    from .scored_capability_admission import verify_scored_capability_admission
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/scored_capability_admission.py:18: in <module>
+    from .capability_runtime import SYNTHETIC_SCOPE
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/capability_runtime.py:37: in <module>
+    from .memory_runtime import TrustedMemoryCaller
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+    # SPDX-License-Identifier: Apache-2.0
+    """Signed native GBrain discovery and the controller's read-only HTTP/MCP route."""
+    
+    from __future__ import annotations
+    
+    import hashlib
+    import json
+    import re
+    from collections.abc import Callable, Mapping, Sequence
+    from dataclasses import asdict, dataclass
+    from datetime import UTC, datetime
+    from typing import Any
+    from uuid import uuid4
+    
+>   from xeus_cybergym.canonical import canonical_json
+E   ModuleNotFoundError: No module named 'xeus_cybergym'
+
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/nooa_cybergym/leaderboard/memory_runtime.py:16: ModuleNotFoundError
+=========================== short test summary info ============================
+FAILED test_scored_campaign_cli.py::test_signed_scored_launch_previews_then_preflights_then_admits_then_runs
+FAILED test_scored_campaign_cli.py::test_signed_scored_launch_aborts_worker_after_runner_failure
+2 failed, 3 deselected in 0.64s

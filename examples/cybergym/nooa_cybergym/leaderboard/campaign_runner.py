@@ -350,7 +350,10 @@ def launch_signed_scored_campaign(
         resume=resume,
     )
     binding = bind_admitted_scored_worker(plan, state)
-    run_campaign(binding.state, binding.executor, binding.ui)
+    try:
+        run_campaign(binding.state, binding.executor, binding.ui)
+    finally:
+        binding.worker.abort()
 
 
 def main(argv: list[str] | None = None) -> int:

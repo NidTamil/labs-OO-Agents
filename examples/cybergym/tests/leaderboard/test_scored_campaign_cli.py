@@ -35,7 +35,12 @@ def test_signed_scored_launch_previews_then_preflights_then_admits_then_runs(
     preview = SimpleNamespace(inputs=object(), authority=object())
     plan = object()
     admitted = object()
-    binding = SimpleNamespace(state=admitted, executor=object(), ui=object())
+    binding = SimpleNamespace(
+        state=admitted,
+        executor=object(),
+        ui=object(),
+        worker=SimpleNamespace(abort=lambda: calls.append("abort")),
+    )
 
     def preview_spy(**kwargs):
         calls.append("preview")
@@ -75,7 +80,42 @@ def test_signed_scored_launch_previews_then_preflights_then_admits_then_runs(
         evidence_root=tmp_path,
         launch_config=tmp_path / "launch.json",
     )
-    assert calls == ["preview", "preflight", "admit", "bind", "run"]
+    assert calls == ["preview", "preflight", "admit", "bind", "run", "abort"]
+
+
+def test_signed_scored_launch_aborts_worker_after_runner_failure(tmp_path: Path, monkeypatch):
+    import nooa_cybergym.leaderboard.scored_campaign_inputs as inputs
+    import nooa_cybergym.leaderboard.scored_worker_preflight as worker
+
+    calls = []
+    preview = SimpleNamespace(inputs=object(), authority=object())
+    admitted = object()
+    binding = SimpleNamespace(
+        state=admitted,
+        executor=object(),
+        ui=object(),
+        worker=SimpleNamespace(abort=lambda: calls.append("abort")),
+    )
+    monkeypatch.setattr(inputs, "preview_signed_campaign", lambda **kwargs: preview)
+    monkeypatch.setattr(worker, "prepare_previewed_scored_worker", lambda *args: object())
+    monkeypatch.setattr(inputs, "admit_signed_campaign", lambda *args, **kwargs: admitted)
+    monkeypatch.setattr(worker, "bind_admitted_scored_worker", lambda *args: binding)
+
+    def fail_run(*args):
+        calls.append("run")
+        raise RuntimeError("injected campaign failure")
+
+    monkeypatch.setattr(campaign_runner, "run_campaign", fail_run)
+    with pytest.raises(RuntimeError, match="injected campaign failure"):
+        campaign_runner.launch_signed_scored_campaign(
+            input_root=tmp_path,
+            trust_registry=tmp_path / "trust.json",
+            trust_sha256="a" * 64,
+            run_id="run-1",
+            evidence_root=tmp_path,
+            launch_config=tmp_path / "launch.json",
+        )
+    assert calls == ["run", "abort"]
 
 
 def test_scored_cli_resumes_only_when_explicitly_requested(tmp_path: Path, monkeypatch):

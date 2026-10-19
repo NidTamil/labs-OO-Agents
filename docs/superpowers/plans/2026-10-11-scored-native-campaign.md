@@ -361,6 +361,8 @@ SunChaser access decision gate (2026-10-17 23:45 UTC): a read-only attempt to in
 
 Scored worker cleanup audit (2026-10-18 00:05 UTC): `launch_signed_scored_campaign` binds a `CohortNativeWorker` and calls `run_campaign` without the `finally: binding.worker.abort()` used by the practice CLI. A runner failure could therefore leave the active worker alive after UI cleanup. An uncommitted regression in `test_scored_campaign_cli.py` now expects abort after both success and an injected runner failure; Ruff check and format passed. The root Windows pytest run stopped during collection on missing POSIX `fcntl`, so the required Linux red/green result did not yet exist. Preserve the test change; do not implement or commit the production fix, advance the runtime source pin, or claim the cleanup gate until the red test is observed on Linux and the fix is verified there. No scored task or model request was made for this audit.
 
+Scored worker cleanup follow-up (2026-10-19): the existing regression failed for the intended missing-abort behavior on Linux (`d02-red-20261019-03`, two failures). A `try/finally` around `run_campaign` now calls `binding.worker.abort()` after both normal return and runner failure. The five scored CLI tests passed (`d02-green-20261019-01`), as did 13 related runner tests (`d02-runner-20261019-02`); see `reviews/evidence/d02-worker-cleanup-20261019/README.md` and its logs. This is code-test evidence submitted for D-02, pending watcher verification. The runtime source pin remains `a3805ca1`; these unit tests were not a scored or calibration run.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.

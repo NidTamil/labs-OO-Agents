@@ -1,0 +1,225 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2
+configfile: pyproject.toml
+plugins: timeout-2.4.0, asyncio-1.4.0, cov-7.1.0, rerunfailures-16.4, anyio-4.14.1
+timeout: 300.0s
+timeout method: signal
+timeout func_only: False
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 13 items
+
+../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py . [  7%]
+.FF.FFFFFFF.                                                             [100%]
+
+=================================== FAILURES ===================================
+____________ test_runner_drives_one_task_and_owns_window_lifecycle _____________
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:305: in test_runner_drives_one_task_and_owns_window_lifecycle
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+______ test_runner_is_serial_across_two_tasks_without_overlapping_windows ______
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:335: in test_runner_is_serial_across_two_tasks_without_overlapping_windows
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+_______________ test_runner_reaps_and_reraises_when_a_task_fails _______________
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:431: in test_runner_reaps_and_reraises_when_a_task_fails
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+______________________ test_runner_requires_serial_policy ______________________
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:448: in test_runner_requires_serial_policy
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+_____________ test_runner_reaps_if_admitted_action_selector_fails ______________
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:454: in test_runner_reaps_if_admitted_action_selector_fails
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+___ test_runner_does_not_submit_when_started_intent_append_is_unacknowledged ___
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:467: in test_runner_does_not_submit_when_started_intent_append_is_unacknowledged
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+__________ test_runner_resumes_started_intent_with_ledger_request_id ___________
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:488: in test_runner_resumes_started_intent_with_ledger_request_id
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+___ test_runner_replays_verified_started_terminal_without_second_ui_or_send ____
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:510: in test_runner_replays_verified_started_terminal_without_second_ui_or_send
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+________ test_runner_reaps_and_refuses_bad_recovered_terminal_before_ui ________
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:539: in test_runner_reaps_and_refuses_bad_recovered_terminal_before_ui
+    state, authority = _state(tmp_path)
+                       ^^^^^^^^^^^^^^^^
+/mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py:218: in _state
+    return check_go_live(**inputs), authority
+           ^^^^^^^^^^^^^^^^^^^^^^^
+nooa_cybergym/leaderboard/campaign.py:483: in check_go_live
+    state = preview_go_live(
+nooa_cybergym/leaderboard/campaign.py:401: in preview_go_live
+    frozen_policy = json.loads(_CONFIG.read_text())
+                               ^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:546: in read_text
+    return PathBase.read_text(self, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_abc.py:632: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu/lib/python3.13/pathlib/_local.py:537: in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/tmp/codex-d02-20261019/leaderboard/config/campaign-policy.json'
+---- generated xml file: /tmp/codex-d02-20261019/d02-runner-20261019-01.xml ----
+=========================== short test summary info ============================
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_drives_one_task_and_owns_window_lifecycle
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_is_serial_across_two_tasks_without_overlapping_windows
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_reaps_and_reraises_when_a_task_fails
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_requires_serial_policy
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_reaps_if_admitted_action_selector_fails
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_does_not_submit_when_started_intent_append_is_unacknowledged
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_resumes_started_intent_with_ledger_request_id
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_replays_verified_started_terminal_without_second_ui_or_send
+FAILED ../../mnt/cybergym_scored_docker_500gb/scored-cert-code-20261017-prompt-v2/examples/cybergym/tests/leaderboard/test_campaign_runner.py::test_runner_reaps_and_refuses_bad_recovered_terminal_before_ui
+========================= 9 failed, 4 passed in 0.86s ==========================
