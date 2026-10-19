@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "scope": "stage_a_d10_controller_private_fixed_archive_hydration",
+  "source_registry": "D:\\GLM\\xeus-cybergym\\src\\xeus_cybergym\\_resources\\official_inputs\\registry.json",
+  "source_registry_sha256": "59d1fa85f6a681fc481f3ac4e14331586b7c9548972fd7ca661787da9995a7ad",
+  "dataset_revision": "bde190ded494e52bc684b66073b436c9d992c7c6",
+  "private_asset_root": "D:\\GLM\\scored-fixed-assets-20261019",
+  "asset_count": 10,
+  "assets": [
+    {
+      "task_id": "arvo:47101",
+      "asset": "data/arvo/47101/repo-fix.tar.gz",
+      "expected_sha256": "0916972e71eb01e29248e31c73057fcc0744c30227ccf3eb8dc4a925d98c99cf",
+      "sha256": "0916972e71eb01e29248e31c73057fcc0744c30227ccf3eb8dc4a925d98c99cf",
+      "bytes": 64638319,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "arvo:3938",
+      "asset": "data/arvo/3938/repo-fix.tar.gz",
+      "expected_sha256": "f4ebe7894eb874f22dc95f52aa2e0eb4b7bcd41496b6e0d1ae09b0a9b8a8b5d3",
+      "sha256": "f4ebe7894eb874f22dc95f52aa2e0eb4b7bcd41496b6e0d1ae09b0a9b8a8b5d3",
+      "bytes": 556360,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "arvo:24993",
+      "asset": "data/arvo/24993/repo-fix.tar.gz",
+      "expected_sha256": "ce1a3855e395a5f97acb3930f6a3171c8815581260c34f0a882215573684df3d",
+      "sha256": "ce1a3855e395a5f97acb3930f6a3171c8815581260c34f0a882215573684df3d",
+      "bytes": 1122406,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "arvo:1065",
+      "asset": "data/arvo/1065/repo-fix.tar.gz",
+      "expected_sha256": "53ba25d41a09d37198602187ca75c446face646c96ec6c84a7246026f7ec51fc",
+      "sha256": "53ba25d41a09d37198602187ca75c446face646c96ec6c84a7246026f7ec51fc",
+      "bytes": 493832,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "arvo:10400",
+      "asset": "data/arvo/10400/repo-fix.tar.gz",
+      "expected_sha256": "3ee8583b0514e51cbdfab64d32a8dd810e2d937d40fc90105b8aba1136001e9a",
+      "sha256": "3ee8583b0514e51cbdfab64d32a8dd810e2d937d40fc90105b8aba1136001e9a",
+      "bytes": 40097951,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "arvo:368",
+      "asset": "data/arvo/368/repo-fix.tar.gz",
+      "expected_sha256": "ec8292cc4a1d26bbef4e51c54baa6d40c0ca52a185b756580ad44fe824cff5ef",
+      "sha256": "ec8292cc4a1d26bbef4e51c54baa6d40c0ca52a185b756580ad44fe824cff5ef",
+      "bytes": 2020189,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "oss-fuzz:42535201",
+      "asset": "data/oss-fuzz/42535201/repo-fix.tar.gz",
+      "expected_sha256": "c7125a3b3c9cd6961a1b3179be07844ed0f80aa0c68e55015d5e709fc1a42c54",
+      "sha256": "c7125a3b3c9cd6961a1b3179be07844ed0f80aa0c68e55015d5e709fc1a42c54",
+      "bytes": 119868902,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "oss-fuzz:42535468",
+      "asset": "data/oss-fuzz/42535468/repo-fix.tar.gz",
+      "expected_sha256": "8ec8b4a2a89cd13d7d2d0d50694e362a68edc81ce582f877a84f0184d6401c34",
+      "sha256": "8ec8b4a2a89cd13d7d2d0d50694e362a68edc81ce582f877a84f0184d6401c34",
+      "bytes": 248226173,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "oss-fuzz:370689421",
+      "asset": "data/oss-fuzz/370689421/repo-fix.tar.gz",
+      "expected_sha256": "e225a1a7598a35add009c252ba8053ac422e00d7e169f7157983f51161913219",
+      "sha256": "e225a1a7598a35add009c252ba8053ac422e00d7e169f7157983f51161913219",
+      "bytes": 464044454,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    },
+    {
+      "task_id": "oss-fuzz:385167047",
+      "asset": "data/oss-fuzz/385167047/repo-fix.tar.gz",
+      "expected_sha256": "a26777d23ee94042653f6253e104428dd9311b2bf70759640c39dac766018d81",
+      "sha256": "a26777d23ee94042653f6253e104428dd9311b2bf70759640c39dac766018d81",
+      "bytes": 959120958,
+      "hydration_status": "hydrated",
+      "hash_verified": true
+    }
+  ],
+  "evaluation_performed": false,
+  "certification_gate_passed": false
+}
