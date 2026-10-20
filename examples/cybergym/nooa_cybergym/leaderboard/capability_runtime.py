@@ -600,6 +600,8 @@ class CapabilityRuntime:
             raise TypeError("actual boundary/path observers and durable audit required")
         if type(peer) is not AdmittedPeer:
             raise TypeError("controller-admitted task peer required")
+        self._subset_admission = None
+        self._subset_image = None
         if any(SYNTHETIC_SCOPE in e.evidence_refs for e in registry.entries):
             synthetic_ids_valid = bool(synthetic_task_ids) and all(
                 _text(t) and t.startswith("synthetic:") for t in synthetic_task_ids
@@ -626,18 +628,33 @@ class CapabilityRuntime:
                     "component-only registry is restricted to explicit synthetic task IDs"
                 )
         elif task_id.startswith(("arvo:", "oss-fuzz:")):
+            from .budgeted_subset_capabilities import BudgetedSubsetCapabilityAdmission
             from .scored_capability_admission import ScoredCapabilityAdmission
 
-            if type(scored_admission) is not ScoredCapabilityAdmission:
+            if type(scored_admission) not in {
+                ScoredCapabilityAdmission,
+                BudgetedSubsetCapabilityAdmission,
+            }:
                 raise ValueError("signed scored capability admission required")
             try:
-                scored_admission.verify_current(
-                    task_id=task_id,
-                    registry=registry,
-                    observed_image_id=observed_image_id,
-                )
+                if type(scored_admission) is BudgetedSubsetCapabilityAdmission:
+                    scored_admission.verify_runtime_current(
+                        task_id=task_id,
+                        attempt_id=attempt_id,
+                        registry=registry,
+                        observed_image_id=observed_image_id,
+                    )
+                else:
+                    scored_admission.verify_current(
+                        task_id=task_id,
+                        registry=registry,
+                        observed_image_id=observed_image_id,
+                    )
             except (RuntimeError, ValueError, TypeError):
                 raise ValueError("signed scored capability admission required") from None
+            if type(scored_admission) is BudgetedSubsetCapabilityAdmission:
+                self._subset_admission = scored_admission
+                self._subset_image = observed_image_id
         self.registry, self.peer, self.task_id, self.attempt_id = (
             registry,
             peer,
@@ -676,7 +693,19 @@ class CapabilityRuntime:
         TrustedMemoryCaller(task_id, attempt_id, Caller.PARENT, model_id, structural_terms)
 
     def authorize_peer(self, peer):
-        return peer == self.peer and self._boundary(peer) is True
+        if peer != self.peer or self._boundary(peer) is not True:
+            return False
+        if self._subset_admission is not None:
+            try:
+                self._subset_admission.verify_runtime_current(
+                    task_id=self.task_id,
+                    attempt_id=self.attempt_id,
+                    registry=self.registry,
+                    observed_image_id=self._subset_image,
+                )
+            except (RuntimeError, ValueError, TypeError):
+                return False
+        return True
 
     @property
     def bindings(self):

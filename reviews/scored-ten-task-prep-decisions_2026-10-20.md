@@ -80,4 +80,6 @@ On 20 October, the local Tailscale client was brought from `Stopped` to `Running
 
 ## Next sequence after decisions and access
 
+The latest source-only subset binding checkpoint adds separate approval/runtime/evaluator trust, full 1,507-task material checks, actual-byte launch configuration and current-attempt capability access. Its combined offline Windows suite passed **203 tests in 22.03 seconds** after independent review corrected an attempt-ID substitution. This is component progress only: concrete staging and driver supervision, durable owned UI cleanup, the full raw-readiness verifier and all live gates still need completion. The dedicated approval key remains unused for signing; no new host runtime is installed.
+
 Recheck exact source/profile, host capacity and bounded provider budget; run one separately identified genuine remote-session interruption control; resolve clean timeout and drift controls; obtain complete independently attested 12-gate reports for two distinct two-fixture repetitions; sign and independently verify the scored freeze and paths; refresh credits; then prepare a distinct ten-task admission that discloses the two prior practice-exposed IDs. Stop at the separate scored-launch go/no-go.
