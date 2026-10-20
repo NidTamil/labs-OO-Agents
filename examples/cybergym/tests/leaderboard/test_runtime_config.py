@@ -400,6 +400,20 @@ def test_changed_secret_and_signing_key_are_rejected_without_value_leak(prepared
         load(prepared)
 
 
+@pytest.mark.parametrize("private_input", ["credential", "signing_key"])
+def test_public_only_revalidation_does_not_relax_legacy_private_checks(prepared, private_input):
+    config = load(prepared)
+    path = (
+        config.credentials.zai.path
+        if private_input == "credential"
+        else config.signing.private_key.path
+    )
+    path.write_bytes(b"synthetic-private-input-changed")
+    config.verify_public_unchanged()
+    with pytest.raises(ValueError):
+        config.verify_unchanged()
+
+
 def test_secret_ref_cannot_be_embedded_in_staging_or_repo(prepared):
     raw = prepared[0]
     path = Path(raw["staging_root"]) / "provider-key"

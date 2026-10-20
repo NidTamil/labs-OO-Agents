@@ -21,6 +21,7 @@ from .practice_arvo_evaluator import (
     _write_signed_once,
 )
 from .practice_arvo_runner import official_raw_solved
+from .primary_takeover import PrimaryTakeoverPolicy
 
 _TASK = re.compile(r"(?:arvo|oss-fuzz):[0-9]+\Z")
 
@@ -28,13 +29,20 @@ _TASK = re.compile(r"(?:arvo|oss-fuzz):[0-9]+\Z")
 class ScoredOfficialEvaluator(PracticeArvoEvaluator):
     """Controller and evaluator signatures bind one official raw verdict."""
 
-    def __init__(self, *, task_id: str, **kwargs):
+    def __init__(
+        self, *, task_id: str, takeover_policy: PrimaryTakeoverPolicy | None = None, **kwargs
+    ):
         if type(task_id) is not str or _TASK.fullmatch(task_id) is None:
             raise ValueError("official scored task family required")
+        if takeover_policy is not None and type(takeover_policy) is not PrimaryTakeoverPolicy:
+            raise ValueError("trusted primary takeover policy required")
         super().__init__(task_id=task_id, **kwargs)
+        self.takeover_policy = takeover_policy
 
     def evaluate(self, lock: FinalLock, *, solver_stopped) -> bytes:
-        candidate, declaration = _locked_final(self.evidence, self.task_id, lock, solver_stopped)
+        candidate, declaration = _locked_final(
+            self.evidence, self.task_id, lock, solver_stopped, takeover_policy=self.takeover_policy
+        )
         if (
             self.official_verifier_source.is_symlink()
             or not self.official_verifier_source.is_file()
@@ -92,7 +100,13 @@ class ScoredOfficialEvaluator(PracticeArvoEvaluator):
                 snapshot_dir=snapshot_dir,
                 expected_sha256=lock.sha256,
             )
-            _locked_final(self.evidence, self.task_id, lock, solver_stopped)
+            _locked_final(
+                self.evidence,
+                self.task_id,
+                lock,
+                solver_stopped,
+                takeover_policy=self.takeover_policy,
+            )
             result_value = {
                 "schema_version": 1,
                 "artifact_kind": "scored_official_evaluation_result",

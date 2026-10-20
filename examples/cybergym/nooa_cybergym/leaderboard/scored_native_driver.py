@@ -203,6 +203,7 @@ def run(
         controller_verifier=verifier,
         evaluator_signer=evaluator_signer,
         evaluator_verifier=evaluator_verifier,
+        takeover_policy=config.primary_takeover_policy,
     )
     pem = (
         private_key.public_key()

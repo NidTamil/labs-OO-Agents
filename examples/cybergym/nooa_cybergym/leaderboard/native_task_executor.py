@@ -18,7 +18,8 @@ from xeus_cybergym.contracts import EvaluationRequest, EvaluationResult
 from xeus_cybergym.contracts.artifacts import SubmissionBundle
 from xeus_cybergym.ledger import SignedEnvelope
 
-from .finalize import FinalLock, _validate_declaration
+from .finalize import FinalLock, _primary_event_digest, _validate_declaration
+from .primary_takeover import PrimaryTakeoverPolicy
 
 _HEX = re.compile(r"[a-f0-9]{64}\Z")
 
@@ -43,7 +44,12 @@ def _verified(envelope: bytes, verifier, contract):
 
 
 def _locked_final(
-    evidence_dir: Path, task_id: str, lock: FinalLock, solver_stopped: Callable[[], bool]
+    evidence_dir: Path,
+    task_id: str,
+    lock: FinalLock,
+    solver_stopped: Callable[[], bool],
+    *,
+    takeover_policy: PrimaryTakeoverPolicy | None = None,
 ) -> tuple[bytes, bytes]:
     """Recheck the stopped parent's exact immutable final before private use."""
     if type(lock) is not FinalLock or lock.task_id != task_id:
@@ -61,7 +67,7 @@ def _locked_final(
         raise RuntimeError("native solver must be stopped before private final use")
     candidate = _bytes(lock.poc_path, "locked final candidate")
     declaration = _bytes(lock.declaration_path, "parent final declaration")
-    declared = _validate_declaration(declaration, task_id)
+    declared = _validate_declaration(declaration, task_id, takeover_policy=takeover_policy)
     if (
         len(candidate) != lock.byte_length
         or hashlib.sha256(candidate).hexdigest() != lock.sha256
@@ -71,6 +77,10 @@ def _locked_final(
         or declared != dict(lock.declaration)
         or type(lock.parent_event_digest) is not str
         or _HEX.fullmatch(lock.parent_event_digest) is None
+        or (
+            takeover_policy is not None
+            and _primary_event_digest(declared) != lock.parent_event_digest
+        )
     ):
         raise RuntimeError("locked parent final changed")
     return candidate, declaration

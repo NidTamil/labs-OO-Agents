@@ -385,7 +385,12 @@ class NativeRuntimeConfig:
             primary_takeover=self.primary_takeover_policy,
         )
 
-    def verify_unchanged(self):
+    def verify_public_unchanged(self):
+        """Recheck public frozen inputs without acquiring credentials or a key.
+
+        This is metadata validation only. A runtime must separately validate its
+        trusted signer role and private-path boundary before loading secrets.
+        """
         for root in (self.repo_root, self.staging_root, self.evidence_root):
             _path(root, directory=True)
         self.source.verify()
@@ -399,6 +404,9 @@ class NativeRuntimeConfig:
         for fixture in self.fixtures:
             for artifact in (fixture.description, fixture.vulnerable, fixture.fixed):
                 artifact.verify()
+
+    def verify_unchanged(self):
+        self.verify_public_unchanged()
         for secret in (
             self.credentials.zai,
             self.credentials.deepseek,
@@ -483,9 +491,11 @@ def _harness_files(repo, manifest):
     return tuple(files)
 
 
-def _load_runtime_config(path):
+def _load_runtime_config(path, *, expected_sha256=None):
     path = _path(path)
     digest, length, data = _observe(path, maximum=1024 * 1024, capture=True)
+    if expected_sha256 is not None and (_hash(expected_sha256, "runtime configuration") != digest):
+        raise RuntimeConfigError("runtime configuration differs from independently pinned bytes")
     source = VerifiedFile(path, digest, length)
     raw = _strict_json(data)
     policy_fields = {"policies"} if type(raw) is dict and raw.get("schema_version") == 2 else set()
@@ -658,10 +668,10 @@ def _load_runtime_config(path):
     return config
 
 
-def load_runtime_config(path: Path) -> NativeRuntimeConfig:
-    """Load real local inputs. Does not attest their live use or launch anything."""
+def load_runtime_config(path: Path, *, expected_sha256: str | None = None) -> NativeRuntimeConfig:
+    """Load local inputs; an optional public pin is checked before secret access."""
     try:
-        return _load_runtime_config(path)
+        return _load_runtime_config(path, expected_sha256=expected_sha256)
     except RuntimeConfigError:
         raise
     except Exception:
