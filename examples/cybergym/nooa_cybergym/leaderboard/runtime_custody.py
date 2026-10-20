@@ -23,6 +23,7 @@ from uuid import uuid4
 from .deepseek import BudgetExceeded, SharedCampaignBudget
 from .model_gateway import _hex_forms, _redact, _secret_forms
 from .run_request_budget import RequestBudgetExceeded, RunRequestBudget
+from .run_resource_budget import ResourceBudgetError, RunResourceBudget
 
 
 def _canonical(value):
@@ -220,7 +221,7 @@ class _ContextBudget(SharedCampaignBudget):
     def __init__(
         self,
         audit: RuntimeAudit,
-        run_request_budget: RunRequestBudget | None = None,
+        run_request_budget: RunRequestBudget | RunResourceBudget | None = None,
         *,
         record_request_reservations: bool = False,
     ):
@@ -230,10 +231,17 @@ class _ContextBudget(SharedCampaignBudget):
         self._audit = audit
         self._halted = threading.Event()
         self.record_request_reservations = record_request_reservations
+        self._resource_budget = None
         if run_request_budget is not None:
-            if type(run_request_budget) is not RunRequestBudget:
-                raise TypeError("validated run request budget required")
-            task = run_request_budget.snapshot()["tasks"].get(audit.start.task_id)
+            if type(run_request_budget) not in (RunRequestBudget, RunResourceBudget):
+                raise TypeError("validated run request or resource budget required")
+            if type(run_request_budget) is RunResourceBudget:
+                self._resource_budget = run_request_budget
+                run_request_budget.check_active()
+            snapshot = run_request_budget.snapshot()
+            if self._resource_budget is not None and audit.start.task_id in snapshot["closures"]:
+                raise RuntimeError("run task accounting is closed")
+            task = snapshot["tasks"].get(audit.start.task_id)
             if task is None:
                 raise ValueError("task is not bound to run request budget")
             if task["requests"]:
@@ -303,6 +311,11 @@ class _ContextBudget(SharedCampaignBudget):
                 # Normal allocation depletion does not consume a reservation
                 # or disable the other pool. Full limits still reject in SQLite.
                 raise BudgetExceeded("run request or allocation budget exhausted") from None
+            except ResourceBudgetError:
+                self._halted.set()
+                raise BudgetExceeded(
+                    "aggregate run resource budget unavailable or exhausted"
+                ) from None
             except BaseException:
                 # A debit may already be durable. Never refund or dispatch after
                 # failed acknowledgement; snapshots still expose the true debit.
@@ -325,7 +338,15 @@ class _ContextBudget(SharedCampaignBudget):
     def remaining_seconds(self):
         if self._halted.is_set() or not self._audit.available:
             return 0.0
-        return super().remaining_seconds()
+        remaining = super().remaining_seconds()
+        if self._resource_budget is not None:
+            try:
+                remaining = min(remaining, self._resource_budget.remaining_seconds())
+            except ResourceBudgetError:
+                # Budget stop blocks future work, not terminal audit or owned cleanup.
+                self._halted.set()
+                return 0.0
+        return remaining
 
     def halt(self):
         # Serialize with reservation admission, without affecting terminal audit writes.
@@ -349,7 +370,7 @@ class TaskRuntimeContext:
         task_id: str,
         attempt_id: str,
         secrets: tuple[str, ...],
-        run_request_budget: RunRequestBudget | None = None,
+        run_request_budget: RunRequestBudget | RunResourceBudget | None = None,
         record_request_reservations: bool = False,
     ):
         self.evidence = Path(evidence)

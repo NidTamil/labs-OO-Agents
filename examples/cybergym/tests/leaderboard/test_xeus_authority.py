@@ -250,6 +250,85 @@ def test_native_verifier_must_accept_canonical_signed_payload(adapter):
     assert authority.attest_signed("cohort", noncanonical_envelope) is None
 
 
+@pytest.mark.parametrize(
+    "kind",
+    ["budgeted_subset_admission", "subset_driver_quiescence", "subset_preparation_quiescence"],
+)
+def test_budgeted_subset_artifact_domains_are_distinct(adapter, kind):
+    authority, _, _ = adapter
+    payload = {
+        "schema_version": 1,
+        "artifact_kind": kind,
+        "scope": "native_subset_dry_run_level1",
+        "run_id": "run-1",
+        "epoch": "epoch-1",
+        "task_ids": ["arvo:47101"],
+        "previously_exposed_task_ids": ["arvo:47101"],
+        "budget_sha256": "a" * 64,
+        "task_id": "arvo:47101",
+        "attempt_id": "attempt-1",
+        "launch_sha256": "b" * 64,
+        "final_accounting_sha256": "c" * 64,
+        "terminal_receipt_sha256": "d" * 64,
+        "prepared_event_sha256": "e" * 64,
+        "preparation_id": "preparation-test-1",
+        "preparation_started_event_sha256": "f" * 64,
+        "native_send_occurred": False,
+        "owned_cleanup_complete": True,
+    }
+    assert authority.attest_signed(kind, signed(payload)) == payload
+    assert authority.attest_signed(kind, signed(payload, "invalid")) is None
+    payload["artifact_kind"] = "terminal_receipt"
+    assert authority.attest_signed(kind, signed(payload)) is None
+    payload.pop("artifact_kind")
+    assert authority.attest_signed(kind, signed(payload)) is None
+
+
+def test_takeover_certificate_uses_explicit_versioned_authority_method(adapter):
+    authority, _, _ = adapter
+    payload = {
+        "schema_version": 2,
+        "status": "accepted",
+        "scope": "live_native",
+        "harness_sha256": "a" * 64,
+        "cohort_sha256": "b" * 64,
+        "campaign_policy_sha256": "c" * 64,
+        "takeover_policy_sha256": "d" * 64,
+        "memory_model_bindings_sha256": "e" * 64,
+        "primary_takeover": {},
+    }
+    assert authority.attest_signed("certification", signed(payload)) is None
+    assert authority.attest_takeover_certification(signed(payload)) == payload
+    assert authority.attest_takeover_certification(signed(payload, "invalid")) is None
+    payload["schema_version"] = 1
+    assert authority.attest_takeover_certification(signed(payload)) is None
+    assert authority.attest_signed("certification", signed(payload)) == payload
+    payload["schema_version"] = 2
+    payload["artifact_kind"] = "harness_lock"
+    assert authority.attest_takeover_certification(signed(payload)) is None
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "preparation_started",
+        "run_stop_requested",
+        "task_quiescent",
+        "prepared_quiescent",
+        "run_stopped",
+    ],
+)
+def test_subset_quiescence_and_run_stop_events_survive_restart(adapter, event_type):
+    authority, root, _ = adapter
+    created = created_event()
+    authority.create_campaign_once(root, "run-1", created)
+    event = {"type": event_type, "task_id": "arvo:47101", "completion_sha256": "a" * 64}
+    assert authority.append_event(root, "run-1", event, expected_revision=1) is True
+    restarted = XeusCampaignAuthority({"test-key": object_key}, native=authority._native)
+    assert restarted.read_verified_events(root, "run-1") == (created, event)
+    assert restarted.append_event(root, "run-1", event, expected_revision=1) is False
+
+
 def test_certification_attestation_requires_campaign_hash_bindings(adapter):
     authority, _, _ = adapter
     payload = {

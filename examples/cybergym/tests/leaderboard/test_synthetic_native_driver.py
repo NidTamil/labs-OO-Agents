@@ -275,6 +275,158 @@ def test_post_oracle_fixture_debit_extends_same_allocation_ordinals():
     assert all("run_id" not in row for row in events)
 
 
+@pytest.mark.parametrize("audit_ok", [True, False])
+def test_post_oracle_resource_budget_reserves_spend_before_provider_permission(
+    tmp_path, monkeypatch, audit_ok
+):
+    from .test_runtime_custody import _resource_budget
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch)
+    ledger.reserve(
+        task_id=task_id,
+        attempt_id="attempt-0",
+        request_id="native",
+        allocation="primary_and_memory",
+    )
+    events = []
+
+    class Audit:
+        def record(self, event):
+            events.append(event)
+            if event["event"] == "post_oracle_memory_model_reserved":
+                assert ledger.snapshot()["spend_units"] == 22
+                return audit_ok
+            return True
+
+    budget = _PostOracleMemoryBudget(
+        Audit(),
+        prior_requests=1,
+        prior_auxiliary_requests=1,
+        remaining_seconds=100,
+        run_request_budget=ledger,
+        task_id=task_id,
+        attempt_id="attempt-0",
+    )
+    if audit_ok:
+        assert budget.reserve_request() == 2
+        assert events[-1]["run_ordinal"] == 2
+    else:
+        with pytest.raises(PermissionError, match="audit"):
+            budget.reserve_request()
+        assert budget.remaining_seconds() == 0
+        with pytest.raises(PermissionError, match="budget"):
+            budget.reserve_request()
+    assert ledger.snapshot()["requests"] == 2
+    assert ledger.snapshot()["spend_units"] == 22
+
+
+@pytest.mark.parametrize("stop_kind", ["elapsed", "spend", "operator"])
+def test_post_oracle_resource_stop_blocks_memory_without_blocking_cleanup(
+    tmp_path, monkeypatch, stop_kind
+):
+    from .test_runtime_custody import _resource_budget
+
+    ledger, task_id, now = _resource_budget(tmp_path, monkeypatch, elapsed=30, spend=11)
+    events = []
+
+    class Audit:
+        def record(self, event):
+            events.append(event)
+            return True
+
+    audit = Audit()
+    budget = _PostOracleMemoryBudget(
+        audit,
+        prior_requests=0,
+        prior_auxiliary_requests=0,
+        remaining_seconds=100,
+        run_request_budget=ledger,
+        task_id=task_id,
+        attempt_id="attempt-0",
+    )
+    assert budget.remaining_seconds() == 30
+    if stop_kind == "elapsed":
+        now[0] += 30_000_000_000
+    elif stop_kind == "spend":
+        assert budget.reserve_request() == 1
+    else:
+        ledger.stop(reason="operator_stop")
+    assert budget.remaining_seconds() == 0
+    dispatched = []
+    with pytest.raises(PermissionError, match="budget"):
+        budget.reserve_request()
+        dispatched.append("provider")
+    assert dispatched == []
+    assert ledger.snapshot()["requests"] == (1 if stop_kind == "spend" else 0)
+    assert audit.record({"event": "owned-cleanup-after-budget-stop"}) is True
+
+
+def test_post_oracle_resource_clock_remains_bounded_by_capture_clock(tmp_path, monkeypatch):
+    from .test_runtime_custody import _resource_budget
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch)
+    budget = _PostOracleMemoryBudget(
+        None,
+        prior_requests=0,
+        prior_auxiliary_requests=0,
+        remaining_seconds=8,
+        run_request_budget=ledger,
+        task_id=task_id,
+        attempt_id="attempt-0",
+    )
+    assert 0 < budget.remaining_seconds() <= 8
+
+
+def test_post_oracle_resource_reservation_failure_denies_dispatch(tmp_path, monkeypatch):
+    from .test_runtime_custody import _resource_budget
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch, spend=10)
+    events = []
+
+    class Audit:
+        def record(self, event):
+            events.append(event)
+            return True
+
+    budget = _PostOracleMemoryBudget(
+        Audit(),
+        prior_requests=0,
+        prior_auxiliary_requests=0,
+        remaining_seconds=100,
+        run_request_budget=ledger,
+        task_id=task_id,
+        attempt_id="attempt-0",
+    )
+    with pytest.raises(PermissionError, match="resource budget"):
+        budget.reserve_request()
+    assert budget.remaining_seconds() == 0
+    assert ledger.snapshot()["requests"] == 0
+    assert ledger.snapshot()["spend_units"] == 0
+    assert not any(event["event"] == "post_oracle_memory_model_reserved" for event in events)
+
+
+def test_post_oracle_resource_rejects_closed_task_accounting(tmp_path, monkeypatch):
+    from .test_runtime_custody import _resource_budget
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch)
+    ledger.close_task(
+        task_id=task_id,
+        attempt_id="attempt-0",
+        completion_sha256="a" * 64,
+        expected_accounting_sha256=ledger.snapshot()["accounting_sha256"],
+    )
+    with pytest.raises(RuntimeError, match="closed"):
+        _PostOracleMemoryBudget(
+            None,
+            prior_requests=0,
+            prior_auxiliary_requests=0,
+            remaining_seconds=100,
+            run_request_budget=ledger,
+            task_id=task_id,
+            attempt_id="attempt-0",
+        )
+
+
 def test_writer_guard_is_pinned_by_signed_read_catalog(tmp_path):
     key = Ed25519PrivateKey.generate()
     signer = Ed25519Signer(private_key=key, key_id="memory-test")

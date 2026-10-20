@@ -69,8 +69,62 @@ _REQUIRED_SIGNED_KEYS = {
             "metering_policy_sha256",
         }
     ),
+    "budgeted_subset_admission": frozenset(
+        {
+            "schema_version",
+            "artifact_kind",
+            "scope",
+            "run_id",
+            "epoch",
+            "task_ids",
+            "previously_exposed_task_ids",
+            "budget_sha256",
+        }
+    ),
+    "subset_driver_quiescence": frozenset(
+        {
+            "schema_version",
+            "artifact_kind",
+            "run_id",
+            "epoch",
+            "task_id",
+            "attempt_id",
+            "launch_sha256",
+            "final_accounting_sha256",
+            "terminal_receipt_sha256",
+            "budget_sha256",
+            "owned_cleanup_complete",
+        }
+    ),
+    "subset_preparation_quiescence": frozenset(
+        {
+            "schema_version",
+            "artifact_kind",
+            "run_id",
+            "epoch",
+            "task_id",
+            "prepared_event_sha256",
+            "preparation_id",
+            "preparation_started_event_sha256",
+            "budget_sha256",
+            "native_send_occurred",
+            "owned_cleanup_complete",
+        }
+    ),
 }
-_LIFECYCLE_TYPES = frozenset({"campaign_created", "prepared", "started", "terminal"})
+_LIFECYCLE_TYPES = frozenset(
+    {
+        "campaign_created",
+        "prepared",
+        "started",
+        "terminal",
+        "run_stop_requested",
+        "preparation_started",
+        "task_quiescent",
+        "prepared_quiescent",
+        "run_stopped",
+    }
+)
 
 
 def _load_native() -> SimpleNamespace:
@@ -166,6 +220,37 @@ class XeusCampaignAuthority:
                 or type(payload.get("schema_version")) is not int
                 or payload["schema_version"] != 1
                 or payload.get("artifact_kind", kind) != kind
+                or self._native.canonical_json(payload) != payload_bytes
+            ):
+                return None
+            return payload
+        except Exception:
+            return None
+
+    def attest_takeover_certification(self, envelope: bytes) -> Mapping[str, Any] | None:
+        """Verify schema-2 report custody without changing historical admission.
+
+        This verifies signature, canonical encoding and report domain only.
+        The explicit budgeted subset validator must still verify all policy,
+        raw certification and source bindings before admission.
+        """
+        if type(envelope) is not bytes or not envelope:
+            return None
+        required = _REQUIRED_SIGNED_KEYS["certification"] | {
+            "takeover_policy_sha256",
+            "memory_model_bindings_sha256",
+            "primary_takeover",
+        }
+        try:
+            parsed = self._native.SignedEnvelope.model_validate_json(envelope)
+            payload_bytes = self._verifier.verify(parsed)
+            payload = json.loads(payload_bytes)
+            if (
+                type(payload) is not dict
+                or not required.issubset(payload)
+                or type(payload.get("schema_version")) is not int
+                or payload["schema_version"] != 2
+                or payload.get("artifact_kind", "certification") != "certification"
                 or self._native.canonical_json(payload) != payload_bytes
             ):
                 return None
@@ -363,10 +448,8 @@ class XeusCampaignAuthority:
     ) -> bool:
         if type(expected_revision) is not int or expected_revision < 1:
             raise RuntimeError("verified campaign revision required")
-        if not isinstance(event, Mapping) or event.get("type") not in {
-            "prepared",
-            "started",
-            "terminal",
+        if not isinstance(event, Mapping) or event.get("type") not in _LIFECYCLE_TYPES - {
+            "campaign_created"
         }:
             raise RuntimeError("unsupported campaign transition")
         root = _root(evidence_root)

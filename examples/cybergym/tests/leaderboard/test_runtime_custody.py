@@ -310,3 +310,253 @@ def test_legacy_fixture_reservation_audit_stays_unchanged(tmp_path):
     ) as context:
         assert context.budget.reserve_request() == 1
         assert context.audit.path.read_bytes() == b""
+
+
+def _resource_budget(tmp_path, monkeypatch, *, spend=100, elapsed=432000):
+    from nooa_cybergym.leaderboard import pinned_metering, run_resource_budget
+
+    from .test_run_resource_budget import inputs
+
+    # Synthetic metering only; no test charge is an operational price or approval.
+    now = [1_800_000_000_000_000_000]
+    monkeypatch.setattr(run_resource_budget, "_now_ns", lambda: now[0])
+    args = inputs((run_resource_budget, pinned_metering), spend=spend, elapsed=elapsed)
+    ledger = run_resource_budget.RunResourceBudget.create(tmp_path / "resources.sqlite", **args)
+    return ledger, args["budget"].task_ids[0], now
+
+
+def test_resource_context_all_lanes_consume_prebound_spend_before_permission(tmp_path, monkeypatch):
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch)
+    evidence = tmp_path / "task"
+    evidence.mkdir(mode=0o700)
+    with TaskRuntimeContext(
+        evidence,
+        task_id=task_id,
+        attempt_id="attempt-0",
+        secrets=("synthetic-key",),
+        run_request_budget=ledger,
+    ) as context:
+        # Primary, count-token, memory and takeover all enter the same pool.
+        for number in range(1, 5):
+            assert context.budget.reserve_request() == number
+            assert ledger.snapshot()["spend_units"] == number * 11
+        assert context.budget.reserve_deepseek_request() == 5
+        assert ledger.snapshot()["spend_units"] == 51
+        assert context.budget.snapshot()["glm_and_memory_auxiliary_requests"] == 4
+        assert context.budget.snapshot()["deepseek_requests"] == 1
+        rows = [json.loads(line)["event"] for line in context.audit.path.read_text().splitlines()]
+        assert [row["run_ordinal"] for row in rows] == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.parametrize("stop_kind", ["elapsed", "spend", "operator"])
+def test_resource_context_stop_denies_dispatch_but_allows_owned_cleanup(
+    tmp_path, monkeypatch, stop_kind
+):
+    from nooa_cybergym.leaderboard.deepseek import BudgetExceeded
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    ledger, task_id, now = _resource_budget(tmp_path, monkeypatch, spend=11, elapsed=60)
+    evidence = tmp_path / "task"
+    evidence.mkdir(mode=0o700)
+    permitted_dispatches = []
+    with TaskRuntimeContext(
+        evidence,
+        task_id=task_id,
+        attempt_id="attempt-0",
+        secrets=("synthetic-key",),
+        run_request_budget=ledger,
+    ) as context:
+        assert context.budget.remaining_seconds() == 60
+        if stop_kind == "elapsed":
+            now[0] += 60_000_000_000
+        elif stop_kind == "spend":
+            assert context.budget.reserve_request() == 1
+        else:
+            ledger.stop(reason="operator_stop")
+        assert context.active is False
+        assert context.budget.remaining_seconds() == 0
+        for reserve in (context.budget.reserve_request, context.budget.reserve_deepseek_request):
+            with pytest.raises(BudgetExceeded):
+                reserve()
+                permitted_dispatches.append("provider")
+        assert permitted_dispatches == []
+        assert context.audit.record({"event": "owned-cleanup-after-run-stop"}) is True
+        snapshot = context.budget.snapshot()
+        assert snapshot["requests"] == (1 if stop_kind == "spend" else 0)
+        assert (
+            ledger.snapshot()["stop"]["reason"]
+            == {"elapsed": "elapsed_limit", "spend": "spend_limit", "operator": "operator_stop"}[
+                stop_kind
+            ]
+        )
+
+
+def test_resource_context_retains_spend_when_durable_lane_audit_fails(tmp_path, monkeypatch):
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch)
+    evidence = tmp_path / "task"
+    evidence.mkdir(mode=0o700)
+    with TaskRuntimeContext(
+        evidence,
+        task_id=task_id,
+        attempt_id="attempt-0",
+        secrets=("synthetic-key",),
+        run_request_budget=ledger,
+    ) as context:
+        monkeypatch.setattr(context.audit, "record", lambda _: False)
+        with pytest.raises(RuntimeError, match="audit"):
+            context.budget.reserve_request()
+        assert context.active is False
+        assert ledger.snapshot()["spend_units"] == 11
+        assert context.budget.snapshot()["requests"] == 1
+        with pytest.raises(Exception, match="exhausted"):
+            context.budget.reserve_deepseek_request()
+        assert ledger.snapshot()["spend_units"] == 11
+
+
+@pytest.mark.parametrize("previous_state", ["reserved", "closed", "stopped"])
+def test_resource_context_cannot_reset_or_reopen_prior_task_work(
+    tmp_path, monkeypatch, previous_state
+):
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch)
+    if previous_state == "reserved":
+        ledger.reserve(
+            task_id=task_id,
+            attempt_id="attempt-0",
+            request_id="before-reopen",
+            allocation="primary_and_memory",
+        )
+    elif previous_state == "closed":
+        ledger.close_task(
+            task_id=task_id,
+            attempt_id="attempt-0",
+            completion_sha256="a" * 64,
+            expected_accounting_sha256=ledger.snapshot()["accounting_sha256"],
+        )
+    else:
+        ledger.stop(reason="operator_stop")
+    evidence = tmp_path / "new-context"
+    evidence.mkdir(mode=0o700)
+    with pytest.raises(RuntimeError, match="reserved|reset|closed|stopped"):
+        TaskRuntimeContext(
+            evidence,
+            task_id=task_id,
+            attempt_id="attempt-0",
+            secrets=("synthetic-key",),
+            run_request_budget=ledger,
+        )
+    assert ledger.snapshot()["requests"] == (1 if previous_state == "reserved" else 0)
+
+
+def test_resource_context_uses_shorter_existing_task_clock(tmp_path, monkeypatch):
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch)
+    evidence = tmp_path / "task"
+    evidence.mkdir(mode=0o700)
+    with TaskRuntimeContext(
+        evidence,
+        task_id=task_id,
+        attempt_id="attempt-0",
+        secrets=("synthetic-key",),
+        run_request_budget=ledger,
+    ) as context:
+        context.budget._clock = lambda: context.budget._started + 43190
+        assert context.budget.remaining_seconds() == pytest.approx(10)
+
+
+def test_resource_context_dispatch_rechecks_elapsed_between_clock_check_and_debit(
+    tmp_path, monkeypatch
+):
+    from nooa_cybergym.leaderboard import run_resource_budget
+    from nooa_cybergym.leaderboard.deepseek import BudgetExceeded
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    ledger, task_id, now = _resource_budget(tmp_path, monkeypatch, elapsed=60)
+    evidence = tmp_path / "task"
+    evidence.mkdir(mode=0o700)
+    with TaskRuntimeContext(
+        evidence,
+        task_id=task_id,
+        attempt_id="attempt-0",
+        secrets=("synthetic-key",),
+        run_request_budget=ledger,
+    ) as context:
+        observations = iter((now[0], now[0] + 60_000_000_000))
+        monkeypatch.setattr(run_resource_budget, "_now_ns", lambda: next(observations))
+        with pytest.raises(BudgetExceeded, match="resource budget"):
+            context.budget.reserve_request()
+        assert ledger.snapshot()["requests"] == 0
+        assert context.active is False
+
+
+def test_resource_context_spend_reservation_failure_prevents_permission(tmp_path, monkeypatch):
+    from nooa_cybergym.leaderboard.deepseek import BudgetExceeded
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    # Remaining positive credit is insufficient for the frozen 11-unit charge.
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch, spend=10)
+    evidence = tmp_path / "task"
+    evidence.mkdir(mode=0o700)
+    with TaskRuntimeContext(
+        evidence,
+        task_id=task_id,
+        attempt_id="attempt-0",
+        secrets=("synthetic-key",),
+        run_request_budget=ledger,
+    ) as context:
+        assert context.active is True
+        with pytest.raises(BudgetExceeded, match="resource budget"):
+            context.budget.reserve_request()
+        assert context.active is False
+        assert ledger.snapshot()["requests"] == 0
+        assert ledger.snapshot()["spend_units"] == 0
+        assert ledger.snapshot()["stop"]["reason"] == "spend_limit"
+
+
+def test_resource_context_corrupt_store_fails_closed_without_blocking_cleanup(
+    tmp_path, monkeypatch
+):
+    import sqlite3
+
+    from nooa_cybergym.leaderboard.deepseek import BudgetExceeded
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    ledger, task_id, _ = _resource_budget(tmp_path, monkeypatch)
+    evidence = tmp_path / "task"
+    evidence.mkdir(mode=0o700)
+    with TaskRuntimeContext(
+        evidence,
+        task_id=task_id,
+        attempt_id="attempt-0",
+        secrets=("synthetic-key",),
+        run_request_budget=ledger,
+    ) as context:
+        with sqlite3.connect(tmp_path / "resources.sqlite") as connection:
+            connection.execute("DROP TRIGGER events_no_delete")
+        assert context.active is False
+        with pytest.raises(BudgetExceeded):
+            context.budget.reserve_request()
+        assert context.audit.record({"event": "owned-cleanup-after-accounting-failure"}) is True
+
+
+def test_resource_context_rejects_duck_typed_budget(tmp_path):
+    from nooa_cybergym.leaderboard.runtime_custody import TaskRuntimeContext
+
+    class UnvalidatedBudget:
+        def snapshot(self):
+            pytest.fail("unvalidated budget must not be invoked")
+
+    with pytest.raises(TypeError, match="validated run"):
+        TaskRuntimeContext(
+            tmp_path,
+            task_id="unvalidated-task",
+            attempt_id="attempt-0",
+            secrets=("synthetic-key",),
+            run_request_budget=UnvalidatedBudget(),
+        )

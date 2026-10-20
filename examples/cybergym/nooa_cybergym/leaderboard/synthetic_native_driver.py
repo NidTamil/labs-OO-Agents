@@ -40,6 +40,7 @@ from .native_start_intent import wait_start_intent
 from .native_workflows import frozen_workflows
 from .primary_takeover import PrimaryTakeoverPolicy
 from .run_request_budget import RunRequestBudget
+from .run_resource_budget import ResourceBudgetError, RunResourceBudget
 from .runtime_config import NativeRuntimeConfig, load_runtime_config
 from .runtime_custody import TaskRuntimeContext
 from .services_runtime import NativeServices, SealedRoutes
@@ -193,7 +194,7 @@ class _PostOracleMemoryBudget:
         prior_requests: int,
         prior_auxiliary_requests: int,
         remaining_seconds: float,
-        run_request_budget: RunRequestBudget | None = None,
+        run_request_budget: RunRequestBudget | RunResourceBudget | None = None,
         task_id: str | None = None,
         attempt_id: str | None = None,
         record_request_reservations: bool = False,
@@ -225,17 +226,24 @@ class _PostOracleMemoryBudget:
         self._lock = threading.Lock()
         self._halted = False
         self._run_request_budget = run_request_budget
+        self._resource_budget = None
         self._task_id, self._attempt_id = task_id, attempt_id
         self._record_request_reservations = record_request_reservations
         if run_request_budget is not None:
             if (
-                type(run_request_budget) is not RunRequestBudget
+                type(run_request_budget) not in (RunRequestBudget, RunResourceBudget)
                 or type(task_id) is not str
                 or type(attempt_id) is not str
                 or not attempt_id
             ):
                 raise ValueError("post-oracle run budget identity required")
-            task = run_request_budget.snapshot()["tasks"].get(task_id)
+            if type(run_request_budget) is RunResourceBudget:
+                self._resource_budget = run_request_budget
+                run_request_budget.check_active()
+            snapshot = run_request_budget.snapshot()
+            if self._resource_budget is not None and task_id in snapshot["closures"]:
+                raise RuntimeError("post-oracle run task accounting is closed")
+            task = snapshot["tasks"].get(task_id)
             if task is None or (
                 task["requests"] != prior_requests
                 or task["primary_and_memory"] != prior_auxiliary_requests
@@ -243,7 +251,16 @@ class _PostOracleMemoryBudget:
                 raise ValueError("post-oracle run budget snapshot mismatch")
 
     def remaining_seconds(self):
-        return max(0.0, self._deadline - time.monotonic())
+        remaining = max(0.0, self._deadline - time.monotonic())
+        if self._resource_budget is not None:
+            if self._halted:
+                return 0.0
+            try:
+                remaining = min(remaining, self._resource_budget.remaining_seconds())
+            except ResourceBudgetError:
+                self._halted = True
+                return 0.0
+        return remaining
 
     def reserve_request(self):
         with self._lock:
@@ -290,6 +307,11 @@ class _PostOracleMemoryBudget:
                     )
                 if self._audit.record(event) is not True:
                     raise PermissionError("post-oracle memory audit unavailable")
+            except ResourceBudgetError:
+                self._halted = True
+                raise PermissionError(
+                    "post-oracle aggregate resource budget unavailable or exhausted"
+                ) from None
             except BaseException:
                 self._halted = True
                 raise
