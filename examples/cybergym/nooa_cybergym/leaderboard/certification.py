@@ -22,9 +22,9 @@ from nooa_cybergym.leaderboard.deepseek import AlternateModelPolicy, DeepSeekRol
 
 FIXTURE_IDS = frozenset({"synthetic:length-header", "synthetic:chunk-table"})
 _ROLE_CALLS = {
-    "independent_recon": 12,
-    "conditional_debug_recovery": 16,
-    "final_adversarial_critic": 8,
+    "independent_recon": 30,
+    "conditional_debug_recovery": 40,
+    "final_adversarial_critic": 20,
 }
 _ROLE_TOKENS = {
     "independent_recon": 12582912,
@@ -76,14 +76,14 @@ class CertificationPolicy(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     fixture_ids: tuple[str, str]
     repeat_count: Literal[2]
     primary_model: Literal["glm-5.3[1m]"]
     reasoning_effort: Literal["max"]
     context_tokens: Literal[1000000]
     max_output_tokens: Literal[128000]
-    max_model_requests_per_task: Literal[600]
+    max_model_requests_per_task: Literal[1500]
     alternate_model: Literal["deepseek-flash"]
     alternate_provider: Literal["https://api.deepseek.com"]
     alternate_api: Literal["chat_completions"]

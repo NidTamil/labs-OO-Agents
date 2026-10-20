@@ -163,9 +163,11 @@ def test_loads_two_runs_with_same_frozen_fixtures_without_readiness_claim(prepar
         for run in config.runs
     )
     assert len(config.fixtures) == 2
-    assert config.budgets.max_model_requests_per_task == 600
-    assert config.budgets.glm_and_memory_auxiliary_max_requests == 564
-    assert config.budgets.deepseek_max_requests == 36
+    assert config.budgets.max_model_requests_per_task == 1500
+    assert config.budgets.glm_and_memory_auxiliary_max_requests == 1410
+    assert config.budgets.deepseek_max_requests == 90
+    assert config.certification_policy.schema_version == 2
+    assert config.alternate_policy.schema_version == 2
     assert config.versions.vscode == "1.140.0"
     assert config.versions.claude_extension == "2.1.289"
     assert config.model_policy.primary == "glm-5.3[1m]"
@@ -196,7 +198,7 @@ def test_nested_config_is_immutable_and_policy_mutation_is_not_retained(prepared
         config.gbrain.allowed_models["unknown"] = "chat"
     policy = config.certification_policy
     policy.alternate_max_requests_by_role["independent_recon"] = 999
-    assert config.certification_policy.alternate_max_requests_by_role["independent_recon"] == 12
+    assert config.certification_policy.alternate_max_requests_by_role["independent_recon"] == 30
 
 
 @pytest.mark.parametrize(

@@ -1,12 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "fixture_ids": ["synthetic:length-header", "synthetic:chunk-table"],
   "repeat_count": 2,
   "primary_model": "glm-5.3[1m]",
   "reasoning_effort": "max",
   "context_tokens": 1000000,
   "max_output_tokens": 128000,
-  "max_model_requests_per_task": 600,
+  "max_model_requests_per_task": 1500,
   "alternate_model": "deepseek-flash",
   "alternate_provider": "https://api.deepseek.com",
   "alternate_api": "chat_completions",
@@ -14,9 +14,9 @@
   "alternate_reasoning_effort": "max",
   "alternate_context_tokens": 1048576,
   "alternate_max_requests_by_role": {
-    "independent_recon": 12,
-    "conditional_debug_recovery": 16,
-    "final_adversarial_critic": 8
+    "independent_recon": 30,
+    "conditional_debug_recovery": 40,
+    "final_adversarial_critic": 20
   },
   "alternate_max_tokens_by_role": {
     "independent_recon": 12582912,

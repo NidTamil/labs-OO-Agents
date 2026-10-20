@@ -237,7 +237,7 @@ def _certified_policy(certification: Mapping[str, Any], harness: Mapping[str, An
         if any(type(observed[role]) is not int for role in limits):
             raise RuntimeError("certified policy has non-integer DeepSeek role limits")
     if (
-        sum(role_requests.values()) != 36
+        sum(role_requests.values()) != alternate.deepseek_max_requests
         or sum(role_tokens.values()) != 37748736
         or sum(role_seconds.values()) != 9000
     ):

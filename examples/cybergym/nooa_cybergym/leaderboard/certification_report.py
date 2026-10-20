@@ -450,7 +450,10 @@ def _validate_models(
                 failures.append(f"{label}:DeepSeek role budget")
     if any(count > policy.max_model_requests_per_task for count in requests_by_fixture.values()):
         failures.append(f"{label}:shared model request budget")
-    if any(count > 36 for count in deepseek_by_fixture.values()):
+    if any(
+        count > sum(policy.alternate_max_requests_by_role.values())
+        for count in deepseek_by_fixture.values()
+    ):
         failures.append(f"{label}:DeepSeek request allocation")
     return totals
 

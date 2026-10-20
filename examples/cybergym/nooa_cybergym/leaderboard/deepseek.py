@@ -100,14 +100,14 @@ class ProviderPolicy(FrozenPolicy):
 
 
 ROLE_LIMITS = {
-    DeepSeekRole.INDEPENDENT_RECON: ("one_recon_lane", 12, 12582912, 3600),
+    DeepSeekRole.INDEPENDENT_RECON: ("one_recon_lane", 30, 12582912, 3600),
     DeepSeekRole.CONDITIONAL_DEBUG_RECOVERY: (
         "observable_vulnerable_side_failure",
-        16,
+        40,
         16777216,
         3600,
     ),
-    DeepSeekRole.FINAL_ADVERSARIAL_CRITIC: ("before_glm_parent_final_selection", 8, 8388608, 1800),
+    DeepSeekRole.FINAL_ADVERSARIAL_CRITIC: ("before_glm_parent_final_selection", 20, 8388608, 1800),
 }
 
 
@@ -142,16 +142,16 @@ def _literal_types(data, fields):
 
 
 class AlternateModelPolicy(FrozenPolicy):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     status: Literal["active"]
     models: tuple[ProviderPolicy, ...]
     routes: tuple[RoleRoute, ...]
     child_capabilities: tuple[str, ...]
     may_propose_poc: Literal[True]
     official_final_selector: Literal["glm_parent"]
-    shared_task_max_requests: Literal[600]
-    deepseek_max_requests: Literal[36]
-    glm_and_memory_auxiliary_max_requests: Literal[564]
+    shared_task_max_requests: Literal[1500]
+    deepseek_max_requests: Literal[90]
+    glm_and_memory_auxiliary_max_requests: Literal[1410]
     shared_task_wall_timeout_sec: Literal[43200]
     max_concurrent_children: Literal[3]
     counted_tokens: Literal["input_plus_output_including_thinking_and_cached_input_once"]
@@ -239,8 +239,8 @@ class SharedCampaignBudget:
 
     Reservations are irreversible: failed dispatches count. Elapsed time follows
     the single campaign clock, including work outside this adapter. Default
-    reservations belong only to GLM/memory (564); the trusted DeepSeek controller
-    uses its separate method (36). Neither allocation borrows the other's unused
+    reservations belong only to GLM/memory (1410); the trusted DeepSeek controller
+    uses its separate method (90). Neither allocation borrows the other's unused
     capacity. Do not expose the budget object to generated code. A native ledger
     adapter may subclass this interface and bind both reservation methods and the
     shared clock to the existing authoritative ledger; this in-memory base is not
@@ -262,15 +262,15 @@ class SharedCampaignBudget:
 
     def reserve_request(self):
         """Trusted GLM/memory reservation; no caller-selectable allocation knob."""
-        return self._reserve_allocation("glm_and_memory_auxiliary", 564)
+        return self._reserve_allocation("glm_and_memory_auxiliary", 1410)
 
     def reserve_deepseek_request(self):
         """Trusted DeepSeek controller reservation, never selected by model data."""
-        return self._reserve_allocation("deepseek", 36)
+        return self._reserve_allocation("deepseek", 90)
 
     def _reserve_allocation(self, allocation, allocation_limit):
         with self._lock:
-            if self._requests >= 600 or self.remaining_seconds() <= 0:
+            if self._requests >= 1500 or self.remaining_seconds() <= 0:
                 raise BudgetExceeded("shared campaign request/time budget exhausted")
             if self._allocation_requests[allocation] >= allocation_limit:
                 raise BudgetExceeded("declared caller request allocation exhausted")

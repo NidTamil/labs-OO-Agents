@@ -432,12 +432,37 @@ def test_deepseek_budget_is_checked_per_fixture_not_across_two_tasks(complete_pa
 
     for run in (first, second):
         for fixture_id in expected.policy.fixture_ids:
-            set_critic_requests(run, fixture_id, 7)
+            set_critic_requests(run, fixture_id, 19)
     assert compare_runs(first, second, expected=expected).passed
-    set_critic_requests(second, expected.policy.fixture_ids[1], 9)
+    set_critic_requests(second, expected.policy.fixture_ids[1], 21)
     report = compare_runs(first, second, expected=expected)
     assert not report.passed
     assert "synthetic-run-b:DeepSeek role budget" in report.failures
+
+
+def test_shared_request_ceiling_is_checked_at_1500_per_fixture(complete_pair):
+    first, second, expected = complete_pair
+
+    def set_primary_requests(run, fixture_id, count):
+        row = next(
+            item
+            for item in run["models"]
+            if item["fixture_id"] == fixture_id and item["role"] == "glm_parent"
+        )
+        run["totals"]["model_requests"] += count - row["requests"]
+        row["requests"] = count
+        row["provider_request_ids"] = [
+            f"{run['run_id']}-{fixture_id}-primary-{index}" for index in range(count)
+        ]
+
+    fixture_id = expected.policy.fixture_ids[0]
+    for run in (first, second):
+        set_primary_requests(run, fixture_id, 1497)
+    assert compare_runs(first, second, expected=expected).passed
+    set_primary_requests(second, fixture_id, 1498)
+    report = compare_runs(first, second, expected=expected)
+    assert not report.passed
+    assert "synthetic-run-b:shared model request budget" in report.failures
 
 
 def test_empty_or_missing_approved_capability_baseline_cannot_certify():
@@ -541,7 +566,7 @@ def test_missing_or_unobserved_gate_is_red_even_if_other_run_passed(complete_pai
             lambda run: run["models"][3].update({"reasoning_effort": "low"}),
             "DeepSeek role settings",
         ),
-        (lambda run: run["models"][1].update({"requests": 13}), "DeepSeek role budget"),
+        (lambda run: run["models"][1].update({"requests": 31}), "DeepSeek role budget"),
         (
             lambda run: run["models"][1].update({"observed_version": ""}),
             "provider version metadata",

@@ -123,8 +123,8 @@ def test_post_oracle_capture_continues_accounting_with_a_strict_auxiliary_cap():
 
     full = _PostOracleMemoryBudget(
         audit,
-        prior_requests=600,
-        prior_auxiliary_requests=563,
+        prior_requests=1500,
+        prior_auxiliary_requests=1409,
         remaining_seconds=120,
     )
     with pytest.raises(PermissionError, match="post-oracle memory budget"):

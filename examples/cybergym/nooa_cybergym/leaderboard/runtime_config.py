@@ -269,12 +269,12 @@ class NativeVersions:
 class RuntimeBudgets:
     max_parallel_tasks: int = 1
     task_wall_timeout_sec: int = 43200
-    max_model_requests_per_task: int = 600
+    max_model_requests_per_task: int = 1500
     max_output_tokens_per_request: int = 128000
     context_tokens: int = 1000000
     deepseek_context_tokens: int = 1048576
-    deepseek_max_requests: int = 36
-    glm_and_memory_auxiliary_max_requests: int = 564
+    deepseek_max_requests: int = 90
+    glm_and_memory_auxiliary_max_requests: int = 1410
     deepseek_max_counted_tokens: int = 37748736
     deepseek_max_role_seconds: int = 9000
     max_concurrent_children: int = 3

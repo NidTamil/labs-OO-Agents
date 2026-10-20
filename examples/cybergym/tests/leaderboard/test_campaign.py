@@ -341,7 +341,7 @@ def fixture(tmp_path):
                 "api": "chat_completions",
                 "context_tokens": 1048576,
                 "max_output_tokens": 128000,
-                "max_requests": 36,
+                "max_requests": 90,
                 "role_tokens": {
                     "independent_recon": 12582912,
                     "conditional_debug_recovery": 16777216,
@@ -353,9 +353,9 @@ def fixture(tmp_path):
                     "final_adversarial_critic": 1800,
                 },
                 "role_requests": {
-                    "independent_recon": 12,
-                    "conditional_debug_recovery": 16,
-                    "final_adversarial_critic": 8,
+                    "independent_recon": 30,
+                    "conditional_debug_recovery": 40,
+                    "final_adversarial_critic": 20,
                 },
             },
         },

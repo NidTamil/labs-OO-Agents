@@ -142,8 +142,8 @@ class _PostOracleMemoryBudget:
         if (
             type(prior_requests) is not int
             or type(prior_auxiliary_requests) is not int
-            or not 0 <= prior_auxiliary_requests <= 564
-            or not prior_auxiliary_requests <= prior_requests <= 600
+            or not 0 <= prior_auxiliary_requests <= 1410
+            or not prior_auxiliary_requests <= prior_requests <= 1500
             or type(remaining_seconds) not in (int, float)
             or not 0 <= remaining_seconds <= 43200
         ):
@@ -163,8 +163,8 @@ class _PostOracleMemoryBudget:
             if (
                 self.remaining_seconds() <= 0
                 or self._reserved >= 4
-                or self._prior_requests + self._reserved >= 600
-                or self._prior_auxiliary + self._reserved >= 564
+                or self._prior_requests + self._reserved >= 1500
+                or self._prior_auxiliary + self._reserved >= 1410
             ):
                 self._audit.record({"event": "post_oracle_memory_model_denied"})
                 raise PermissionError("post-oracle memory budget exhausted")

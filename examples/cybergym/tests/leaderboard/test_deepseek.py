@@ -183,8 +183,8 @@ def test_untrusted_role_value_cannot_select_route(role):
     "field,value",
     [
         ("status", "disabled"),
-        ("deepseek_max_requests", 37),
-        ("shared_task_max_requests", 601),
+        ("deepseek_max_requests", 91),
+        ("shared_task_max_requests", 1501),
         ("max_concurrent_children", 4),
         ("official_final_selector", "deepseek"),
         ("fallback", "glm"),
@@ -326,47 +326,48 @@ def test_visible_provider_metadata_drift_halts_but_alias_weights_are_not_verifia
 
 def test_role_request_ceiling_is_enforced_without_borrowing():
     client, _, transport = controller()
-    for _ in range(12):
+    for _ in range(30):
         request(client)
     with pytest.raises(api().BudgetExceeded):
         request(client)
-    assert len(transport.calls) == 12
+    assert len(transport.calls) == 30
     request(client, api().DeepSeekRole.FINAL_ADVERSARIAL_CRITIC)
 
 
 def test_shared_campaign_budget_includes_other_controller_inference():
     d = api()
     budget = d.SharedCampaignBudget()
-    for _ in range(564):
+    for _ in range(1410):
         budget.reserve_request()
-    for _ in range(35):
+    for _ in range(89):
         budget.reserve_deepseek_request()
     client, _, transport = controller(budget=budget)
     request(client)
     with pytest.raises(d.BudgetExceeded):
         request(client, d.DeepSeekRole.FINAL_ADVERSARIAL_CRITIC)
     assert len(transport.calls) == 1
+    assert budget.snapshot()["requests"] == 1500
 
 
 def test_glm_memory_cannot_borrow_unused_deepseek_allocation():
     budget = api().SharedCampaignBudget()
-    for _ in range(564):
+    for _ in range(1410):
         budget.reserve_request()
     with pytest.raises(api().BudgetExceeded):
         budget.reserve_request()
-    assert budget.snapshot()["requests"] == 564
+    assert budget.snapshot()["requests"] == 1410
 
 
 def test_deepseek_cannot_borrow_unused_glm_memory_allocation():
     budget = api().SharedCampaignBudget()
-    for _ in range(36):
+    for _ in range(90):
         budget.reserve_deepseek_request()
     with pytest.raises(api().BudgetExceeded):
         budget.reserve_deepseek_request()
-    assert budget.snapshot()["deepseek_requests"] == 36
+    assert budget.snapshot()["deepseek_requests"] == 90
     assert budget.snapshot()["glm_and_memory_auxiliary_requests"] == 0
     budget.reserve_request()
-    assert budget.snapshot()["requests"] == 37
+    assert budget.snapshot()["requests"] == 91
 
 
 def test_default_budget_reservation_has_no_caller_selectable_allocation():

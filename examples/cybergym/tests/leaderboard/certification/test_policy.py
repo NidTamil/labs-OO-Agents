@@ -39,6 +39,13 @@ def test_policy_binds_active_role_limits_and_hashes() -> None:
     policy = CertificationPolicy.model_validate_json(
         (CONFIG / "certification-policy.json").read_text()
     )
+    assert policy.schema_version == 2
+    assert policy.max_model_requests_per_task == 1500
+    assert policy.alternate_max_requests_by_role == {
+        "independent_recon": 30,
+        "conditional_debug_recovery": 40,
+        "final_adversarial_critic": 20,
+    }
     assert_synthetic_only(
         requested_ids=list(policy.fixture_ids),
         cohort_ids={"arvo:1065"},
@@ -57,6 +64,6 @@ def test_policy_binds_active_role_limits_and_hashes() -> None:
 
 def test_certification_policy_rejects_mismatched_deepseek_calls() -> None:
     payload = json.loads((CONFIG / "certification-policy.json").read_text())
-    payload["alternate_max_requests_by_role"]["independent_recon"] = 13
+    payload["alternate_max_requests_by_role"]["independent_recon"] = 31
     with pytest.raises(ValueError, match="DeepSeek role limits"):
         CertificationPolicy.model_validate(payload)

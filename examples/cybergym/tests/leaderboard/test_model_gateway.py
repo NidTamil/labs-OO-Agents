@@ -827,11 +827,11 @@ def test_role_request_limit_is_enforced_without_borrowing(tmp_path):
         alternate_stream(),
         admission(DeepSeekRole.INDEPENDENT_RECON, trigger="one_recon_lane"),
     )
-    for _ in range(12):
+    for _ in range(30):
         run(core, "/v1/chat/completions", deepseek_payload())
     with pytest.raises(GatewayPolicyError, match="role request"):
         run(core, "/v1/chat/completions", deepseek_payload())
-    assert len(transport.calls) == 12
+    assert len(transport.calls) == 30
 
 
 def test_count_tokens_json_response_is_forwarded_and_counted_as_observed(tmp_path):
