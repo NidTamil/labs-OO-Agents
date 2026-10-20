@@ -12,6 +12,9 @@ from types import SimpleNamespace
 import pytest
 from nooa_cybergym.leaderboard.campaign import CampaignAction, CampaignState
 from nooa_cybergym.leaderboard.capabilities import CapabilityRegistry
+from nooa_cybergym.leaderboard.deepseek import AlternateModelPolicy
+from nooa_cybergym.leaderboard.model_gateway import ModelPolicy
+from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
 from nooa_cybergym.leaderboard.scored_campaign_inputs import (
     ScoredLaunchPreview,
     SignedCampaignInputs,
@@ -28,8 +31,9 @@ from nooa_cybergym.leaderboard.scored_worker_preflight import (
 )
 
 
+@pytest.mark.parametrize("takeover_enabled", [False, True])
 def test_scored_worker_preflight_requires_observed_image_then_fresh_ui_ack(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, takeover_enabled
 ):
     import nooa_cybergym.leaderboard.scored_worker_preflight as module
 
@@ -42,9 +46,11 @@ def test_scored_worker_preflight_requires_observed_image_then_fresh_ui_ack(
         "paths": {"evidence_root": str(tmp_path)},
     }
     native_image = "sha256:" + "a" * 64
+    takeover = PrimaryTakeoverPolicy() if takeover_enabled else None
     donor = SimpleNamespace(
         image_id=native_image,
-        alternate_policy=object(),
+        alternate_policy=alternate_policy(),
+        primary_takeover_policy=takeover,
         budgets=SimpleNamespace(task_wall_timeout_sec=3600),
         verify_unchanged=lambda: None,
     )
@@ -52,7 +58,14 @@ def test_scored_worker_preflight_requires_observed_image_then_fresh_ui_ack(
     material = ScoredControllerMaterial(config, object(), object(), object())
     registry = CapabilityRegistry(())
     ui = ScoredUiPreflight(object(), object())
-    harness = {"model_policy_sha256": "c" * 64}
+    model_policy = ModelPolicy(
+        "glm-5.3[1m]",
+        donor.alternate_policy,
+        registry.digest,
+        "https://api.z.ai/api/anthropic",
+        primary_takeover=takeover,
+    )
+    harness = {"model_policy_sha256": model_policy.digest}
 
     class Authority:
         def attest_signed(self, kind, envelope):
@@ -77,9 +90,6 @@ def test_scored_worker_preflight_requires_observed_image_then_fresh_ui_ack(
     monkeypatch.setattr(
         module, "require_previewed_scored_ui_client", lambda *_: observed.append("ui")
     )
-    monkeypatch.setattr(
-        module, "ModelPolicy", lambda *args: SimpleNamespace(digest="c" * 64), raising=False
-    )
     image = SimpleNamespace(id="sha256:" + "b" * 64)
     monkeypatch.setattr(
         module.docker,
@@ -94,7 +104,7 @@ def test_scored_worker_preflight_requires_observed_image_then_fresh_ui_ack(
     image.id = native_image
     plan = prepare_previewed_scored_worker(preview, tmp_path / "scored-launch.json")
     assert plan.observed_image_id == native_image
-    assert plan.model_policy_sha256 == "c" * 64
+    assert plan.model_policy_sha256 == model_policy.digest
     assert plan.registry is registry
     assert plan.ui is ui
     assert observed == ["ui"]
@@ -105,12 +115,18 @@ def test_scored_worker_preflight_requires_observed_image_then_fresh_ui_ack(
     assert observed == ["ui"]
 
 
+def alternate_policy():
+    path = Path(__file__).resolve().parents[2] / "leaderboard/config/alternate-model.json"
+    return AlternateModelPolicy.model_validate_json(path.read_bytes())
+
+
+@pytest.mark.parametrize("takeover_enabled", [False, True])
 def test_admitted_worker_binds_exact_preview_to_driver_executor_and_recovery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, takeover_enabled
 ):
     import nooa_cybergym.leaderboard.scored_worker_preflight as module
 
-    harness = {"model_policy_sha256": "9" * 64}
+    harness = {}
 
     class Authority:
         def attest_signed(self, kind, envelope):
@@ -160,9 +176,11 @@ def test_admitted_worker_binds_exact_preview_to_driver_executor_and_recovery(
         },
     }
     native_image = "sha256:" + "f" * 64
+    takeover = PrimaryTakeoverPolicy() if takeover_enabled else None
     donor = SimpleNamespace(
         image_id=native_image,
-        alternate_policy=object(),
+        alternate_policy=alternate_policy(),
+        primary_takeover_policy=takeover,
         budgets=SimpleNamespace(task_wall_timeout_sec=3600),
         verify_unchanged=lambda: None,
     )
@@ -171,6 +189,14 @@ def test_admitted_worker_binds_exact_preview_to_driver_executor_and_recovery(
         config, SimpleNamespace(name="controller-paths"), object(), object()
     )
     registry = CapabilityRegistry(())
+    model_policy = ModelPolicy(
+        "glm-5.3[1m]",
+        donor.alternate_policy,
+        registry.digest,
+        "https://api.z.ai/api/anthropic",
+        primary_takeover=takeover,
+    )
+    harness["model_policy_sha256"] = model_policy.digest
     mailbox = SimpleNamespace(run_id="run-1", root=tmp_path)
     ui = ScoredUiPreflight(mailbox, SimpleNamespace(mailbox=mailbox))
     plan = ScoredWorkerPlan(
@@ -181,7 +207,7 @@ def test_admitted_worker_binds_exact_preview_to_driver_executor_and_recovery(
         registry,
         ui,
         native_image,
-        "9" * 64,
+        model_policy.digest,
     )
     observed = {}
     monkeypatch.setattr(
@@ -190,7 +216,6 @@ def test_admitted_worker_binds_exact_preview_to_driver_executor_and_recovery(
     monkeypatch.setattr(
         module, "load_previewed_scored_launch_config", lambda *_: config, raising=False
     )
-    monkeypatch.setattr(module, "ModelPolicy", lambda *args: SimpleNamespace(digest="9" * 64))
     monkeypatch.setattr(
         module.docker,
         "from_env",
@@ -233,7 +258,7 @@ def test_admitted_worker_binds_exact_preview_to_driver_executor_and_recovery(
     with pytest.raises(RuntimeError, match="model policy"):
         bind_admitted_scored_worker(plan, admitted)
     assert observed == {}
-    harness["model_policy_sha256"] = "9" * 64
+    harness["model_policy_sha256"] = model_policy.digest
 
     bound = bind_admitted_scored_worker(plan, admitted)
     assert bound.state is admitted
@@ -241,6 +266,7 @@ def test_admitted_worker_binds_exact_preview_to_driver_executor_and_recovery(
     assert observed["admission"]["state"] is admitted
     assert observed["executor_args"]["state"] is admitted
     assert observed["recovery"]["expected_model"] == "glm-5.3"
+    assert observed["recovery"]["expected_policy_sha256"] == model_policy.digest
     worker_driver = observed["worker_args"]["driver"]
     worker_driver(task_ids[0], on_prepared=lambda _: None, stop=threading.Event())
     assert observed["driver_args"]["state"] is admitted

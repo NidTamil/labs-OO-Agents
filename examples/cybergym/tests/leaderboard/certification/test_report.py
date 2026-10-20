@@ -812,3 +812,478 @@ def test_signing_rejects_report_payload_mutation_after_comparison(complete_pair)
     verifier = Ed25519Verifier({"synthetic-test-key": private_key.public_key()})
     with pytest.raises(ValueError, match="report changed"):
         sign_report(report, signer=signer, verifier=verifier)
+
+
+def _selection_attestation(run):
+    return {
+        item["fixture_id"]: {
+            "declaration": json.loads(canonical_json(item["final_selection"])),
+            "sha256": hashlib.sha256(canonical_json(item["final_selection"])).hexdigest(),
+        }
+        for item in run["attempts"]
+    }
+
+
+# Schema-two accounting fixtures exercise report validation only; they are not live evidence.
+def _accounting_pair():
+    import copy
+
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    expected = replace(
+        _expectations(),
+        takeover_policy=PrimaryTakeoverPolicy(),
+        memory_model_bindings={
+            "memory-model": {"provider": "memory-provider", "kind": "completion"}
+        },
+    )
+    runs = [_run(label, expected) for label in ("new-run-a", "new-run-b")]
+    total_keys = (
+        "model_requests",
+        "observed_requests",
+        "unknown_usage_requests",
+        "unmatched_reservations",
+        "input_tokens",
+        "output_tokens",
+        "cache_tokens",
+        "counted_tokens",
+        "conservative_tokens",
+        "unbounded_unknown_usage_requests",
+    )
+    for run in runs:
+        run["schema_version"] = 2
+        del run["models"]
+        run["request_accounting"] = {}
+        run["totals"] = dict.fromkeys(total_keys, 0)
+        run["totals"]["tool_calls"] = 2
+        for attempt in run["attempts"]:
+            fixture = attempt["fixture_id"]
+            attempt_id = f"{run['run_id']}-{fixture}"
+            rows = []
+            lanes = [
+                "primary",
+                "count_tokens",
+                "advisory",
+                "advisory",
+                "advisory",
+                "memory",
+                "post_oracle_memory",
+            ]
+            roles = [
+                "primary",
+                "primary",
+                "independent_recon",
+                "conditional_debug_recovery",
+                "final_adversarial_critic",
+                "completion",
+                "completion",
+            ]
+            counts = {"primary_and_memory": 0, "deepseek_advisory": 0}
+            for index, (lane, role) in enumerate(zip(lanes, roles, strict=True), 1):
+                allocation = "deepseek_advisory" if lane == "advisory" else "primary_and_memory"
+                counts[allocation] += 1
+                provider = (
+                    "deepseek-official-api"
+                    if lane == "advisory"
+                    else "memory-provider"
+                    if "memory" in lane
+                    else "zai-coding-plan"
+                )
+                model = (
+                    "deepseek-flash"
+                    if lane == "advisory"
+                    else "memory-model"
+                    if "memory" in lane
+                    else "glm-5.3[1m]"
+                )
+                rows.append(
+                    {
+                        "task_ordinal": index,
+                        "allocation": allocation,
+                        "allocation_ordinal": counts[allocation],
+                        "reservation_request_id": f"{attempt_id}-reserve-{index}",
+                        "run_id": run["run_id"],
+                        "epoch": None,
+                        "run_ordinal": index,
+                        "lane": lane,
+                        "request_id": f"{attempt_id}-request-{index}",
+                        "provider_attempt_id": f"{attempt_id}-provider-{index}"
+                        if lane in {"primary", "count_tokens"}
+                        else None,
+                        "permit_id": f"{attempt_id}-permit-{index}"
+                        if lane not in {"primary", "count_tokens"}
+                        else None,
+                        "provider": provider,
+                        "configured_model": model,
+                        "returned_model": "glm-5.3" if model == "glm-5.3[1m]" else model,
+                        "provider_request_id": f"{attempt_id}-upstream-{index}",
+                        "model_version": None,
+                        "system_fingerprint": None,
+                        "role": role,
+                        "outcome": "completed",
+                        "usage_status": "observed",
+                        "input_tokens": 10,
+                        "output_tokens": 0 if lane == "count_tokens" else 20,
+                        "cache_tokens": 0,
+                        "counted_tokens": 10 if lane == "count_tokens" else 0,
+                        "conservative_tokens": 0,
+                        "elapsed_seconds": 1,
+                    }
+                )
+            totals = dict.fromkeys(total_keys, 0)
+            totals.update(model_requests=len(rows), observed_requests=len(rows))
+            for key in (
+                "input_tokens",
+                "output_tokens",
+                "cache_tokens",
+                "counted_tokens",
+                "conservative_tokens",
+            ):
+                totals[key] = sum(row[key] for row in rows)
+            manifest = {
+                "schema_version": 2,
+                "task_id": fixture,
+                "attempt_id": attempt_id,
+                "takeover_policy_sha256": expected.takeover_policy.digest,
+                "registry_sha256": expected.registry.digest,
+                "alternate_policy_sha256": expected.binding.alternate_policy_sha256,
+                "memory_model_bindings_sha256": expected.memory_model_bindings_sha256,
+                "evidence_sha256": dict.fromkeys(
+                    ("runtime-events.jsonl", "model-requests.jsonl", "model-usage.jsonl"), "c" * 64
+                ),
+                "requests": rows,
+                "allocations": counts,
+                "totals": totals,
+                "reconciled": True,
+                "transitions": [],
+            }
+            run["request_accounting"][fixture] = {
+                "manifest": manifest,
+                "sha256": hashlib.sha256(canonical_json(manifest)).hexdigest(),
+            }
+            for key in total_keys:
+                run["totals"][key] += totals[key]
+            first = rows[0]
+            attempt.update(
+                attempt_id=attempt_id,
+                final_selected_by="primary_parent",
+                final_selection={
+                    "schema_version": 2,
+                    "task_id": fixture,
+                    "attempt_id": attempt_id,
+                    "session_id": f"{attempt_id}-session",
+                    "tool_id": f"{attempt_id}-finalizer-tool",
+                    "candidate_path": "/workspace/output/final-poc",
+                    "sha256": attempt["final_sha256"],
+                    "byte_length": 4,
+                    "selected_at": "2026-10-21T00:00:00+00:00",
+                    "selection_reason": "Synthetic candidate validated by parent",
+                    "final_declaration": True,
+                    "selected_by": "primary_parent",
+                    "provider": first["provider"],
+                    "configured_model": first["configured_model"],
+                    "provider_model": first["returned_model"],
+                    "provider_attempt_id": first["provider_attempt_id"],
+                    "request_id": first["request_id"],
+                    "takeover_policy_sha256": expected.takeover_policy.digest,
+                },
+            )
+    independent = {run["run_id"]: copy.deepcopy(run["request_accounting"]) for run in runs}
+    independent_final = {run["run_id"]: _selection_attestation(run) for run in runs}
+    old_attest = expected.attest_raw_run
+    expected = replace(
+        expected,
+        attest_raw_run=lambda run: {
+            **old_attest(run),
+            "schema_version": 2,
+            "request_accounting": independent[run["run_id"]],
+            "primary_final_selections": independent_final[run["run_id"]],
+        },
+    )
+    return *runs, expected
+
+
+def test_v2_report_totals_include_count_tokens_and_both_memory_phases():
+    first, second, expected = _accounting_pair()
+    report = compare_runs(first, second, expected=expected)
+    assert report.passed, report.failures
+    assert report.payload["schema_version"] == 2
+    assert report.payload["runs"][0]["totals"]["model_requests"] == 14
+    assert report.payload["runs"][0]["request_accounting"] == first["request_accounting"]
+    assert report.payload["takeover_policy_sha256"] == expected.takeover_policy.digest
+    assert report.payload["official_launch_authorised"] is False
+
+
+def test_v2_report_cannot_use_legacy_attestation_or_legacy_models():
+    first, second, expected = _accounting_pair()
+    legacy_attest = _expectations().attest_raw_run
+    assert not compare_runs(
+        first, second, expected=replace(expected, attest_raw_run=legacy_attest)
+    ).passed
+    first["models"] = []
+    assert not compare_runs(first, second, expected=expected).passed
+
+
+def test_v2_report_rejects_accounting_changed_after_independent_attestation():
+    first, second, expected = _accounting_pair()
+    accounting = first["request_accounting"][expected.policy.fixture_ids[0]]
+    accounting["manifest"]["requests"][-1]["provider_request_id"] = "substituted"
+    accounting["sha256"] = hashlib.sha256(canonical_json(accounting["manifest"])).hexdigest()
+    assert not compare_runs(first, second, expected=expected).passed
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "unreconciled",
+        "unbounded",
+        "orphan",
+        "allocation",
+        "final_adviser",
+        "missing_gate",
+        "missing_fixture",
+        "reused_request",
+    ],
+)
+def test_v2_report_fail_closed_accounting_and_gate_boundaries(mutation):
+    first, second, expected = _accounting_pair()
+    fixture = expected.policy.fixture_ids[0]
+    entry = first["request_accounting"][fixture]
+    manifest = entry["manifest"]
+    if mutation == "unreconciled":
+        manifest["reconciled"] = False
+    elif mutation == "unbounded":
+        manifest["totals"]["unbounded_unknown_usage_requests"] = 1
+    elif mutation == "orphan":
+        manifest["totals"]["unmatched_reservations"] = 1
+    elif mutation == "allocation":
+        manifest["allocations"]["primary_and_memory"] = 1411
+    elif mutation == "final_adviser":
+        first["attempts"][0]["final_selection"]["provider_attempt_id"] = manifest["requests"][2][
+            "permit_id"
+        ]
+    elif mutation == "missing_gate":
+        del first["gates"]["timeout_failure"]
+    elif mutation == "missing_fixture":
+        del first["request_accounting"][fixture]
+    elif mutation == "reused_request":
+        second["request_accounting"][fixture] = entry
+    entry["sha256"] = hashlib.sha256(canonical_json(manifest)).hexdigest()
+    old_attest = _expectations().attest_raw_run
+    expected = replace(
+        expected,
+        attest_raw_run=lambda run: {
+            **old_attest(run),
+            "schema_version": 2,
+            "request_accounting": run["request_accounting"],
+            "primary_final_selections": _selection_attestation(run),
+        },
+    )
+    assert not compare_runs(first, second, expected=expected).passed
+
+
+def test_legacy_report_rejects_new_accounting_even_with_legacy_schema():
+    first, second, expected = (
+        _run("a", _expectations()),
+        _run("b", _expectations()),
+        _expectations(),
+    )
+    first["request_accounting"] = {}
+    assert not compare_runs(first, second, expected=expected).passed
+
+
+def test_v2_report_uses_real_raw_accounting_with_failed_glm_and_deepseek_final(
+    tmp_path, monkeypatch
+):
+    import copy
+    import importlib.util
+
+    from nooa_cybergym.leaderboard.raw_request_accounting import verify_request_accounting
+
+    spec = importlib.util.spec_from_file_location(
+        "report_raw_accounting_fixture", Path(__file__).with_name("test_raw_request_accounting.py")
+    )
+    raw_fixture = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(raw_fixture)
+    first, second, expected = _accounting_pair()
+    expected = replace(expected, memory_model_bindings=raw_fixture.BINDINGS)
+    independent, independent_final = {}, {}
+    for run in (first, second):
+        run["hashes"] = expected.all_hashes
+        run["request_accounting"] = {}
+        run["totals"] = dict.fromkeys(run["totals"], 0)
+        run["totals"]["tool_calls"] = 2
+        for attempt in run["attempts"]:
+            fixture = attempt["fixture_id"]
+            attempt_id = attempt["attempt_id"]
+            monkeypatch.setattr(raw_fixture, "TASK", fixture)
+            monkeypatch.setattr(raw_fixture, "ATTEMPT", attempt_id)
+            logs = raw_fixture._fixture()
+            identity_keys = {
+                "request_id",
+                "provider_attempt_id",
+                "failed_provider_attempt_id",
+                "fallback_provider_attempt_id",
+                "provider_request_id",
+                "permit_id",
+            }
+
+            def adapt(value, *, attempt_id=attempt_id, identity_keys=identity_keys):
+                if isinstance(value, list):
+                    return [adapt(item) for item in value]
+                if isinstance(value, dict):
+                    return {
+                        key: f"{attempt_id}-{item}"
+                        if key in identity_keys and isinstance(item, str)
+                        else expected.registry.digest
+                        if key == "registry_digest"
+                        else expected.binding.alternate_policy_sha256
+                        if key == "policy_digest"
+                        else adapt(item)
+                        for key, item in value.items()
+                    }
+                return value
+
+            logs = adapt(list(logs))
+            root = tmp_path / attempt_id.replace(":", "-")
+            root.mkdir()
+            raw_fixture._write(root, *logs)
+            verified = verify_request_accounting(
+                root,
+                task_id=fixture,
+                attempt_id=attempt_id,
+                takeover_policy=expected.takeover_policy,
+                registry_sha256=expected.registry.digest,
+                alternate_policy_sha256=expected.binding.alternate_policy_sha256,
+                memory_model_bindings=expected.memory_model_bindings,
+            )
+            manifest = verified.manifest
+            run["request_accounting"][fixture] = {"manifest": manifest, "sha256": verified.digest}
+            for key, value in manifest["totals"].items():
+                run["totals"][key] += value
+            final = manifest["requests"][2]
+            attempt["final_selection"].update(
+                provider=final["provider"],
+                configured_model=final["configured_model"],
+                provider_model=final["returned_model"],
+                provider_attempt_id=final["provider_attempt_id"],
+                request_id=final["request_id"],
+            )
+        independent[run["run_id"]] = copy.deepcopy(run["request_accounting"])
+        independent_final[run["run_id"]] = _selection_attestation(run)
+    old_attest = _expectations().attest_raw_run
+    expected = replace(
+        expected,
+        attest_raw_run=lambda run: {
+            **old_attest(run),
+            "schema_version": 2,
+            "request_accounting": independent[run["run_id"]],
+            "primary_final_selections": independent_final[run["run_id"]],
+        },
+    )
+    report = compare_runs(first, second, expected=expected)
+    assert report.passed, report.failures
+    observed = report.payload["runs"][0]
+    assert observed["totals"]["model_requests"] == 16
+    assert observed["totals"]["unknown_usage_requests"] == 2
+    assert observed["totals"]["conservative_tokens"] == 2_000_000
+    assert observed["attempts"][0]["final_selection"]["provider"] == "deepseek-official-api"
+    assert (
+        observed["request_accounting"][expected.policy.fixture_ids[0]]["manifest"]["requests"][6][
+            "provider_request_id"
+        ]
+        is None
+    )
+
+
+def test_v2_report_rejects_another_observed_primary_as_final_selector():
+    import copy
+
+    first, second, expected = _accounting_pair()
+    fixture = expected.policy.fixture_ids[0]
+    entry = first["request_accounting"][fixture]
+    manifest = entry["manifest"]
+    other = copy.deepcopy(manifest["requests"][0])
+    other.update(
+        task_ordinal=8,
+        allocation_ordinal=5,
+        reservation_request_id="other-reservation",
+        request_id="other-native",
+        provider_attempt_id="other-primary-attempt",
+        provider_request_id="other-upstream",
+        provider="deepseek-official-api",
+        configured_model="deepseek-flash",
+        returned_model="deepseek-flash",
+    )
+    manifest["requests"].append(other)
+    manifest["allocations"]["primary_and_memory"] += 1
+    for key, value in {
+        "model_requests": 1,
+        "observed_requests": 1,
+        "input_tokens": 10,
+        "output_tokens": 20,
+    }.items():
+        manifest["totals"][key] += value
+        first["totals"][key] += value
+    entry["sha256"] = hashlib.sha256(canonical_json(manifest)).hexdigest()
+    old_attest = expected.attest_raw_run
+    independent = {
+        run["run_id"]: copy.deepcopy(run["request_accounting"]) for run in (first, second)
+    }
+    expected = replace(
+        expected,
+        attest_raw_run=lambda run: {
+            **old_attest(run),
+            "request_accounting": independent[run["run_id"]],
+        },
+    )
+    assert compare_runs(first, second, expected=expected).passed
+    first["attempts"][0]["final_selection"].update(
+        provider=other["provider"],
+        configured_model=other["configured_model"],
+        provider_model=other["returned_model"],
+        provider_attempt_id=other["provider_attempt_id"],
+        request_id=other["request_id"],
+    )
+    report = compare_runs(first, second, expected=expected)
+    assert not report.passed
+    assert "new-run-a:independent final selection absent or different" in report.failures
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("task_id", "synthetic:chunk-table"),
+        ("attempt_id", "other-attempt"),
+        ("session_id", "other-session"),
+        ("tool_id", "other-tool"),
+        ("candidate_path", "/workspace/output/other-poc"),
+        ("sha256", "d" * 64),
+        ("byte_length", 8),
+        ("selection_reason", "substituted reason"),
+        ("selected_at", "2026-10-21T00:01:00+00:00"),
+    ],
+)
+def test_v2_report_rejects_final_custody_substitution(field, value):
+    first, second, expected = _accounting_pair()
+    assert compare_runs(first, second, expected=expected).passed
+    first["attempts"][0]["final_selection"][field] = value
+    assert not compare_runs(first, second, expected=expected).passed
+
+
+@pytest.mark.parametrize("change", ["missing", "digest", "fixture"])
+def test_v2_report_requires_complete_independent_final_attestation(change):
+    first, second, expected = _accounting_pair()
+    old_attest = expected.attest_raw_run
+
+    def attest(run):
+        result = old_attest(run)
+        if change == "missing":
+            result.pop("primary_final_selections")
+        elif change == "digest":
+            result["primary_final_selections"][expected.policy.fixture_ids[0]]["sha256"] = "0" * 64
+        else:
+            result["primary_final_selections"].pop(expected.policy.fixture_ids[0])
+        return result
+
+    assert not compare_runs(first, second, expected=replace(expected, attest_raw_run=attest)).passed

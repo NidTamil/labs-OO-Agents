@@ -10,12 +10,17 @@ from types import SimpleNamespace
 
 import pytest
 from nooa_cybergym.leaderboard.capabilities import CapabilityRegistry
-from nooa_cybergym.leaderboard.model_gateway import PRIMARY_MODEL
+from nooa_cybergym.leaderboard.deepseek import AlternateModelPolicy
+from nooa_cybergym.leaderboard.model_gateway import PRIMARY_MODEL, ModelPolicy
+from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
 from nooa_cybergym.leaderboard.scored_capability_admission import ScoredCapabilityAdmission
 from nooa_cybergym.leaderboard.scored_runtime_binding import bind_scored_runtime
 
 
-def test_scored_runtime_binds_live_registry_and_signed_image_manifest(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("takeover_enabled", [False, True])
+def test_scored_runtime_binds_live_registry_and_signed_image_manifest(
+    tmp_path: Path, monkeypatch, takeover_enabled
+):
     import nooa_cybergym.leaderboard.scored_runtime_binding as module
 
     component = CapabilityRegistry(())
@@ -27,23 +32,33 @@ def test_scored_runtime_binds_live_registry_and_signed_image_manifest(tmp_path: 
     )
     image_id = "sha256:" + "a" * 64
     calls = []
+    takeover = PrimaryTakeoverPolicy() if takeover_enabled else None
+    alternate_path = Path(__file__).resolve().parents[2] / "leaderboard/config/alternate-model.json"
     donor = SimpleNamespace(
         image_id=image_id,
         registry=component,
         freeze_sha256="c" * 64,
-        alternate_policy=SimpleNamespace(),
+        alternate_policy=AlternateModelPolicy.model_validate_json(alternate_path.read_bytes()),
+        primary_takeover_policy=takeover,
         verify_unchanged=lambda: calls.append("donor"),
     )
     image_pin = ["b" * 64]
     bindings_path = tmp_path / "bindings.json"
     bindings_path.write_bytes(b"frozen-binding")
+    model_policy = ModelPolicy(
+        PRIMARY_MODEL,
+        donor.alternate_policy,
+        scored.digest,
+        "https://api.z.ai/api/anthropic",
+        primary_takeover=takeover,
+    )
     authority = SimpleNamespace(
         attest_signed=lambda kind, raw: (
             {
                 "scored_images_sha256": image_pin[0],
                 "donor_configuration_sha256": "c" * 64,
                 "capability_bindings_sha256": hashlib.sha256(b"frozen-binding").hexdigest(),
-                "model_policy_sha256": "e" * 64,
+                "model_policy_sha256": model_policy.digest,
                 "epoch": "epoch-1",
             }
             if kind == "harness_lock" and raw == b"signed-lock"
@@ -86,13 +101,6 @@ def test_scored_runtime_binds_live_registry_and_signed_image_manifest(tmp_path: 
         "load_captured_native_schemas",
         lambda path, registry: {"Read": "c" * 64},
     )
-    monkeypatch.setattr(
-        module,
-        "ModelPolicy",
-        lambda primary, alternate, digest, url: SimpleNamespace(
-            primary=primary, capability_policy_sha256=digest, digest="e" * 64
-        ),
-    )
     result = bind_scored_runtime(
         donor=donor,
         state=state,
@@ -107,6 +115,8 @@ def test_scored_runtime_binds_live_registry_and_signed_image_manifest(tmp_path: 
     assert result.bindings == ("bound",)
     assert result.captured_schemas == {"Read": "c" * 64}
     assert result.model_policy.primary == PRIMARY_MODEL
+    assert result.model_policy.primary_takeover is takeover
+    assert result.model_policy.digest == model_policy.digest
     assert result.model_policy.capability_policy_sha256 == scored.digest
     assert calls[0] == "donor"
     assert calls[1] == (

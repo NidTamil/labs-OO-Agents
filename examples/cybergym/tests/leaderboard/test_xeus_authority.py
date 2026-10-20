@@ -215,6 +215,25 @@ def created_event(run_id="run-1"):
     }
 
 
+def test_budget_kind_requires_verified_canonical_signature(adapter):
+    authority, _, _ = adapter
+    payload = {
+        "schema_version": 1,
+        "artifact_kind": "subset_run_budget",
+        "scope": "native_subset_dry_run_level1",
+        "run_id": "run-1",
+        "epoch": "epoch-1",
+        "task_ids": [],
+        "max_elapsed_seconds": 60,
+        "max_spend_units": 1,
+        "metering_policy_sha256": "a" * 64,
+    }
+    assert authority.attest_signed("subset_run_budget", signed(payload)) == payload
+    assert authority.attest_signed("subset_run_budget", signed(payload, "invalid")) is None
+    payload["artifact_kind"] = "subset_dry_run_admission"
+    assert authority.attest_signed("subset_run_budget", signed(payload)) is None
+
+
 def test_native_verifier_must_accept_canonical_signed_payload(adapter):
     authority, _, _ = adapter
     payload = {"schema_version": 1, "task_ids": [], "tasks_json_sha256": "a" * 64}

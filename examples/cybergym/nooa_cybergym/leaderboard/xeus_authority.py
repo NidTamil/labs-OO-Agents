@@ -56,6 +56,19 @@ _REQUIRED_SIGNED_KEYS = {
     "terminal_receipt": frozenset(
         {"schema_version", "artifact_kind", "run_id", "epoch", "task_id", "status"}
     ),
+    "subset_run_budget": frozenset(
+        {
+            "schema_version",
+            "artifact_kind",
+            "scope",
+            "run_id",
+            "epoch",
+            "task_ids",
+            "max_elapsed_seconds",
+            "max_spend_units",
+            "metering_policy_sha256",
+        }
+    ),
 }
 _LIFECYCLE_TYPES = frozenset({"campaign_created", "prepared", "started", "terminal"})
 

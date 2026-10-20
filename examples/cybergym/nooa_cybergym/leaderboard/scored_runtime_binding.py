@@ -61,7 +61,11 @@ def bind_scored_runtime(
         task_id=task_id, registry=registry, observed_image_id=observed_image_id
     )
     policy = ModelPolicy(
-        PRIMARY_MODEL, donor.alternate_policy, registry.digest, PRIMARY_CODING_PLAN_BASE_URL
+        PRIMARY_MODEL,
+        donor.alternate_policy,
+        registry.digest,
+        PRIMARY_CODING_PLAN_BASE_URL,
+        primary_takeover=donor.primary_takeover_policy,
     )
     harness = state.authority.attest_signed("harness_lock", admission._harness_lock)
     if (

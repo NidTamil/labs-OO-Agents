@@ -91,6 +91,7 @@ def prepare_previewed_scored_worker(
         signers.donor.alternate_policy,
         registry.digest,
         PRIMARY_CODING_PLAN_BASE_URL,
+        primary_takeover=signers.donor.primary_takeover_policy,
     )
     harness = preview.authority.attest_signed("harness_lock", preview.inputs.harness_lock)
     if type(harness) is not dict or harness.get("model_policy_sha256") != model_policy.digest:
@@ -146,6 +147,7 @@ def bind_admitted_scored_worker(
         plan.signers.donor.alternate_policy,
         plan.registry.digest,
         PRIMARY_CODING_PLAN_BASE_URL,
+        primary_takeover=plan.signers.donor.primary_takeover_policy,
     )
     harness = state.authority.attest_signed("harness_lock", plan.preview.inputs.harness_lock)
     if (

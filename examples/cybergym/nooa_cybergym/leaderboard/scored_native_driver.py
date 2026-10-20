@@ -502,7 +502,8 @@ def run(
             "oracle_true": terminal_payload["oracle_true"],
             "terminal_receipt_sha256": hashlib.sha256(terminal).hexdigest(),
             "provider_dispatched": _verified_primary_provider(
-                stage.evidence / "model-requests.jsonl"
+                stage.evidence / "model-requests.jsonl",
+                takeover_policy=config.primary_takeover_policy,
             ),
             "memory_episode_written": episode is not None,
             "memory_episode_content_hash": (

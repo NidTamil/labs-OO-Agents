@@ -38,6 +38,7 @@ from .native_launcher import NativeLaunchAuthority, build_launch_manifest
 from .native_process import frozen_hook_verifier, frozen_parent_verifier
 from .native_start_intent import wait_start_intent
 from .native_workflows import frozen_workflows
+from .primary_takeover import PrimaryTakeoverPolicy
 from .run_request_budget import RunRequestBudget
 from .runtime_config import NativeRuntimeConfig, load_runtime_config
 from .runtime_custody import TaskRuntimeContext
@@ -89,8 +90,61 @@ def _quiesce_and_stop(services, container) -> None:
         raise RuntimeError("native solver did not stop before final lock")
 
 
-def _verified_primary_provider(path: Path) -> bool:
-    """Require an audited completed GLM response, not a started auxiliary lane."""
+def _verified_primary_provider(
+    path: Path, *, takeover_policy: PrimaryTakeoverPolicy | None = None
+) -> bool:
+    """Mark an observed primary completion; full attestation checks its raw custody."""
+    if takeover_policy is not None:
+        if type(takeover_policy) is not PrimaryTakeoverPolicy:
+            return False
+        try:
+            if path.stat().st_size > 16 * 1024 * 1024:
+                return False
+            raw = path.read_bytes()
+            if not raw.endswith(b"\n"):
+                return False
+            rows = [json.loads(line) for line in raw.splitlines()]
+            if any(type(row) is not dict for row in rows):
+                return False
+            for index, row in enumerate(rows):
+                if (
+                    row.get("event") != "request_terminal"
+                    or row.get("role") != "primary"
+                    or row.get("outcome") != "completed"
+                    or row.get("usage_status") != "observed"
+                    or row.get("takeover_policy_sha256") != takeover_policy.digest
+                    or any(
+                        type(row.get(key)) is not str or not row[key]
+                        for key in (
+                            "task_id",
+                            "attempt_id",
+                            "request_id",
+                            "provider_attempt_id",
+                            "provider_request_id",
+                        )
+                    )
+                    or not any(
+                        row.get("provider") == route.provider
+                        and row.get("configured_model") == route.model
+                        and row.get("returned_model") == route.wire_model
+                        and row.get("upstream_endpoint") == route.base_url + "/v1/messages"
+                        for route in (takeover_policy.initial, takeover_policy.fallback)
+                    )
+                ):
+                    continue
+                if any(
+                    native.get("event") == "native_request_terminal"
+                    and native.get("outcome") == "completed"
+                    and all(
+                        native.get(key) == row[key]
+                        for key in ("task_id", "attempt_id", "request_id", "takeover_policy_sha256")
+                    )
+                    for native in rows[index + 1 :]
+                ):
+                    return True
+        except (OSError, ValueError, UnicodeDecodeError):
+            return False
+        return False
     try:
         with path.open("rb") as stream:
             for line in stream:
@@ -666,7 +720,8 @@ def run(
             "oracle_true": oracle.true,
             "oracle_evidence_sha256": oracle.evidence_sha256,
             "provider_dispatched": _verified_primary_provider(
-                stage.evidence / "model-requests.jsonl"
+                stage.evidence / "model-requests.jsonl",
+                takeover_policy=config.primary_takeover_policy,
             ),
             "memory_episode_written": episode is not None,
             "memory_episode_content_hash": (

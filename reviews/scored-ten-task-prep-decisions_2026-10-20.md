@@ -41,6 +41,14 @@ Independent review of the existing v2 change found a certification-report alloca
 
 The review also identified a separate existing accounting gap: reports and raw primary attestation do not include all auxiliary-memory inference and post-oracle calls. The new aggregate/request attestation must reconcile those lanes and conservative failed reservations before certification. No runtime overspend was established by that finding.
 
+## Takeover component checkpoint, 21 October 2026
+
+Source implementation now supports the approved shared primary pool and automatic one-way takeover, including separate debits for failed GLM and replacement DeepSeek attempts. The new raw/report schema accounts for primary, count-token, advisory, memory and post-oracle requests. Missing usage stays unknown and cannot silently become zero. Final selection must match the exact independently verified provider/request, task/attempt, session/tool and candidate declaration.
+
+Independent review found and corrected a final-selector substitution gap. The combined offline Windows checks passed **797 tests with 7 skips in 47.82 seconds**, and Ruff and diff checks passed. This is component evidence only; no provider request, live fixture, host installation or certification occurred. The installed `803c52d5` baseline remains unchanged.
+
+The separately signed ten-task budget verifier is inert: it verifies actual signed bytes and the independently pinned metering policy, but does not yet bind admission or enforce elapsed-time/spend stops. The total elapsed-time question is already pending; no answer is inferred. Aggregate spend, signing trust, actual subset execution/recovery wiring and live gates remain open.
+
 ## Proposed operator decisions
 
 1. **Source pin — decided:** complete the approved takeover/accounting work, create its exact source/policy pin, and re-collect both fixtures under that host-verified pin. `803c52d5` is the installed component baseline, not the completed takeover candidate. Do not grandfather E/F into the new epoch.

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The live controller must reject official IDs before it stages or launches."""
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -68,6 +69,53 @@ def test_provider_dispatch_requires_completed_glm_response_with_usage(tmp_path):
             '{"event":"request_terminal","role":"primary","outcome":"completed","usage_status":"observed","returned_model":"glm-5.3","provider_request_id":"msg-1"}\n'
         )
     assert _verified_primary_provider(path) is True
+
+
+@pytest.mark.parametrize("route_name", ["initial", "fallback"])
+@pytest.mark.parametrize(
+    "change", [None, "missing_native", "wrong_provider", "wrong_policy", "count_tokens"]
+)
+def test_takeover_provider_marker_requires_declared_route_and_native_completion(
+    tmp_path, route_name, change
+):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    policy = PrimaryTakeoverPolicy()
+    route = getattr(policy, route_name)
+    terminal = {
+        "event": "request_terminal",
+        "role": "primary",
+        "outcome": "completed",
+        "usage_status": "observed",
+        "returned_model": route.wire_model,
+        "configured_model": route.model,
+        "provider": route.provider,
+        "provider_attempt_id": "provider-attempt",
+        "provider_request_id": "provider-response",
+        "task_id": "synthetic:length-header",
+        "attempt_id": "attempt",
+        "request_id": "native-request",
+        "takeover_policy_sha256": policy.digest,
+        "upstream_endpoint": route.base_url + "/v1/messages",
+    }
+    native = {
+        "event": "native_request_terminal",
+        "outcome": "completed",
+        "task_id": terminal["task_id"],
+        "attempt_id": terminal["attempt_id"],
+        "request_id": terminal["request_id"],
+        "takeover_policy_sha256": policy.digest,
+    }
+    if change == "wrong_provider":
+        terminal["provider"] = "other-provider"
+    elif change == "wrong_policy":
+        terminal["takeover_policy_sha256"] = "f" * 64
+    elif change == "count_tokens":
+        terminal["upstream_endpoint"] += "/count_tokens"
+    rows = [terminal] if change == "missing_native" else [terminal, native]
+    path = tmp_path / "requests.jsonl"
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    assert _verified_primary_provider(path, takeover_policy=policy) is (change is None)
 
 
 def test_quiesce_clangd_services_while_container_is_still_running():

@@ -14,9 +14,10 @@ import hashlib
 import json
 import math
 import sqlite3
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from xeus_cybergym.canonical import canonical_json
 from xeus_cybergym.ledger import SignedEnvelope
@@ -27,6 +28,10 @@ from .deepseek import ENDPOINT as _DEEPSEEK_ENDPOINT
 from .deepseek import MAX_OUTPUT_TOKENS as _DEEPSEEK_MAX_OUTPUT_TOKENS
 from .deepseek import MODEL as _DEEPSEEK_MODEL
 from .preflight import _FORBIDDEN_ENV, _FORBIDDEN_PATHS
+from .primary_takeover import PrimaryTakeoverPolicy
+
+if TYPE_CHECKING:
+    from .raw_request_accounting import VerifiedRequestAccounting
 
 _MAX_JSON = 16 * 1024 * 1024
 _ZERO = "0" * 64
@@ -75,6 +80,8 @@ class VerifiedFixture:
     audit_tail_sha256: str
     native_preflight_reports: int
     primary_completed_requests: int
+    request_accounting: VerifiedRequestAccounting | None = None
+    primary_final_selection: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,7 +286,13 @@ def _verify_preflights(root: Path) -> int:
     return len(paths)
 
 
-def _verify_live_activity(root: Path, *, task_id: str, attempt_id: str) -> int:
+def _verify_live_activity(
+    root: Path,
+    *,
+    task_id: str,
+    attempt_id: str,
+    accounting: VerifiedRequestAccounting | None = None,
+) -> int:
     primary = [
         row
         for row in _json_lines(root / "model-requests.jsonl")
@@ -287,20 +300,28 @@ def _verify_live_activity(root: Path, *, task_id: str, attempt_id: str) -> int:
         and row.get("role") == "primary"
         and row.get("outcome") == "completed"
     ]
-    _require(
-        bool(primary)
-        and all(
-            row.get("task_id") == task_id
-            and row.get("attempt_id") == attempt_id
-            and row.get("configured_model") == "glm-5.3[1m]"
-            and row.get("returned_model") == "glm-5.3"
-            and row.get("usage_status") == "observed"
-            and type(row.get("provider_request_id")) is str
-            and bool(row["provider_request_id"])
-            for row in primary
-        ),
-        "audited GLM native response absent",
-    )
+    if accounting is not None:
+        primary = [
+            row
+            for row in accounting.manifest["requests"]
+            if row["lane"] == "primary" and row["outcome"] == "completed"
+        ]
+        _require(bool(primary), "audited primary native response absent")
+    else:
+        _require(
+            bool(primary)
+            and all(
+                row.get("task_id") == task_id
+                and row.get("attempt_id") == attempt_id
+                and row.get("configured_model") == "glm-5.3[1m]"
+                and row.get("returned_model") == "glm-5.3"
+                and row.get("usage_status") == "observed"
+                and type(row.get("provider_request_id")) is str
+                and bool(row["provider_request_id"])
+                for row in primary
+            ),
+            "audited GLM native response absent",
+        )
     with sqlite3.connect(f"file:{(root / 'advisory.sqlite').as_posix()}?mode=ro", uri=True) as db:
         roles = dict(db.execute("select role,status from roles"))
     _require(
@@ -731,6 +752,276 @@ def verify_completed_capability_uses(
     return counts
 
 
+def _verify_final_stream(
+    chunks, declaration: dict, arguments: dict, provider_request_id: str
+) -> None:
+    """Recover the selecting tool from persisted bytes, without trusting DB role claims."""
+    raw = bytearray()
+    for (chunk,) in chunks:
+        _require(
+            type(chunk) is bytes and len(raw) + len(chunk) <= _MAX_JSON,
+            "native final stream invalid or excessive",
+        )
+        raw.extend(chunk)
+    frames = bytes(raw).replace(b"\r\n", b"\n").split(b"\n\n")
+    _require(not frames[-1].strip(), "native final stream frame truncated")
+    started = False
+    selected = False
+    blocks = {}
+    ids = set()
+    for frame in frames[:-1]:
+        data = b"\n".join(
+            line[5:].lstrip(b" ") for line in frame.splitlines() if line.startswith(b"data:")
+        )
+        if not data or data == b"[DONE]":
+            continue
+        event = json.loads(data)
+        _require(type(event) is dict, "native final stream event invalid")
+        kind = event.get("type")
+        if kind == "message_start":
+            message = event.get("message")
+            _require(
+                not started
+                and type(message) is dict
+                and message.get("model") == declaration["provider_model"]
+                and message.get("id") == provider_request_id,
+                "native final stream provider identity invalid",
+            )
+            started = True
+        elif kind == "content_block_start":
+            index, block = event.get("index"), event.get("content_block")
+            _require(
+                started
+                and type(index) is int
+                and index >= 0
+                and index not in blocks
+                and type(block) is dict,
+                "native final stream block invalid",
+            )
+            blocks[index] = {"block": block, "partial": "", "closed": False}
+            if block.get("type") == "tool_use":
+                tool_id = block.get("id")
+                _require(
+                    type(tool_id) is str and tool_id not in ids, "native final tool ID duplicated"
+                )
+                ids.add(tool_id)
+        elif kind == "content_block_delta":
+            state = blocks.get(event.get("index"))
+            delta = event.get("delta")
+            _require(
+                state is not None and not state["closed"] and type(delta) is dict,
+                "native final stream delta invalid",
+            )
+            if delta.get("type") == "input_json_delta":
+                _require(
+                    type(delta.get("partial_json")) is str, "native final tool arguments malformed"
+                )
+                state["partial"] += delta["partial_json"]
+        elif kind == "content_block_stop":
+            state = blocks.get(event.get("index"))
+            _require(
+                state is not None and not state["closed"], "native final stream block stop invalid"
+            )
+            state["closed"] = True
+            block = state["block"]
+            if block.get("id") == declaration["tool_id"]:
+                recovered = json.loads(state["partial"]) if state["partial"] else block.get("input")
+                _require(
+                    not selected
+                    and block.get("type") == "tool_use"
+                    and block.get("name") == "mcp__finalizer__select_final"
+                    and recovered == arguments,
+                    "native final tool arguments disagree",
+                )
+                selected = True
+    _require(started and selected, "native parent final selection stream absent")
+
+
+def verify_primary_final_selection(
+    evidence_root: Path,
+    *,
+    task_id: str,
+    attempt_id: str,
+    takeover_policy: PrimaryTakeoverPolicy,
+    accounting: VerifiedRequestAccounting,
+) -> dict[str, Any]:
+    """Join v2 final proof, durable parent grant, provider binding, and raw SSE."""
+    from .finalize import _PRIMARY_IDENTITY_FIELDS, _primary_event_digest, _validate_declaration
+    from .raw_request_accounting import VerifiedRequestAccounting
+
+    root = Path(evidence_root)
+    _require(
+        type(accounting) is VerifiedRequestAccounting
+        and type(takeover_policy) is PrimaryTakeoverPolicy,
+        "trusted primary final verification inputs required",
+    )
+    facts = accounting.manifest
+    _require(
+        facts["task_id"] == task_id
+        and facts["attempt_id"] == attempt_id
+        and facts["takeover_policy_sha256"] == takeover_policy.digest,
+        "primary final accounting identity mismatch",
+    )
+    raw = _read(_evidence_child(root, str(root / "final/agent-final.json")))
+    try:
+        declaration = _validate_declaration(raw, task_id, takeover_policy=takeover_policy)
+        _require(declaration["attempt_id"] == attempt_id, "primary final attempt mismatch")
+        candidate = _read(_evidence_child(root, str(root / "final/poc")), limit=8 * 1024 * 1024)
+        _require(
+            declaration["sha256"] == hashlib.sha256(candidate).hexdigest()
+            and declaration["byte_length"] == len(candidate),
+            "primary final bytes mismatch",
+        )
+        selected = [
+            row
+            for row in facts["requests"]
+            if row["provider_attempt_id"] == declaration["provider_attempt_id"]
+        ]
+        _require(
+            len(selected) == 1 and selected[0]["lane"] == "primary",
+            "primary final provider attempt absent",
+        )
+        selected = selected[0]
+        _require(
+            all(
+                selected[key] == declaration[key]
+                for key in ("request_id", "provider", "configured_model")
+            )
+            and selected["returned_model"] == declaration["provider_model"]
+            and type(selected["provider_request_id"]) is str
+            and bool(selected["provider_request_id"]),
+            "primary final provider attempt disagrees",
+        )
+        proof = {
+            "schema_version": 2,
+            "task_id": task_id,
+            "declaration_sha256": hashlib.sha256(raw).hexdigest(),
+            "candidate_sha256": declaration["sha256"],
+            "model": declaration["configured_model"],
+            "role": "primary_parent",
+            "event_digest": _primary_event_digest(declaration),
+            **{key: declaration[key] for key in _PRIMARY_IDENTITY_FIELDS - {"configured_model"}},
+        }
+        final_path = _evidence_child(root, str(root / "native-final.sqlite"))
+        with sqlite3.connect(f"file:{final_path.as_posix()}?mode=ro", uri=True) as db:
+            _verify_primary_database_identity(
+                db,
+                task_id,
+                attempt_id,
+                "takeover_policy_sha256",
+                takeover_policy.digest,
+            )
+            rows = db.execute("SELECT id,task,attempt,declaration,proof FROM selection").fetchall()
+            _require(
+                len(rows) == 1
+                and rows[0][:4] == (1, task_id, attempt_id, raw)
+                and json.loads(rows[0][4]) == proof,
+                "primary final durable proof mismatch",
+            )
+            _require(
+                db.execute("SELECT id,status FROM declaration_state").fetchall()
+                == [(1, "declared")]
+                and db.execute("SELECT id,status FROM lock_attempt").fetchall() == [(1, "locked")],
+                "primary final declaration not locked",
+            )
+        arguments = {
+            key: declaration[key]
+            for key in ("candidate_path", "sha256", "byte_length", "selection_reason")
+        }
+        argument_hash = hashlib.sha256(
+            json.dumps(
+                arguments,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode()
+        ).hexdigest()
+        native_path = _evidence_child(root, str(root / "native-tools.sqlite"))
+        with sqlite3.connect(f"file:{native_path.as_posix()}?mode=ro", uri=True) as db:
+            _verify_primary_database_identity(
+                db,
+                task_id,
+                attempt_id,
+                "primary_takeover_sha256",
+                takeover_policy.digest,
+            )
+            parent = db.execute(
+                "SELECT session,agent,role FROM requests WHERE id=?", (declaration["request_id"],)
+            ).fetchall()
+            _require(
+                parent == [(declaration["session_id"], "", "parent")],
+                "primary final did not originate from parent request",
+            )
+            tools = db.execute(
+                "SELECT request,name,input_hash,status FROM tools WHERE id=?",
+                (declaration["tool_id"],),
+            ).fetchall()
+            _require(
+                len(tools) == 1
+                and tools[0][:3]
+                == (declaration["request_id"], "mcp__finalizer__select_final", argument_hash)
+                and tools[0][3] in {"dispatched", "completed"},
+                "primary final tool admission invalid",
+            )
+            bindings = db.execute(
+                "SELECT provider_attempt_id,provider,configured_model,provider_model,takeover_policy_sha256 "
+                "FROM provider_bindings WHERE request=? ORDER BY sequence",
+                (declaration["request_id"],),
+            ).fetchall()
+            attempts = [
+                row for row in facts["requests"] if row["request_id"] == declaration["request_id"]
+            ]
+            expected = [
+                (
+                    row["provider_attempt_id"],
+                    row["provider"],
+                    row["configured_model"],
+                    next(
+                        route.wire_model
+                        for route in (takeover_policy.initial, takeover_policy.fallback)
+                        if route.provider == row["provider"]
+                    ),
+                    takeover_policy.digest,
+                )
+                for row in attempts
+            ]
+            _require(
+                bindings == expected and bindings[-1][0] == declaration["provider_attempt_id"],
+                "primary final durable provider binding disagrees",
+            )
+            _verify_final_stream(
+                db.execute(
+                    "SELECT data FROM streams WHERE request=? ORDER BY sequence",
+                    (declaration["request_id"],),
+                ),
+                declaration,
+                arguments,
+                selected["provider_request_id"],
+            )
+        return declaration
+    except (ValueError, UnicodeError, TypeError, KeyError, sqlite3.DatabaseError) as error:
+        raise RawEvidenceError("primary final raw custody invalid") from error
+
+
+def _verify_primary_database_identity(db, task_id, attempt_id, policy_field, policy_digest):
+    identities = db.execute("SELECT id,value FROM identity").fetchall()
+    _require(
+        len(identities) == 1
+        and identities[0][0] == 1
+        and type(identities[0][1]) is bytes
+        and len(identities[0][1]) <= _MAX_JSON,
+        "primary custody database identity absent",
+    )
+    identity = json.loads(identities[0][1])
+    _require(
+        type(identity) is dict
+        and identity.get("task_id") == task_id
+        and identity.get("attempt_id") == attempt_id
+        and identity.get(policy_field) == policy_digest,
+        "primary custody database task or policy mismatch",
+    )
+
+
 def verify_live_synthetic_fixture(
     evidence_root: Path,
     *,
@@ -741,6 +1032,10 @@ def verify_live_synthetic_fixture(
     image_id: str,
     registry_sha256: str,
     bindings_sha256: str,
+    takeover_policy: PrimaryTakeoverPolicy | None = None,
+    alternate_policy_sha256: str | None = None,
+    memory_model_bindings: Mapping | None = None,
+    budget_run_id: str | None = None,
 ) -> VerifiedFixture:
     """Verify one actual native fixture without treating it as an epoch record."""
     root = Path(evidence_root)
@@ -785,14 +1080,35 @@ def verify_live_synthetic_fixture(
     final, _ = _json(root / "final/agent-final.json")
     candidate = _read(root / "final/poc", limit=8 * 1024 * 1024)
     digest = hashlib.sha256(candidate).hexdigest()
+    accounting = None
+    if takeover_policy is not None:
+        from .raw_request_accounting import verify_request_accounting
+
+        accounting = verify_request_accounting(
+            root,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            takeover_policy=takeover_policy,
+            registry_sha256=registry_sha256,
+            alternate_policy_sha256=alternate_policy_sha256,
+            memory_model_bindings=memory_model_bindings,
+            budget_run_id=budget_run_id,
+        )
+        final = verify_primary_final_selection(
+            root,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            takeover_policy=takeover_policy,
+            accounting=accounting,
+        )
     _require(
-        final.get("selected_by") == "glm_parent"
+        final.get("selected_by") == ("glm_parent" if takeover_policy is None else "primary_parent")
         and final.get("final_declaration") is True
         and final.get("task_id") == task_id
         and final.get("sha256") == digest
         and final.get("byte_length") == len(candidate)
         and result.get("candidate_sha256") == digest,
-        "single GLM final or candidate digest invalid",
+        "single primary final or candidate digest invalid",
     )
     key_id, oracle_digest = _verify_oracle(
         root,
@@ -812,7 +1128,9 @@ def verify_live_synthetic_fixture(
     )
     _require(audit.oracle_evidence_sha256 == oracle_digest, "oracle audit digest mismatch")
     preflights = _verify_preflights(root)
-    primary = _verify_live_activity(root, task_id=task_id, attempt_id=attempt_id)
+    primary = _verify_live_activity(
+        root, task_id=task_id, attempt_id=attempt_id, accounting=accounting
+    )
     return VerifiedFixture(
         run_id,
         task_id,
@@ -826,4 +1144,6 @@ def verify_live_synthetic_fixture(
         audit.tail_sha256,
         preflights,
         primary,
+        accounting,
+        canonical_json(final) if takeover_policy is not None else None,
     )

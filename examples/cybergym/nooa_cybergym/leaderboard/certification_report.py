@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from .capabilities import CapabilityRegistry, ControlLabel, Role, Status
 from .certification import CertificationBinding, CertificationPolicy
 from .model_gateway import PRIMARY_WIRE_MODEL
+from .primary_takeover import PrimaryTakeoverPolicy
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}\Z")
@@ -117,6 +118,8 @@ class CertificationExpectations:
     official_cohort_ids: frozenset[str]
     primary_provider: str
     attest_raw_run: Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
+    takeover_policy: PrimaryTakeoverPolicy | None = None
+    memory_model_bindings: Mapping[str, Mapping[str, str]] | None = None
 
     def __post_init__(self) -> None:
         if type(self.policy) is not CertificationPolicy:
@@ -166,10 +169,34 @@ class CertificationExpectations:
         if not callable(self.attest_raw_run):
             raise TypeError("independent raw evidence attestor required")
         object.__setattr__(self, "frozen_hashes", MappingProxyType(dict(self.frozen_hashes)))
+        if self.takeover_policy is None:
+            if self.memory_model_bindings is not None:
+                raise ValueError("memory model bindings require explicit takeover policy")
+        else:
+            if type(self.takeover_policy) is not PrimaryTakeoverPolicy:
+                raise TypeError("frozen primary takeover policy required")
+            from .raw_request_accounting import validate_memory_model_bindings
+
+            bindings = validate_memory_model_bindings(self.memory_model_bindings)
+            object.__setattr__(
+                self,
+                "memory_model_bindings",
+                MappingProxyType(
+                    {key: MappingProxyType(dict(value)) for key, value in bindings.items()}
+                ),
+            )
+
+    @property
+    def memory_model_bindings_sha256(self) -> str | None:
+        if self.memory_model_bindings is None:
+            return None
+        return hashlib.sha256(
+            _canonical({key: dict(value) for key, value in self.memory_model_bindings.items()})
+        ).hexdigest()
 
     @property
     def all_hashes(self) -> dict[str, str]:
-        return {
+        hashes = {
             **self.frozen_hashes,
             "policy_sha256": self.binding.policy_sha256,
             "alternate_policy_sha256": self.binding.alternate_policy_sha256,
@@ -178,6 +205,10 @@ class CertificationExpectations:
             "cohort_sha256": self.cohort_sha256,
             "campaign_policy_sha256": self.campaign_policy_sha256,
         }
+        if self.takeover_policy is not None:
+            hashes["takeover_policy_sha256"] = self.takeover_policy.digest
+            hashes["memory_model_bindings_sha256"] = self.memory_model_bindings_sha256
+        return hashes
 
 
 @dataclass(frozen=True, slots=True)
@@ -499,6 +530,277 @@ def _validate_memory(run: Mapping[str, Any], label: str, failures: list[str]) ->
         failures.append(f"{label}:unsafe GBrain write")
 
 
+_ACCOUNTING_TOTALS = frozenset(
+    {
+        "model_requests",
+        "observed_requests",
+        "unknown_usage_requests",
+        "unmatched_reservations",
+        "input_tokens",
+        "output_tokens",
+        "cache_tokens",
+        "counted_tokens",
+        "conservative_tokens",
+        "unbounded_unknown_usage_requests",
+    }
+)
+
+
+def _validate_accounting(
+    run: Mapping[str, Any], expected: CertificationExpectations, label: str, failures: list[str]
+) -> dict[str, int]:
+    """Validate all-lane summaries; raw log joins remain the independent attestor's job."""
+    totals = dict.fromkeys(_ACCOUNTING_TOTALS, 0)
+    accounting = run.get("request_accounting")
+    if (
+        "models" in run
+        or type(accounting) is not dict
+        or set(accounting) != set(expected.policy.fixture_ids)
+    ):
+        failures.append(f"{label}:explicit all-lane request accounting required")
+        return totals
+    provider_ids, attempt_ids, reservation_ids = set(), set(), set()
+    for fixture, entry in accounting.items():
+        if type(entry) is not dict or set(entry) != {"manifest", "sha256"}:
+            raise ValueError("accounting entry malformed")
+        manifest = entry["manifest"]
+        if (
+            type(manifest) is not dict
+            or entry["sha256"] != hashlib.sha256(_canonical(manifest)).hexdigest()
+        ):
+            raise ValueError("accounting digest mismatch")
+        if (
+            type(manifest.get("schema_version")) is not int
+            or manifest["schema_version"] != 2
+            or manifest.get("task_id") != fixture
+            or not _safe_identifier(manifest.get("attempt_id"))
+            or manifest["attempt_id"] in attempt_ids
+            or manifest.get("takeover_policy_sha256") != expected.takeover_policy.digest
+            or manifest.get("registry_sha256") != expected.registry.digest
+            or manifest.get("alternate_policy_sha256") != expected.binding.alternate_policy_sha256
+            or manifest.get("memory_model_bindings_sha256") != expected.memory_model_bindings_sha256
+        ):
+            raise ValueError("accounting frozen identity mismatch")
+        attempt_ids.add(manifest["attempt_id"])
+        evidence = manifest.get("evidence_sha256")
+        if (
+            type(evidence) is not dict
+            or set(evidence)
+            != {"runtime-events.jsonl", "model-requests.jsonl", "model-usage.jsonl"}
+            or any(not _digest(value) for value in evidence.values())
+        ):
+            raise ValueError("accounting raw log identities absent")
+        seen = manifest.get("totals")
+        if (
+            type(seen) is not dict
+            or set(seen) != _ACCOUNTING_TOTALS
+            or any(not _nonnegative_int(value) for value in seen.values())
+        ):
+            raise ValueError("accounting totals malformed")
+        if (
+            manifest.get("reconciled") is not True
+            or seen["unmatched_reservations"]
+            or seen["unbounded_unknown_usage_requests"]
+        ):
+            failures.append(f"{label}:request accounting unreconciled")
+        rows = manifest.get("requests")
+        if type(rows) is not list or len(rows) != seen["model_requests"] or not rows:
+            raise ValueError("accounting request count mismatch")
+        allocations = {"primary_and_memory": 0, "deepseek_advisory": 0}
+        computed = dict.fromkeys(_ACCOUNTING_TOTALS, 0)
+        role_counts = dict.fromkeys(expected.policy.alternate_max_requests_by_role, 0)
+        role_tokens, role_seconds = dict.fromkeys(role_counts, 0), dict.fromkeys(role_counts, 0)
+        primary_count = 0
+        for index, row in enumerate(rows, 1):
+            if type(row) is not dict or row.get("task_ordinal") != index:
+                raise ValueError("accounting reservation order mismatch")
+            allocation = row.get("allocation")
+            if allocation not in allocations:
+                raise ValueError("accounting allocation absent")
+            allocations[allocation] += 1
+            if row.get("allocation_ordinal") != allocations[allocation]:
+                raise ValueError("accounting allocation order mismatch")
+            reservation = row.get("reservation_request_id")
+            if not _safe_identifier(reservation) or reservation in reservation_ids:
+                raise ValueError("accounting reservation reused")
+            reservation_ids.add(reservation)
+            lane = row.get("lane")
+            if lane in {"primary", "count_tokens"}:
+                routes = (expected.takeover_policy.initial, expected.takeover_policy.fallback)
+                if (
+                    allocation != "primary_and_memory"
+                    or row.get("role") != "primary"
+                    or not _safe_identifier(row.get("provider_attempt_id"))
+                    or not any(
+                        row.get("provider") == route.provider
+                        and row.get("configured_model") == route.model
+                        and row.get("returned_model") in (None, route.wire_model)
+                        for route in routes
+                    )
+                ):
+                    raise ValueError("primary provider attribution mismatch")
+                primary_count += lane == "primary"
+            elif lane == "advisory":
+                role = row.get("role")
+                if (
+                    allocation != "deepseek_advisory"
+                    or role not in role_counts
+                    or row.get("configured_model") != expected.policy.alternate_model
+                    or row.get("provider") != expected.takeover_policy.fallback.provider
+                ):
+                    raise ValueError("advisory attribution mismatch")
+                role_counts[role] += 1
+                if (
+                    row.get("usage_status") != "observed"
+                    or type(row.get("elapsed_seconds")) not in (int, float)
+                    or not 0 < row["elapsed_seconds"]
+                ):
+                    raise ValueError("advisory usage not observed")
+                role_tokens[role] += row["input_tokens"] + row["output_tokens"]
+                role_seconds[role] += row["elapsed_seconds"]
+            elif lane in {"memory", "post_oracle_memory"}:
+                binding = expected.memory_model_bindings.get(row.get("configured_model"))
+                if (
+                    allocation != "primary_and_memory"
+                    or binding is None
+                    or row.get("provider") != binding["provider"]
+                    or row.get("role") != binding["kind"]
+                ):
+                    raise ValueError("memory attribution mismatch")
+            else:
+                raise ValueError("unmatched or undeclared accounting lane")
+            computed["model_requests"] += 1
+            if row.get("usage_status") == "observed":
+                computed["observed_requests"] += 1
+                provider_id = row.get("provider_request_id")
+                if provider_id is not None:
+                    if not _safe_identifier(provider_id) or provider_id in provider_ids:
+                        raise ValueError("provider request identity reused or absent")
+                    provider_ids.add(provider_id)
+                elif lane in {"primary", "advisory"}:
+                    raise ValueError("provider request identity absent")
+                if lane in {"primary", "advisory"} and not _safe_identifier(
+                    row.get("returned_model")
+                ):
+                    raise ValueError("returned model identity absent")
+            elif row.get("usage_status") == "unknown":
+                computed["unknown_usage_requests"] += 1
+                if not _positive_int(row.get("conservative_tokens")):
+                    raise ValueError("unknown usage lacks conservative bound")
+            else:
+                raise ValueError("request usage status absent")
+            for field in (
+                "input_tokens",
+                "output_tokens",
+                "cache_tokens",
+                "counted_tokens",
+                "conservative_tokens",
+            ):
+                value = row.get(field)
+                if (
+                    value is None
+                    and row["usage_status"] == "unknown"
+                    and field != "conservative_tokens"
+                ):
+                    continue
+                if not _nonnegative_int(value):
+                    raise ValueError("request token accounting malformed")
+                computed[field] += value
+        if computed != seen or manifest.get("allocations") != allocations:
+            raise ValueError("accounting totals differ from requests")
+        if (
+            not primary_count
+            or any(count < 1 for count in role_counts.values())
+            or seen["model_requests"] > expected.policy.max_model_requests_per_task
+            or allocations["primary_and_memory"]
+            > expected.policy.max_model_requests_per_task
+            - sum(expected.policy.alternate_max_requests_by_role.values())
+            or allocations["deepseek_advisory"]
+            > sum(expected.policy.alternate_max_requests_by_role.values())
+            or any(
+                role_counts[role] > expected.policy.alternate_max_requests_by_role[role]
+                or role_tokens[role] > expected.policy.alternate_max_tokens_by_role[role]
+                or role_seconds[role] > expected.policy.alternate_max_seconds_by_role[role]
+                for role in role_counts
+            )
+        ):
+            failures.append(f"{label}:request allocation or advisory coverage invalid")
+        for key in totals:
+            totals[key] += seen[key]
+    return totals
+
+
+def _valid_primary_selection(
+    item: Mapping[str, Any], run: Mapping[str, Any], expected: CertificationExpectations
+) -> bool:
+    from .finalize import _validate_declaration
+
+    selection = item.get("final_selection")
+    entry = run.get("request_accounting", {}).get(item.get("fixture_id"), {})
+    manifest = entry.get("manifest", {})
+    if (
+        item.get("final_selected_by") != "primary_parent"
+        or type(selection) is not dict
+        or selection.get("schema_version") != 2
+        or selection.get("takeover_policy_sha256") != expected.takeover_policy.digest
+        or item.get("attempt_id") != manifest.get("attempt_id")
+    ):
+        return False
+    try:
+        _validate_declaration(
+            _canonical(selection), item["fixture_id"], takeover_policy=expected.takeover_policy
+        )
+    except (TypeError, ValueError, KeyError):
+        return False
+    if selection["attempt_id"] != item.get("attempt_id") or selection["sha256"] != item.get(
+        "final_sha256"
+    ):
+        return False
+    return any(
+        row.get("lane") == "primary"
+        and row.get("usage_status") == "observed"
+        and all(
+            selection.get(selected) == row.get(recorded)
+            for selected, recorded in (
+                ("provider", "provider"),
+                ("configured_model", "configured_model"),
+                ("provider_model", "returned_model"),
+                ("provider_attempt_id", "provider_attempt_id"),
+                ("request_id", "request_id"),
+            )
+        )
+        for row in manifest.get("requests", [])
+        if type(row) is dict
+    )
+
+
+def _independent_final_selections(
+    run: Mapping[str, Any], attested: Mapping[str, Any], expected: CertificationExpectations
+) -> dict[str, Any]:
+    """Bind the report to the exact locked declaration returned by the raw verifier."""
+    from .finalize import _validate_declaration
+
+    selections = attested.get("primary_final_selections")
+    if type(selections) is not dict or set(selections) != set(expected.policy.fixture_ids):
+        raise ValueError("independent final selections absent")
+    for attempt in run["attempts"]:
+        fixture = attempt["fixture_id"]
+        entry = selections[fixture]
+        if type(entry) is not dict or set(entry) != {"declaration", "sha256"}:
+            raise ValueError("independent final declaration absent")
+        raw = _canonical(entry["declaration"])
+        declaration = _validate_declaration(raw, fixture, takeover_policy=expected.takeover_policy)
+        if (
+            not _digest(entry["sha256"])
+            or entry["sha256"] != hashlib.sha256(raw).hexdigest()
+            or raw != _canonical(attempt.get("final_selection"))
+            or declaration["attempt_id"] != attempt.get("attempt_id")
+            or declaration["sha256"] != attempt.get("final_sha256")
+        ):
+            raise ValueError("independent final declaration differs from report")
+    return json.loads(_canonical(selections))
+
+
 def _validate_attempts(
     run: Mapping[str, Any], expected: CertificationExpectations, label: str, failures: list[str]
 ) -> None:
@@ -519,12 +821,21 @@ def _validate_attempts(
         if item.get("start_count") != 1 or item.get("launcher_receipts") != 1:
             failures.append(f"{label}:second start or missing native receipt")
         if (
-            item.get("final_selected_by") != expected.policy.primary_model
+            (
+                not _valid_primary_selection(item, run, expected)
+                if expected.takeover_policy is not None
+                else item.get("final_selected_by") != expected.policy.primary_model
+                or "final_selection" in item
+            )
             or item.get("agent_selected") is not True
             or item.get("controller_selected_candidate") is not False
             or not _digest(item.get("final_sha256"))
         ):
-            failures.append(f"{label}:non-GLM final or missing single final")
+            failures.append(
+                f"{label}:non-primary final or missing single final"
+                if expected.takeover_policy is not None
+                else f"{label}:non-GLM final or missing single final"
+            )
         oracle = item.get("oracle")
         if (
             type(oracle) is not dict
@@ -547,11 +858,14 @@ def _validate_run(
     if type(run_id) is not str or not run_id or run_id != label:
         failures.append(f"{label}:run identity mismatch")
     if (
-        run.get("schema_version") != 1
+        type(run.get("schema_version")) is not int
+        or run.get("schema_version") != (2 if expected.takeover_policy is not None else 1)
         or run.get("scope") != "live_native"
         or run.get("execution_source") != "native-vscode-extension"
     ):
         failures.append(f"{label}:live native source absent")
+    if expected.takeover_policy is None and "request_accounting" in run:
+        failures.append(f"{label}:new accounting in legacy report")
     fixture_ids = run.get("fixture_ids")
     if (
         type(fixture_ids) is not list
@@ -575,7 +889,11 @@ def _validate_run(
     _validate_hashes(run, expected, label, failures)
     _validate_gates(run, label, failures)
     tool_total = _validate_capabilities(run, expected, label, failures)
-    model_totals = _validate_models(run, expected, label, failures)
+    model_totals = (
+        _validate_accounting(run, expected, label, failures)
+        if expected.takeover_policy is not None
+        else _validate_models(run, expected, label, failures)
+    )
     totals = run.get("totals")
     if type(totals) is not dict or any(
         totals.get(key) != value
@@ -650,7 +968,21 @@ def _validate_run(
         or not attested["signature_key_id"]
     ):
         failures.append(f"{label}:raw evidence attestation absent or invalid")
-    return {
+    if expected.takeover_policy is not None and (
+        not isinstance(attested, Mapping)
+        or type(attested.get("schema_version")) is not int
+        or attested.get("schema_version") != 2
+        or _canonical(attested.get("request_accounting"))
+        != _canonical(run.get("request_accounting"))
+    ):
+        failures.append(f"{label}:independent all-lane accounting attestation absent or different")
+    independent_finals = None
+    if expected.takeover_policy is not None:
+        try:
+            independent_finals = _independent_final_selections(run, attested, expected)
+        except (AttributeError, KeyError, TypeError, ValueError):
+            failures.append(f"{label}:independent final selection absent or different")
+    summary = {
         "run_id": run_id,
         "evidence_root": root,
         "manifest_sha256": manifest,
@@ -760,6 +1092,20 @@ def _validate_run(
         if isinstance(attested, Mapping)
         else None,
     }
+    if expected.takeover_policy is not None:
+        summary.pop("models", None)
+        summary["request_accounting"] = json.loads(_canonical(run.get("request_accounting")))
+        summary["primary_final_selections"] = independent_finals
+        summary["totals"] = {
+            key: totals.get(key) for key in (*sorted(_ACCOUNTING_TOTALS), "tool_calls")
+        }
+        for item, source in zip(summary["attempts"], run["attempts"], strict=True):
+            item.update(
+                attempt_id=source.get("attempt_id"),
+                final_selected_by=source.get("final_selected_by"),
+                final_selection=source.get("final_selection"),
+            )
+    return summary
 
 
 def compare_runs(
@@ -799,6 +1145,30 @@ def compare_runs(
             failures.append("certification evidence root reused")
         if run_a.get("manifest_sha256") == run_b.get("manifest_sha256"):
             failures.append("certification manifest reused")
+        if expected.takeover_policy is not None:
+
+            def identifiers(run):
+                result = set()
+                accounting = run.get("request_accounting")
+                if type(accounting) is dict:
+                    for entry in accounting.values():
+                        if type(entry) is dict and type(entry.get("manifest")) is dict:
+                            manifest = entry["manifest"]
+                            result.add(("attempt", manifest.get("attempt_id")))
+                            for row in manifest.get("requests", []):
+                                if type(row) is dict:
+                                    for key in (
+                                        "reservation_request_id",
+                                        "provider_attempt_id",
+                                        "provider_request_id",
+                                        "permit_id",
+                                    ):
+                                        if type(row.get(key)) is str:
+                                            result.add((key, row[key]))
+                return result
+
+            if identifiers(run_a) & identifiers(run_b):
+                failures.append("request or attempt identity reused across repetitions")
     if expected.policy.sha256 != expected.binding.policy_sha256:
         failures.append("certification policy changed after binding")
     if expected.registry.digest != expected.binding.capability_registry_sha256:
@@ -830,7 +1200,7 @@ def compare_runs(
         if entry.status is Status.APPROVED
     )
     payload = {
-        "schema_version": 1,
+        "schema_version": 2 if expected.takeover_policy is not None else 1,
         "status": "accepted" if passed else "rejected",
         "scope": "live_native" if passed else "unverified",
         "official_launch_authorised": False,
@@ -873,6 +1243,15 @@ def compare_runs(
         "runs": summaries,
         "no_provider_weight_freeze_guarantee": True,
     }
+    if expected.takeover_policy is not None:
+        payload["takeover_policy_sha256"] = expected.takeover_policy.digest
+        payload["memory_model_bindings_sha256"] = expected.memory_model_bindings_sha256
+        payload["primary_takeover"] = json.loads(expected.takeover_policy.manifest_json)
+        payload["deepseek"]["max_requests"] = None
+        payload["deepseek"]["advisory_max_requests"] = sum(
+            expected.policy.alternate_max_requests_by_role.values()
+        )
+        payload["deepseek"]["primary_allocation"] = "shared_primary_and_memory"
     return ComparisonReport(
         passed,
         tuple(failures),
