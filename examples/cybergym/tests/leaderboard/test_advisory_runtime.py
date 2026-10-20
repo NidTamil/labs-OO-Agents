@@ -14,8 +14,10 @@ from pathlib import Path
 
 import pytest
 from nooa_cybergym.leaderboard.deepseek import (
+    ROLE_LIMITS,
     AlternateModelPolicy,
     DeepSeekController,
+    DeepSeekRole,
     ProviderResponse,
     SharedCampaignBudget,
 )
@@ -231,8 +233,9 @@ def test_critic_keeps_two_requests_for_advice_after_readonly_tool_budget(setup):
         "action": "local_read",
         "arguments": {"operation": "list", "path": "/workspace/src"},
     }
+    critic_limit = ROLE_LIMITS[DeepSeekRole.FINAL_ADVERSARIAL_CRITIC][1]
     transport.actions = [
-        *[tool_action for _ in range(7)],
+        *[tool_action for _ in range(critic_limit - 1)],
         {"action": "advice", "summary": "Critic complete.", "evidence": [], "risks": []},
     ]
     digest = hashlib.sha256(b"poc").hexdigest()
@@ -242,10 +245,10 @@ def test_critic_keeps_two_requests_for_advice_after_readonly_tool_budget(setup):
         candidate_context="Review this candidate",
     )
     assert result["summary"] == "Critic complete."
-    assert len(calls) == 6
-    assert len(transport.calls) == 9  # one recon plus eight critic requests
+    assert len(calls) == critic_limit - 2
+    assert len(transport.calls) == critic_limit + 1  # one recon plus critic requests
     assert "no further tool actions" in json.dumps(transport.calls[-1]["messages"]).lower()
-    assert budget.snapshot()["deepseek_requests"] == 9
+    assert budget.snapshot()["deepseek_requests"] == critic_limit + 1
 
 
 def test_undeclared_action_is_a_terminal_role_failure_without_retry(setup):
