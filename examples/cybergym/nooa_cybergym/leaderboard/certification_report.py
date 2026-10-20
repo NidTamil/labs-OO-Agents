@@ -450,10 +450,14 @@ def _validate_models(
                 failures.append(f"{label}:DeepSeek role budget")
     if any(count > policy.max_model_requests_per_task for count in requests_by_fixture.values()):
         failures.append(f"{label}:shared model request budget")
+    alternate_allocation = sum(policy.alternate_max_requests_by_role.values())
+    primary_allocation = policy.max_model_requests_per_task - alternate_allocation
     if any(
-        count > sum(policy.alternate_max_requests_by_role.values())
-        for count in deepseek_by_fixture.values()
+        requests_by_fixture[fixture_id] - deepseek_by_fixture[fixture_id] > primary_allocation
+        for fixture_id in policy.fixture_ids
     ):
+        failures.append(f"{label}:GLM and memory request allocation")
+    if any(count > alternate_allocation for count in deepseek_by_fixture.values()):
         failures.append(f"{label}:DeepSeek request allocation")
     return totals
 

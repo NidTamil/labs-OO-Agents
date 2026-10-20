@@ -440,29 +440,42 @@ def test_deepseek_budget_is_checked_per_fixture_not_across_two_tasks(complete_pa
     assert "synthetic-run-b:DeepSeek role budget" in report.failures
 
 
+def _set_role_requests(run, fixture_id, role, count):
+    row = next(
+        item for item in run["models"] if item["fixture_id"] == fixture_id and item["role"] == role
+    )
+    run["totals"]["model_requests"] += count - row["requests"]
+    row["requests"] = count
+    row["provider_request_ids"] = [
+        f"{run['run_id']}-{fixture_id}-{role}-{index}" for index in range(count)
+    ]
+
+
 def test_shared_request_ceiling_is_checked_at_1500_per_fixture(complete_pair):
     first, second, expected = complete_pair
-
-    def set_primary_requests(run, fixture_id, count):
-        row = next(
-            item
-            for item in run["models"]
-            if item["fixture_id"] == fixture_id and item["role"] == "glm_parent"
-        )
-        run["totals"]["model_requests"] += count - row["requests"]
-        row["requests"] = count
-        row["provider_request_ids"] = [
-            f"{run['run_id']}-{fixture_id}-primary-{index}" for index in range(count)
-        ]
-
     fixture_id = expected.policy.fixture_ids[0]
     for run in (first, second):
-        set_primary_requests(run, fixture_id, 1497)
+        _set_role_requests(run, fixture_id, "glm_parent", 1410)
+        for role, count in expected.policy.alternate_max_requests_by_role.items():
+            _set_role_requests(run, fixture_id, role, count)
     assert compare_runs(first, second, expected=expected).passed
-    set_primary_requests(second, fixture_id, 1498)
+    _set_role_requests(second, fixture_id, "glm_parent", 1411)
     report = compare_runs(first, second, expected=expected)
     assert not report.passed
     assert "synthetic-run-b:shared model request budget" in report.failures
+
+
+def test_unused_deepseek_requests_do_not_expand_primary_allocation(complete_pair):
+    first, second, expected = complete_pair
+    fixture_id = expected.policy.fixture_ids[0]
+    for run in (first, second):
+        _set_role_requests(run, fixture_id, "glm_parent", 1410)
+    assert compare_runs(first, second, expected=expected).passed
+    _set_role_requests(second, fixture_id, "glm_parent", 1411)
+    report = compare_runs(first, second, expected=expected)
+    assert not report.passed
+    assert "synthetic-run-b:GLM and memory request allocation" in report.failures
+    assert "synthetic-run-b:shared model request budget" not in report.failures
 
 
 def test_empty_or_missing_approved_capability_baseline_cannot_certify():
