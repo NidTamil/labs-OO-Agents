@@ -371,6 +371,8 @@ Reconnect-control time decision (2026-10-21 Australia/Sydney): the operator chos
 
 Budget-scope clarification pending (2026-10-21 Australia/Sydney): the operator subsequently requested 1,500 rather than 600 requests for the single control. `SharedCampaignBudget` and the certification policy still enforce 600 per task/fixture, a local campaign choice rather than an official CyberGym limit. The new scored freeze has not been signed. Treat 1,500 as a requested figure whose per-fixture or aggregate scope must be resolved before a versioned policy change or launch. No provider control has launched.
 
+Official-repo verification (2026-10-21 Australia/Sydney): upstream `sunblaze-ucb/cybergym` commit `c6fe2027d39471375920b92cf1025e23a99ffda5` has no 600-model-request requirement in its README, FAQ, submission guide or tracked Python source. The submission guide requires model request/time/cost reporting; its separate 20-request/60-second server rate limit concerns PoC HTTP submissions. The 600 per-task cap is this project's own performance choice. See `reviews/scored-ten-task-prep-decisions_2026-10-20.md` for pinned links. No policy change or provider control has launched.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
