@@ -30,7 +30,7 @@ Source-only budget check on 20 October: `campaign-policy.json` caps each task at
 
 For the next separately identified reconnect control, the operator specified a **four-hour wall-clock limit** and explicitly rejected the proposed 100-request cap (21 October, Australia/Sydney). No replacement provider-request, token, or spend ceiling has been chosen. Do not launch the provider-bearing control until its provider budget is bounded and preflighted; this four-hour decision does not set an aggregate readiness or ten-task budget.
 
-The operator then requested **1,500 rather than 600 requests** in the context of that single control. Current `SharedCampaignBudget` and the certification policy enforce 600 per task/fixture, so a 1,500-request single-fixture ceiling cannot take effect under the unchanged policy. An aggregate 1,500-request envelope across distinct readiness controls is possible in principle, but is not yet confirmed as the intended scope. Resolve that distinction before launch; do not raise the signed per-task cap by inference.
+The operator then requested **1,500 rather than 600 requests** in the context of that single control. Current `SharedCampaignBudget` and the certification policy enforce 600 per task/fixture, so a 1,500-request single-fixture ceiling cannot take effect under the unchanged code and policy. The master campaign plan calls the 600-request/12-hour budgets local performance choices, not official CyberGym limits. The new scored freeze is not yet signed; a versioned policy change can be prepared and re-certified if directly chosen. Resolve whether the operator intends a per-fixture policy change or an aggregate 1,500-request envelope across distinct readiness controls before launch.
 
 ## Current host access prerequisite
 

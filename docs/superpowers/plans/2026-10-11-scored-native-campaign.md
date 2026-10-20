@@ -369,7 +369,7 @@ Model-route decision (2026-10-21 Australia/Sydney): the operator directly chose 
 
 Reconnect-control time decision (2026-10-21 Australia/Sydney): the operator chose a four-hour wall-clock limit for the next separately identified control and rejected the proposed 100-request cap. A replacement provider-request, token, or spend bound remains undecided. This is not an aggregate readiness budget or ten-task cap; no provider-bearing control has launched on this basis.
 
-Budget-scope clarification pending (2026-10-21 Australia/Sydney): the operator subsequently requested 1,500 rather than 600 requests for the single control. `SharedCampaignBudget` and the certification policy still enforce 600 per task/fixture. Treat 1,500 as a requested figure whose scope must be resolved, not as authorization to change the signed per-task gate or as an effective single-fixture budget. No provider control has launched.
+Budget-scope clarification pending (2026-10-21 Australia/Sydney): the operator subsequently requested 1,500 rather than 600 requests for the single control. `SharedCampaignBudget` and the certification policy still enforce 600 per task/fixture, a local campaign choice rather than an official CyberGym limit. The new scored freeze has not been signed. Treat 1,500 as a requested figure whose per-fixture or aggregate scope must be resolved before a versioned policy change or launch. No provider control has launched.
 
 ### Task 6: Scored go-live and submission
 
