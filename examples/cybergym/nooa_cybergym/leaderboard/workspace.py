@@ -8,6 +8,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -24,6 +25,26 @@ ALLOWED_TASK_FILES = frozenset({"description.txt", "README.md", "repo-vul.tar.gz
 _LFS_POINTER_HEADER = b"version https://git-lfs.github.com/spec/v1"
 _DISK_RESERVE_BYTES = 1 << 30
 _ARCHIVE_DISK_MULTIPLIER = 4
+
+
+def _validate_preparation_id(value: str) -> str:
+    """A bounded single path component usable on both controller platforms."""
+    if (
+        type(value) is not str
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", value) is None
+        or value.endswith(".")
+        or value.split(".", 1)[0].upper()
+        in {
+            "CON",
+            "PRN",
+            "AUX",
+            "NUL",
+            *(f"COM{i}" for i in range(1, 10)),
+            *(f"LPT{i}" for i in range(1, 10)),
+        }
+    ):
+        raise ValueError("bounded portable preparation identity required")
+    return value
 
 
 class _OfficialRegistry(Protocol):
@@ -207,6 +228,7 @@ def prepare_workspace(
     task_root: Path,
     task_generator: Callable[[object], object] | None = None,
     lfs_materializer: Callable[[Path, Path, Path], None] | None = None,
+    preparation_id: str | None = None,
 ) -> PreparedWorkspace:
     """Generate, verify, copy and hash one fresh task workspace.
 
@@ -215,6 +237,8 @@ def prepare_workspace(
     path always calls CyberGym's generate_task at TaskDifficulty.level1.
     """
 
+    if preparation_id is not None:
+        _validate_preparation_id(preparation_id)
     _assert_controller_path_separation(controller_paths, task_root)
     if task_root.exists() or task_root.is_symlink():
         raise RuntimeError(f"task root already exists: {task_root}")
@@ -234,18 +258,29 @@ def prepare_workspace(
     _require_disk_capacity(
         controller_paths.staging_root, task_root, inputs.vulnerable_archive.bytes
     )
+    stage = controller_paths.staging_root / (preparation_id or uuid4().hex)
+    manifest_dir = controller_paths.evidence_root / (
+        f"workspace-{preparation_id}" if preparation_id is not None else uuid4().hex
+    )
+    if preparation_id is not None and any(
+        path.exists() or path.is_symlink() for path in (stage, manifest_dir)
+    ):
+        raise RuntimeError("preparation stage or manifest directory already exists")
     controller_paths.staging_root.mkdir(parents=True, exist_ok=True)
     controller_paths.evidence_root.mkdir(parents=True, exist_ok=True)
-    stage = controller_paths.staging_root / uuid4().hex
     stage.mkdir(mode=0o700)
     generated = stage / "generated"
-    generated.mkdir(mode=0o700)
     hydrated_data = stage / "data"
     cache = stage / "lfs-cache"
     staged_harness = stage / "harness"
     staged_mask_map = stage / "mask_map.json"
     created_task_root = False
     try:
+        if preparation_id is not None:
+            # Reserve ownership before invoking even a failing generator. The
+            # raw manifest directory remains evidence of this preparation.
+            manifest_dir.mkdir(mode=0o700)
+        generated.mkdir(mode=0o700)
         shutil.copyfile(controller_paths.mask_map_path, staged_mask_map)
         if _sha256_file(staged_mask_map) != controller_paths.mask_map_sha256:
             raise RuntimeError("mask map changed during staging")
@@ -344,8 +379,8 @@ def prepare_workspace(
             for path in sorted(task_root.rglob("*"))
             if path.is_file()
         }
-        manifest_dir = controller_paths.evidence_root / uuid4().hex
-        manifest_dir.mkdir(mode=0o700)
+        if preparation_id is None:
+            manifest_dir.mkdir(mode=0o700)
         manifest = manifest_dir / "task-manifest.json"
         manifest.write_bytes(
             json.dumps(

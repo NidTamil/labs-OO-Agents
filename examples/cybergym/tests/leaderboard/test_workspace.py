@@ -155,6 +155,107 @@ def test_prepare_workspace_copies_verified_bytes_and_externalizes_manifest(
     assert not ((root / "submit.sh").stat().st_mode & 0o222)
 
 
+def test_prepare_workspace_named_preparation_has_deterministic_owned_paths(tmp_path):
+    description, archive = b"A parser issue\n", b"\x1f\x8barchive"
+    paths = _paths(tmp_path, description, archive)
+    preparation_id = "prep-unit-1"
+    generated = []
+    generate = _generator(description, archive)
+
+    def observe(config):
+        generated.append(config.out_dir)
+        assert (paths.evidence_root / "workspace-prep-unit-1").is_dir()
+        return generate(config)
+
+    prepared = prepare_workspace(
+        task_id="synthetic:length-header",
+        agent_id="masked-1",
+        controller_paths=paths,
+        task_root=tmp_path / "agent-visible",
+        task_generator=observe,
+        preparation_id=preparation_id,
+    )
+    assert generated == [paths.staging_root / preparation_id / "generated"]
+    assert (
+        prepared.task_manifest == paths.evidence_root / "workspace-prep-unit-1/task-manifest.json"
+    )
+    assert prepared.task_manifest.is_file()
+    assert not (paths.staging_root / preparation_id).exists()
+
+
+@pytest.mark.parametrize("existing", ["stage", "manifest"])
+def test_named_preparation_refuses_existing_owned_paths_before_generator(tmp_path, existing):
+    description, archive = b"A parser issue\n", b"\x1f\x8barchive"
+    paths = _paths(tmp_path, description, archive)
+    occupied = (
+        paths.staging_root / "prep-unit-1"
+        if existing == "stage"
+        else paths.evidence_root / "workspace-prep-unit-1"
+    )
+    occupied.mkdir(parents=True)
+    sentinel = occupied / "untouched"
+    sentinel.write_bytes(b"older preparation")
+    called = []
+    with pytest.raises(RuntimeError, match="preparation.*exists"):
+        prepare_workspace(
+            task_id="synthetic:length-header",
+            agent_id="masked-1",
+            controller_paths=paths,
+            task_root=tmp_path / "agent-visible",
+            task_generator=lambda config: called.append(config),
+            preparation_id="prep-unit-1",
+        )
+    assert called == []
+    assert sentinel.read_bytes() == b"older preparation"
+    assert not (tmp_path / "agent-visible").exists()
+
+
+@pytest.mark.parametrize(
+    "identity", ["", "../escape", "x/y", "x\\y", "C:escape", "a" * 129, "CON", "trailing.", 7]
+)
+def test_named_preparation_rejects_unsafe_path_identity_before_effects(tmp_path, identity):
+    description, archive = b"A parser issue\n", b"\x1f\x8barchive"
+    paths = _paths(tmp_path, description, archive)
+    with pytest.raises(ValueError, match="preparation"):
+        prepare_workspace(
+            task_id="synthetic:length-header",
+            agent_id="masked-1",
+            controller_paths=paths,
+            task_root=tmp_path / "agent-visible",
+            task_generator=_generator(description, archive),
+            preparation_id=identity,
+        )
+    assert not paths.staging_root.exists()
+    assert not paths.evidence_root.exists()
+
+
+def test_named_preparation_failed_generator_leaves_reserved_raw_manifest(tmp_path):
+    description, archive = b"A parser issue\n", b"\x1f\x8barchive"
+    paths = _paths(tmp_path, description, archive)
+    called = []
+
+    def fail(config):
+        called.append(config)
+        assert (paths.evidence_root / "workspace-prep-failed").is_dir()
+        raise RuntimeError("synthetic generator failure")
+
+    args = {
+        "task_id": "synthetic:length-header",
+        "agent_id": "masked-1",
+        "controller_paths": paths,
+        "task_root": tmp_path / "agent-visible",
+        "task_generator": fail,
+        "preparation_id": "prep-failed",
+    }
+    with pytest.raises(RuntimeError, match="synthetic generator failure"):
+        prepare_workspace(**args)
+    assert (paths.evidence_root / "workspace-prep-failed").is_dir()
+    assert not (paths.staging_root / "prep-failed").exists()
+    with pytest.raises(RuntimeError, match="preparation.*exists"):
+        prepare_workspace(**args)
+    assert len(called) == 1
+
+
 def test_prepare_workspace_fails_closed_on_leak_or_identity_mismatch(tmp_path: Path) -> None:
     description, archive = b"A parser issue\n", b"\x1f\x8barchive"
     paths = _paths(tmp_path, description, archive)
