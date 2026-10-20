@@ -323,6 +323,7 @@ class NativeServices:
                 observed_role=self.preflight.model_role,
                 authorize=self._authorize,
                 redact=self.audit.redact,
+                primary_takeover=model_policy.primary_takeover,
             )
             self.models = self._resources.enter_context(
                 NativeModelDispatcher(
@@ -411,6 +412,7 @@ class NativeServices:
                 task_id=task_id,
                 attempt_id=attempt_id,
                 require_critic=self._require_critic,
+                takeover_policy=model_policy.primary_takeover,
             )
             self.advisory_tools = AdvisoryTools(
                 docker_client.api,

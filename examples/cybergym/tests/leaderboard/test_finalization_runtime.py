@@ -10,6 +10,7 @@ from dataclasses import replace
 import pytest
 from nooa_cybergym.leaderboard.finalization_runtime import NativeFinalizer
 from nooa_cybergym.leaderboard.native_tool_runtime import NativeToolCall
+from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
 
 
 @pytest.mark.parametrize(
@@ -167,7 +168,16 @@ def test_candidate_symlink_and_database_sidecar_link_are_rejected(tmp_path):
         finalizer.select_final(call)
 
 
-def native_controller(tmp_path, args, *, role="parent", provider_model="glm-5.3", authorized=True):
+def native_controller(
+    tmp_path,
+    args,
+    *,
+    role="parent",
+    provider_model=None,
+    authorized=True,
+    takeover_policy=None,
+    fallback=True,
+):
     from nooa_cybergym.leaderboard.host_boundary_runtime import AdmittedPeer, GatewayRequest
     from nooa_cybergym.leaderboard.native_tool_runtime import NativeToolController
 
@@ -190,6 +200,7 @@ def native_controller(tmp_path, args, *, role="parent", provider_model="glm-5.3"
         ),
         authorize=lambda _: authorized,
         redact=lambda value: value,
+        **({"primary_takeover": takeover_policy} if takeover_policy is not None else {}),
     )
     request = GatewayRequest(
         "model-gateway",
@@ -210,6 +221,23 @@ def native_controller(tmp_path, args, *, role="parent", provider_model="glm-5.3"
         peer,
     )
     grant = controller.begin_request(request)
+    if takeover_policy is not None:
+        routes = (
+            (takeover_policy.initial, takeover_policy.fallback)
+            if fallback
+            else (takeover_policy.initial,)
+        )
+        for index, route in enumerate(routes):
+            controller.bind_provider(
+                grant,
+                provider=route.provider,
+                configured_model=route.model,
+                provider_model=route.wire_model,
+                provider_attempt_id=f"provider-attempt-{index}",
+                takeover_policy_sha256=takeover_policy.digest,
+            )
+        provider_model = provider_model or routes[-1].wire_model
+    provider_model = provider_model or "glm-5.3"
     events = [
         {"type": "message_start", "message": {"id": "message", "model": provider_model}},
         {
@@ -524,7 +552,7 @@ def test_mcp_peer_arguments_and_metadata_are_verified_before_consumption(tmp_pat
     )
 
 
-def fixture(tmp_path, critic=lambda _: None):
+def fixture(tmp_path, critic=lambda _: None, *, takeover_policy=None):
     output = tmp_path / "task" / "output"
     output.mkdir(parents=True)
     (output / "candidate.bin").write_bytes(b"synthetic fixture")
@@ -547,9 +575,228 @@ def fixture(tmp_path, critic=lambda _: None):
         args,
     )
     finalizer = NativeFinalizer(
-        output, tmp_path / "evidence", task_id="task", attempt_id="attempt", require_critic=critic
+        output,
+        tmp_path / "evidence",
+        task_id="task",
+        attempt_id="attempt",
+        require_critic=critic,
+        **({"takeover_policy": takeover_policy} if takeover_policy is not None else {}),
     )
     return finalizer, call, output
+
+
+def primary_call(call, policy, *, fallback=True):
+    route = policy.fallback if fallback else policy.initial
+    return replace(
+        call,
+        provider=route.provider,
+        configured_model=route.model,
+        provider_model=route.wire_model,
+        provider_attempt_id="provider-attempt",
+        takeover_policy_sha256=policy.digest,
+    )
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_takeover_final_binds_actual_primary_provider_and_preserves_single_final(
+    tmp_path, fallback
+):
+    policy = PrimaryTakeoverPolicy()
+    critics = []
+    finalizer, call, output = fixture(tmp_path, critics.append, takeover_policy=policy)
+    call = primary_call(call, policy, fallback=fallback)
+    finalizer.select_final(call)
+    declaration = json.loads((output / "agent-final.json").read_bytes())
+    assert declaration["schema_version"] == 2
+    assert declaration["selected_by"] == "primary_parent"
+    assert declaration["provider"] == call.provider
+    assert declaration["configured_model"] == call.configured_model
+    assert declaration["provider_model"] == call.provider_model
+    assert declaration["provider_attempt_id"] == "provider-attempt"
+    assert declaration["takeover_policy_sha256"] == policy.digest
+    assert critics == [call.arguments["sha256"]]
+    with sqlite3.connect(finalizer.database) as connection:
+        proof = json.loads(connection.execute("SELECT proof FROM selection").fetchone()[0])
+        identity = json.loads(connection.execute("SELECT value FROM identity").fetchone()[0])
+    assert proof["schema_version"] == 2
+    assert proof["role"] == "primary_parent"
+    assert proof["model"] == call.configured_model
+    assert identity["takeover_policy_sha256"] == policy.digest
+    for key in ("attempt_id", "request_id", "session_id", "tool_id", "provider_attempt_id"):
+        assert proof[key] == declaration[key] == getattr(call, key)
+    with pytest.raises(RuntimeError, match="already"):
+        finalizer.select_final(call)
+    reopened = NativeFinalizer(
+        output,
+        finalizer.evidence,
+        task_id="task",
+        attempt_id="attempt",
+        require_critic=critics.append,
+        takeover_policy=policy,
+    )
+    locked = reopened.lock_after_stop(lambda: True)
+    assert locked.parent_event_digest == proof["event_digest"]
+    assert locked.poc_path.read_bytes() == b"synthetic fixture"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"role": "child", "agent_id": "child"},
+        {"role": "adviser"},
+        {"provider": "zai-coding-plan"},
+        {"configured_model": "glm-5.3[1m]"},
+        {"provider_model": "glm-5.3"},
+        {"provider_attempt_id": None},
+        {"provider_attempt_id": "request"},
+        {"takeover_policy_sha256": "f" * 64},
+    ],
+)
+def test_takeover_final_rejects_false_identity_before_critic_or_reservation(tmp_path, overrides):
+    policy = PrimaryTakeoverPolicy()
+    critics = []
+    finalizer, call, output = fixture(tmp_path, critics.append, takeover_policy=policy)
+    call = primary_call(call, policy)
+    with pytest.raises((PermissionError, ValueError), match="parent|provider|identity|policy"):
+        finalizer.select_final(replace(call, **overrides))
+    assert critics == []
+    assert not (output / "agent-final.json").exists()
+    assert finalizer.select_final(call)["selected"] is True
+
+
+def test_takeover_requires_provider_binding_and_exact_critic_candidate(tmp_path):
+    policy = PrimaryTakeoverPolicy()
+
+    def blocked(_):
+        raise RuntimeError("critic not completed for candidate")
+
+    finalizer, call, output = fixture(tmp_path, blocked, takeover_policy=policy)
+    with pytest.raises((PermissionError, ValueError), match="provider|identity"):
+        finalizer.select_final(call)
+    call = primary_call(call, policy)
+    with pytest.raises(RuntimeError, match="critic"):
+        finalizer.select_final(call)
+    assert not (output / "agent-final.json").exists()
+    finalizer.require_critic = lambda _: None
+    finalizer.select_final(call)
+    (output / "candidate.bin").write_bytes(b"changed")
+    with pytest.raises(RuntimeError, match="changed|hash"):
+        finalizer.lock_after_stop(lambda: True)
+
+
+@pytest.mark.parametrize("existing_takeover", [False, True])
+def test_finalizer_database_cannot_upgrade_or_downgrade_policy(tmp_path, existing_takeover):
+    policy = PrimaryTakeoverPolicy()
+    finalizer, _, output = fixture(
+        tmp_path, takeover_policy=policy if existing_takeover else None
+    )
+    with pytest.raises(ValueError, match="another|configuration"):
+        NativeFinalizer(
+            output,
+            finalizer.evidence,
+            task_id="task",
+            attempt_id="attempt",
+            require_critic=lambda _: None,
+            takeover_policy=None if existing_takeover else policy,
+        )
+
+
+def test_legacy_finalizer_does_not_mislabel_takeover_call_as_glm(tmp_path):
+    finalizer, call, output = fixture(tmp_path)
+    with pytest.raises(PermissionError, match="policy|provider"):
+        finalizer.select_final(primary_call(call, PrimaryTakeoverPolicy()))
+    assert not (output / "agent-final.json").exists()
+    assert finalizer.select_final(call)["selected"] is True
+
+
+def test_legacy_finalizer_preserves_original_database_and_proof_identity(tmp_path):
+    finalizer, call, output = fixture(tmp_path)
+    finalizer.select_final(call)
+    with sqlite3.connect(finalizer.database) as connection:
+        identity = connection.execute("SELECT value FROM identity").fetchone()[0]
+        declaration, proof = connection.execute(
+            "SELECT declaration,proof FROM selection"
+        ).fetchone()
+    assert identity == json.dumps(
+        {
+            "task_id": "task",
+            "attempt_id": "attempt",
+            "output": str(output),
+            "configured_model": "glm-5.3[1m]",
+            "provider_model": "glm-5.3",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    declaration, proof = json.loads(declaration), json.loads(proof)
+    assert set(declaration) == {
+        "schema_version",
+        "task_id",
+        "candidate_path",
+        "sha256",
+        "byte_length",
+        "selected_at",
+        "selection_reason",
+        "final_declaration",
+        "selected_by",
+    }
+    assert declaration["schema_version"] == 1
+    assert declaration["selected_by"] == "glm_parent"
+    assert set(proof) == {
+        "task_id",
+        "declaration_sha256",
+        "candidate_sha256",
+        "model",
+        "role",
+        "event_digest",
+    }
+    assert proof["model"] == "glm-5.3[1m]"
+    assert proof["role"] == "glm_parent"
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_v2_final_mcp_uses_durable_provider_binding_not_spoofed_metadata(tmp_path, fallback):
+    from nooa_cybergym.leaderboard.finalization_runtime import finalization_mcp_handler
+
+    policy = PrimaryTakeoverPolicy()
+    finalizer, call, _ = fixture(tmp_path, takeover_policy=policy)
+    controller, peer = native_controller(
+        tmp_path, dict(call.arguments), takeover_policy=policy, fallback=fallback
+    )
+    handler = finalization_mcp_handler(
+        finalizer, peer=peer, resolve_parent_call=controller.resolve_mcp_call
+    )
+    response = handler(
+        rpc(
+            peer,
+            {},
+            params={
+                "name": "select_final",
+                "arguments": dict(call.arguments),
+                "_meta": {
+                    "claudecode/toolUseId": "tool-final",
+                    "provider": "spoofed-provider",
+                    "provider_attempt_id": "spoofed-provider-attempt",
+                    "role": "adviser",
+                },
+            },
+        )
+    )
+    assert response.status == 200
+    assert handler(rpc(peer, dict(call.arguments))).status == 403
+    with sqlite3.connect(finalizer.database) as connection:
+        proof = json.loads(connection.execute("SELECT proof FROM selection").fetchone()[0])
+    with sqlite3.connect(tmp_path / "tools.sqlite") as connection:
+        actual_request_id = connection.execute("SELECT id FROM requests").fetchone()[0]
+    assert proof["request_id"] == actual_request_id
+    assert proof["provider_attempt_id"] == f"provider-attempt-{int(fallback)}"
+    assert proof["provider"] == (
+        "deepseek-official-api" if fallback else "zai-coding-plan"
+    )
+    assert proof["role"] == "primary_parent"
+    locked = finalizer.lock_after_stop(lambda: True)
+    assert locked.parent_event_digest == proof["event_digest"]
+    assert locked.poc_path.read_bytes() == b"synthetic fixture"
 
 
 def test_parent_only_single_final_is_bound_to_actual_tool_arguments(tmp_path):

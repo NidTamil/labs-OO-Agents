@@ -31,6 +31,7 @@ from .finalize import _regular_file_fd, _rooted_directory_fd
 from .model_gateway import PRIMARY_CODING_PLAN_BASE_URL, PRIMARY_MODEL, ModelPolicy
 from .native_tool_runtime import _strict_json
 from .network import NetworkPolicy
+from .primary_takeover import PrimaryTakeoverPolicy
 
 _SHA = re.compile(r"[a-f0-9]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
@@ -337,6 +338,24 @@ class NativeRuntimeConfig:
     _alternate_json: bytes = field(repr=False)
     versions: NativeVersions = NativeVersions()
     budgets: RuntimeBudgets = RuntimeBudgets()
+    schema_version: int = 1
+    _primary_takeover_json: bytes | None = field(default=None, repr=False)
+
+    def __post_init__(self):
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version not in {1, 2}
+            or (self.schema_version == 1 and self._primary_takeover_json is not None)
+            or (
+                self.schema_version == 2
+                and (
+                    type(self._primary_takeover_json) is not bytes
+                    or self._primary_takeover_json
+                    != PrimaryTakeoverPolicy().manifest_json.encode("utf-8")
+                )
+            )
+        ):
+            raise RuntimeConfigError("explicit versioned primary takeover policy required")
 
     @property
     def runs(self):
@@ -352,9 +371,18 @@ class NativeRuntimeConfig:
         return AlternateModelPolicy.model_validate_json(self._alternate_json)
 
     @property
+    def primary_takeover_policy(self):
+        # Schema 2 admits only the exact fixed policy, stored as immutable bytes.
+        return PrimaryTakeoverPolicy() if self._primary_takeover_json is not None else None
+
+    @property
     def model_policy(self):
         return ModelPolicy(
-            PRIMARY_MODEL, self.alternate_policy, self.registry.digest, PRIMARY_CODING_PLAN_BASE_URL
+            PRIMARY_MODEL,
+            self.alternate_policy,
+            self.registry.digest,
+            PRIMARY_CODING_PLAN_BASE_URL,
+            primary_takeover=self.primary_takeover_policy,
         )
 
     def verify_unchanged(self):
@@ -389,8 +417,8 @@ class NativeRuntimeConfig:
         return {**self._public_bindings(), "configuration_sha256": self.freeze_sha256}
 
     def _public_bindings(self):
-        return {
-            "schema_version": 1,
+        bindings = {
+            "schema_version": self.schema_version,
             "scope": "synthetic_native",
             "epoch": self.epoch,
             "run_ids": list(self.run_ids),
@@ -416,6 +444,9 @@ class NativeRuntimeConfig:
             "budgets": asdict(self.budgets),
             "validation_scope": "local input files only; live identities require observation",
         }
+        if self.primary_takeover_policy is not None:
+            bindings["primary_takeover_policy_sha256"] = self.primary_takeover_policy.digest
+        return bindings
 
 
 def _harness_files(repo, manifest):
@@ -457,6 +488,7 @@ def _load_runtime_config(path):
     digest, length, data = _observe(path, maximum=1024 * 1024, capture=True)
     source = VerifiedFile(path, digest, length)
     raw = _strict_json(data)
+    policy_fields = {"policies"} if type(raw) is dict and raw.get("schema_version") == 2 else set()
     _keys(
         raw,
         {
@@ -472,15 +504,22 @@ def _load_runtime_config(path):
             "credentials",
             "signing",
             "gbrain",
+            *policy_fields,
         },
         "runtime configuration",
     )
     if (
         type(raw["schema_version"]) is not int
-        or raw["schema_version"] != 1
+        or raw["schema_version"] not in {1, 2}
         or raw["scope"] != "synthetic_native"
     ):
         raise RuntimeConfigError("only synthetic native configuration is permitted")
+    takeover_json = None
+    if raw["schema_version"] == 2:
+        _keys(raw["policies"], {"primary_takeover_policy"}, "versioned policy inventory")
+        takeover_json = _canonical(raw["policies"]["primary_takeover_policy"])
+        if takeover_json != PrimaryTakeoverPolicy().manifest_json.encode("utf-8"):
+            raise RuntimeConfigError("primary takeover policy differs from approved configuration")
     if (
         type(raw["epoch"]) is not str
         or not _ID.fullmatch(raw["epoch"])
@@ -612,6 +651,8 @@ def _load_runtime_config(path):
         network,
         _canonical(certification.model_dump(mode="json")),
         _canonical(alternate.model_dump(mode="json")),
+        schema_version=raw["schema_version"],
+        _primary_takeover_json=takeover_json,
     )
     config.verify_unchanged()
     return config

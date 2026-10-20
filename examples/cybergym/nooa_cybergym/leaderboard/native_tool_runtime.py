@@ -25,6 +25,7 @@ from uuid import uuid4
 from .host_boundary_runtime import AdmittedPeer, GatewayReply, GatewayRequest
 from .model_gateway import TrustedAdmission
 from .native_hook_runtime import native_request_identity
+from .primary_takeover import PrimaryTakeoverPolicy
 
 
 def _canonical(value):
@@ -77,6 +78,11 @@ class NativeToolCall:
     tool_id: str
     name: str
     arguments: Mapping[str, object]
+    provider: str | None = None
+    configured_model: str | None = None
+    provider_model: str | None = None
+    provider_attempt_id: str | None = None
+    takeover_policy_sha256: str | None = None
 
 
 class NativeToolController:
@@ -96,7 +102,11 @@ class NativeToolController:
         observed_role: Callable[[str, str | None], str | None],
         authorize: Callable[[NativeToolCall], bool],
         redact: Callable[[object], object],
+        primary_takeover: PrimaryTakeoverPolicy | None = None,
     ):
+        if primary_takeover is not None and type(primary_takeover) is not PrimaryTakeoverPolicy:
+            raise TypeError("validated native primary takeover policy required")
+        self.primary_takeover = primary_takeover
         self.database = Path(database)
         if (
             not self.database.is_absolute()
@@ -141,6 +151,7 @@ class NativeToolController:
                 CREATE TABLE IF NOT EXISTS streams (sequence INTEGER PRIMARY KEY, request TEXT NOT NULL, data BLOB NOT NULL);
                 CREATE TABLE IF NOT EXISTS request_lifecycle (request TEXT PRIMARY KEY, status TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS child_schema_discovery (id INTEGER PRIMARY KEY CHECK(id=1), request_sha256 TEXT NOT NULL, schemas BLOB NOT NULL);
+                CREATE TABLE IF NOT EXISTS provider_bindings (sequence INTEGER PRIMARY KEY, request TEXT NOT NULL, provider_attempt_id TEXT NOT NULL UNIQUE, provider TEXT NOT NULL, configured_model TEXT NOT NULL, provider_model TEXT NOT NULL, takeover_policy_sha256 TEXT NOT NULL);
             """)
             identity = _canonical(
                 {
@@ -152,6 +163,8 @@ class NativeToolController:
                     "parent_tools": sorted(parent_tools),
                     "child_tools": sorted(child_tools),
                     "captured_schemas": dict(sorted(self.captured_schemas.items())),
+                    **({"primary_takeover_sha256": primary_takeover.digest}
+                       if primary_takeover is not None else {}),
                 }
             )
             c.execute("INSERT OR IGNORE INTO identity VALUES(1,?)", (identity,))
@@ -308,8 +321,82 @@ class NativeToolController:
                 "terminal": False,
                 "trailer": False,
                 "non_thinking": False,
+                "observed_bytes": False,
+                "provider_binding": None,
+                "provider_model": "glm-5.3",
             }
             return grant
+
+    def bind_provider(
+        self, grant: TrustedAdmission, *, provider: str, configured_model: str,
+        provider_model: str, provider_attempt_id: str, takeover_policy_sha256: str,
+    ) -> None:
+        """Durably bind a controller-admitted dispatch before accepting its bytes.
+
+        Only an unexposed initial binding may transition to the fixed fallback.
+        In-flight requests retain their own bindings regardless of the global route.
+        """
+        with self._lock:
+            state = self._streams.get(grant.request_id)
+            policy = self.primary_takeover
+            if (
+                self._halted or policy is None or state is None or state["grant"] != grant
+                or state["observed_bytes"] or state["started"]
+                or type(provider_attempt_id) is not str
+                or not 0 < len(provider_attempt_id) <= 128
+                or provider_attempt_id != provider_attempt_id.strip()
+                or not provider_attempt_id.isprintable()
+                or provider_attempt_id == grant.request_id
+                or takeover_policy_sha256 != policy.digest
+            ):
+                raise PermissionError("native provider binding denied")
+            route = next(
+                (route for route in (policy.initial, policy.fallback)
+                 if (provider, configured_model, provider_model)
+                 == (route.provider, route.model, route.wire_model)),
+                None,
+            )
+            previous = state["provider_binding"]
+            if route is None or (
+                previous is not None and (
+                    previous["provider"] != policy.initial.provider or route != policy.fallback
+                )
+            ):
+                raise PermissionError("native provider binding transition denied")
+            binding = {
+                "provider": provider, "configured_model": configured_model,
+                "provider_model": provider_model, "provider_attempt_id": provider_attempt_id,
+                "takeover_policy_sha256": takeover_policy_sha256,
+            }
+            try:
+                with self._connect() as c:
+                    c.execute(
+                        "INSERT INTO provider_bindings "
+                        "(request,provider_attempt_id,provider,configured_model,provider_model,"
+                        "takeover_policy_sha256) VALUES(?,?,?,?,?,?)",
+                        (grant.request_id, provider_attempt_id, provider, configured_model,
+                         provider_model, takeover_policy_sha256),
+                    )
+                state["provider_binding"] = binding
+                state["provider_model"] = provider_model
+            except Exception:
+                self._halted = True
+                raise PermissionError("native provider binding custody failed") from None
+
+    def _provider_provenance(self, c, request_id):
+        if self.primary_takeover is None:
+            return {}
+        row = c.execute(
+            "SELECT provider,configured_model,provider_model,provider_attempt_id,"
+            "takeover_policy_sha256 FROM provider_bindings WHERE request=? "
+            "ORDER BY sequence DESC LIMIT 1", (request_id,),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("native tool lacks provider binding")
+        return dict(zip(
+            ("provider", "configured_model", "provider_model", "provider_attempt_id",
+             "takeover_policy_sha256"), row, strict=True,
+        ))
 
     def forward_request(self, grant: TrustedAdmission, request: GatewayRequest) -> GatewayRequest:
         """Return only approved captured schemas after exact request custody."""
@@ -394,6 +481,13 @@ class NativeToolController:
                 raise PermissionError("native stream has no request")
             try:
                 with self._connect() as c:
+                    if self.primary_takeover is not None:
+                        if state["provider_binding"] is None:
+                            raise PermissionError("native stream lacks provider binding")
+                        if self._provider_provenance(c, grant.request_id) != state["provider_binding"]:
+                            raise PermissionError("native provider binding changed")
+                    if chunk:
+                        state["observed_bytes"] = True
                     c.execute(
                         "INSERT INTO streams(request,data) VALUES(?,?)", (grant.request_id, chunk)
                     )
@@ -442,7 +536,7 @@ class NativeToolController:
             if (
                 state["started"]
                 or type(message) is not dict
-                or message.get("model") != "glm-5.3"
+                or message.get("model") != state["provider_model"]
                 or message.get("content", []) != []
             ):
                 raise PermissionError("native message start malformed")
@@ -673,6 +767,7 @@ class NativeToolController:
                         row[0],
                         row[1],
                         normalized_input,
+                        **self._provider_provenance(c, row[5]),
                     )
                     allowed = call.name != "Agent" or (
                         call.role == "parent"
@@ -769,6 +864,7 @@ class NativeToolController:
                         row[0],
                         row[1],
                         args,
+                        **self._provider_provenance(c, row[5]),
                     )
                 return call
             except PermissionError:

@@ -7,10 +7,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from nooa_cybergym.leaderboard.finalize import ParentSelectionProof, lock_agent_final
+from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
 
 
 def _attest(raw: bytes) -> ParentSelectionProof:
@@ -201,3 +203,175 @@ def test_ancestor_symlink_swap_during_attestation_cannot_import_external_file(
             attest_parent_selection=swap_ancestor,
         )
     assert not (evidence / "final").exists()
+
+
+def _declare_primary(output, *, fallback=True, **overrides):
+    policy = PrimaryTakeoverPolicy()
+    route = policy.fallback if fallback else policy.initial
+    identity = {
+        "schema_version": 2,
+        "selected_by": "primary_parent",
+        "provider": route.provider,
+        "configured_model": route.model,
+        "provider_model": route.wire_model,
+        "provider_attempt_id": "provider-attempt",
+        "takeover_policy_sha256": policy.digest,
+        "attempt_id": "attempt",
+        "request_id": "request",
+        "session_id": "session",
+        "tool_id": "tool-final",
+    }
+    _declare(output, **(identity | overrides))
+    return policy
+
+
+def _attest_primary(raw):
+    from nooa_cybergym.leaderboard.finalize import PrimaryParentSelectionProof
+
+    declaration = json.loads(raw)
+    event = {
+        "schema_version": 2,
+        "task_id": declaration["task_id"],
+        "attempt_id": declaration["attempt_id"],
+        "request_id": declaration["request_id"],
+        "session_id": declaration["session_id"],
+        "agent_id": None,
+        "role": "parent",
+        "tool_id": declaration["tool_id"],
+        "tool_name": "mcp__finalizer__select_final",
+        "provider": declaration["provider"],
+        "configured_model": declaration["configured_model"],
+        "observed_provider_model": declaration["provider_model"],
+        "provider_attempt_id": declaration["provider_attempt_id"],
+        "takeover_policy_sha256": declaration["takeover_policy_sha256"],
+        "authority": "NativeToolController.resolve_mcp_call",
+        "arguments": {
+            key: declaration[key]
+            for key in ("candidate_path", "sha256", "byte_length", "selection_reason")
+        },
+    }
+    return PrimaryParentSelectionProof(
+        schema_version=2,
+        task_id=declaration["task_id"],
+        declaration_sha256=hashlib.sha256(raw).hexdigest(),
+        candidate_sha256=declaration["sha256"],
+        model=declaration["configured_model"],
+        role="primary_parent",
+        event_digest=hashlib.sha256(
+            json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest(),
+        **{
+            key: declaration[key]
+            for key in (
+                "provider",
+                "provider_model",
+                "provider_attempt_id",
+                "takeover_policy_sha256",
+                "attempt_id",
+                "request_id",
+                "session_id",
+                "tool_id",
+            )
+        },
+    )
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_v2_final_lock_requires_explicit_policy_and_accepts_actual_primary(tmp_path, fallback):
+    output, evidence = tmp_path / "workspace" / "output", tmp_path / "evidence"
+    policy = _declare_primary(output, fallback=fallback)
+    with pytest.raises(ValueError):
+        lock_agent_final(
+            output, evidence, "synthetic:length-header", attest_parent_selection=_attest_primary
+        )
+    locked = lock_agent_final(
+        output,
+        evidence,
+        "synthetic:length-header",
+        attest_parent_selection=_attest_primary,
+        takeover_policy=policy,
+    )
+    assert locked.declaration["selected_by"] == "primary_parent"
+    assert locked.declaration["provider"] == (
+        "deepseek-official-api" if fallback else "zai-coding-plan"
+    )
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"schema_version": 1},
+        {"schema_version": True},
+        {"task_id": "other"},
+        {"declaration_sha256": "b" * 64},
+        {"candidate_sha256": "b" * 64},
+        {"role": "glm_parent"},
+        {"role": "child"},
+        {"role": "adviser"},
+        {"model": "glm-5.3[1m]"},
+        {"provider": "zai-coding-plan"},
+        {"provider_model": "glm-5.3"},
+        {"provider_attempt_id": "other-provider-attempt"},
+        {"takeover_policy_sha256": "b" * 64},
+        {"attempt_id": "other-attempt"},
+        {"request_id": "other-request"},
+        {"session_id": "other-session"},
+        {"tool_id": "other-tool"},
+        {"event_digest": "b" * 64},
+    ],
+)
+def test_v2_final_lock_rejects_each_proof_identity_mismatch(tmp_path, overrides):
+    output, evidence = tmp_path / "workspace" / "output", tmp_path / "evidence"
+    policy = _declare_primary(output)
+    with pytest.raises(RuntimeError, match="attestation disagrees"):
+        lock_agent_final(
+            output,
+            evidence,
+            "synthetic:length-header",
+            attest_parent_selection=lambda raw: replace(_attest_primary(raw), **overrides),
+            takeover_policy=policy,
+        )
+    assert not (evidence / "final").exists()
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"selected_by": "glm_parent"},
+        {"provider": "zai-coding-plan"},
+        {"configured_model": "glm-5.3[1m]"},
+        {"provider_model": "glm-5.3"},
+        {"provider_attempt_id": ""},
+        {"provider_attempt_id": "request"},
+        {"takeover_policy_sha256": "b" * 64},
+        {"request_id": ""},
+        {"session_id": ""},
+        {"tool_id": ""},
+        {"unexpected": "field"},
+    ],
+)
+def test_v2_final_lock_rejects_declaration_route_or_custody_drift(tmp_path, overrides):
+    output, evidence = tmp_path / "workspace" / "output", tmp_path / "evidence"
+    policy = _declare_primary(output, **overrides)
+    with pytest.raises(ValueError):
+        lock_agent_final(
+            output,
+            evidence,
+            "synthetic:length-header",
+            attest_parent_selection=_attest_primary,
+            takeover_policy=policy,
+        )
+    assert not (evidence / "final").exists()
+
+
+def test_v2_policy_does_not_accept_legacy_declaration_or_proof(tmp_path):
+    output, evidence = tmp_path / "workspace" / "output", tmp_path / "evidence"
+    _declare(output)
+    with pytest.raises(ValueError):
+        lock_agent_final(
+            output,
+            evidence,
+            "synthetic:length-header",
+            attest_parent_selection=_attest,
+            takeover_policy=PrimaryTakeoverPolicy(),
+        )

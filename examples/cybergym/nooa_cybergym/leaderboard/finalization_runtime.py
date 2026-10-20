@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The sole GLM parent selection, joined to an actual authorized native MCP call."""
+"""The sole primary parent selection, joined to an authorized native MCP call."""
 
 from __future__ import annotations
 
@@ -18,11 +18,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .finalize import (
+    _PRIMARY_IDENTITY_FIELDS,
     FinalLock,
     ParentSelectionProof,
+    PrimaryParentSelectionProof,
     _candidate_components,
     _candidate_file,
     _fsync_directory,
+    _primary_event_digest,
     _regular_file_fd,
     _rooted_directory_fd,
     _validate_declaration,
@@ -30,6 +33,7 @@ from .finalize import (
 )
 from .host_boundary_runtime import AdmittedPeer, GatewayReply, GatewayRequest
 from .native_tool_runtime import NativeToolCall, _strict_json
+from .primary_takeover import PrimaryTakeoverPolicy
 
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _NATIVE_NAME = "mcp__finalizer__select_final"
@@ -58,9 +62,10 @@ def _canonical(value):
 class NativeFinalizer:
     """Controller-only consumer of calls resolved by NativeToolController.
 
-    The resolver validates the actual provider's message_start model as
-    glm-5.3 and the request's frozen configuration. The final-custody contract
-    names that configured model glm-5.3[1m]; it is not a provider model echo.
+    Legacy custody names the GLM configured model glm-5.3[1m]. With an explicit
+    takeover policy, v2 custody binds the provider attempt admitted for this
+    request, including its observed provider model, without changing session
+    or candidate authority. The resolver verifies that binding before dispatch.
     A NativeToolCall supplied by a solver, header, or JSON body is never proof.
     """
 
@@ -72,6 +77,7 @@ class NativeFinalizer:
         task_id: str,
         attempt_id: str,
         require_critic: Callable[[str], None],
+        takeover_policy: PrimaryTakeoverPolicy | None = None,
     ):
         self.output, self.evidence = Path(output), Path(evidence)
         self.database = self.evidence / "native-final.sqlite"
@@ -81,19 +87,25 @@ class NativeFinalizer:
             for value in (task_id, attempt_id)
         ) or not callable(require_critic):
             raise ValueError("task identity and trusted critic callback required")
+        if takeover_policy is not None and type(takeover_policy) is not PrimaryTakeoverPolicy:
+            raise ValueError("trusted primary takeover policy required")
+        self.takeover_policy = takeover_policy
         self._verify_paths()
         self.evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
         self._verify_paths()
         self.task_id, self.attempt_id, self.require_critic = task_id, attempt_id, require_critic
-        identity = _canonical(
-            {
-                "task_id": task_id,
-                "attempt_id": attempt_id,
-                "output": str(self.output),
-                "configured_model": "glm-5.3[1m]",
-                "provider_model": "glm-5.3",
-            }
-        )
+        identity_fields = {
+            "task_id": task_id,
+            "attempt_id": attempt_id,
+            "output": str(self.output),
+        }
+        if takeover_policy is None:
+            identity_fields.update(
+                configured_model="glm-5.3[1m]", provider_model="glm-5.3"
+            )
+        else:
+            identity_fields.update(schema_version=2, takeover_policy_sha256=takeover_policy.digest)
+        identity = _canonical(identity_fields)
         with self._connect() as c:
             c.executescript("""
                 CREATE TABLE IF NOT EXISTS selection(id INTEGER PRIMARY KEY CHECK(id=1), task TEXT, attempt TEXT, declaration BLOB, proof BLOB);
@@ -161,6 +173,17 @@ class NativeFinalizer:
             )
         ):
             raise PermissionError("authorized native GLM parent selection required")
+        if self.takeover_policy is None and any(
+            getattr(call, key) is not None
+            for key in (
+                "provider",
+                "configured_model",
+                "provider_model",
+                "provider_attempt_id",
+                "takeover_policy_sha256",
+            )
+        ):
+            raise PermissionError("provider takeover identity requires explicit finalization policy")
         args = dict(call.arguments)
         if set(args) != {"candidate_path", "sha256", "byte_length", "selection_reason"}:
             raise ValueError("invalid final selection fields")
@@ -172,10 +195,16 @@ class NativeFinalizer:
             "final_declaration": True,
             "selected_by": "glm_parent",
         }
+        if self.takeover_policy is not None:
+            declaration.update(
+                schema_version=2,
+                selected_by="primary_parent",
+                **{key: getattr(call, key) for key in _PRIMARY_IDENTITY_FIELDS},
+            )
         raw = _canonical(declaration)
         if len(raw) > 256 * 1024:
             raise ValueError("final declaration is too large")
-        _validate_declaration(raw, self.task_id)
+        _validate_declaration(raw, self.task_id, takeover_policy=self.takeover_policy)
         self._verify_candidate(args)
         self.require_critic(args["sha256"])
         proof = {
@@ -203,6 +232,17 @@ class NativeFinalizer:
                 )
             ).hexdigest(),
         }
+        if self.takeover_policy is not None:
+            proof.update(
+                schema_version=2,
+                model=call.configured_model,
+                role="primary_parent",
+                event_digest=_primary_event_digest(declaration),
+                **{
+                    key: declaration[key]
+                    for key in _PRIMARY_IDENTITY_FIELDS - {"configured_model"}
+                },
+            )
         with self._connect() as c:
             c.execute("BEGIN IMMEDIATE")
             if c.execute("SELECT count(*) FROM selection").fetchone()[0]:
@@ -344,14 +384,23 @@ class NativeFinalizer:
         def attest(raw):
             if raw != row[2]:
                 raise PermissionError("final declaration changed after native selection")
-            return ParentSelectionProof(**json.loads(row[3]))
+            proof_type = (
+                ParentSelectionProof
+                if self.takeover_policy is None
+                else PrimaryParentSelectionProof
+            )
+            return proof_type(**json.loads(row[3]))
 
         # Reserve before any copy. A failed hash/copy/audit cannot later become
         # successful by changing the candidate and retrying, even after restart.
         try:
             self._verify_paths()
             result = lock_agent_final(
-                self.output, self.evidence, self.task_id, attest_parent_selection=attest
+                self.output,
+                self.evidence,
+                self.task_id,
+                attest_parent_selection=attest,
+                takeover_policy=self.takeover_policy,
             )
             with self._connect() as c:
                 c.execute("UPDATE lock_attempt SET status='locked' WHERE id=1")

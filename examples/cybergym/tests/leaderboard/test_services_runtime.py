@@ -8,6 +8,7 @@ No test here is a native image or remote provider certification claim.
 import asyncio
 import hashlib
 import json
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -254,6 +255,21 @@ def request(peer, endpoint="registered-tool-gateway", path="/mcp/clangd"):
         b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
         peer,
     )
+
+
+def test_explicit_takeover_services_bind_one_policy_in_native_and_final_custody(assembled):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    policy = PrimaryTakeoverPolicy()
+    service = assembled.create(
+        model_policy=replace(assembled.args["model_policy"], primary_takeover=policy)
+    )
+    assert service.tools.primary_takeover is policy
+    assert service.finalizer.takeover_policy is policy
+    with sqlite3.connect(service.finalizer.database) as connection:
+        final_identity = json.loads(connection.execute("SELECT value FROM identity").fetchone()[0])
+    assert final_identity["schema_version"] == 2
+    assert final_identity["takeover_policy_sha256"] == policy.digest
 
 
 def test_official_arvo_recipe_selects_vulnerable_only_native_route(assembled):

@@ -294,6 +294,7 @@ def run(
                 task_id=task_id,
                 attempt_id=attempt_id,
                 secrets=(zai, deepseek),
+                record_request_reservations=config.primary_takeover_policy is not None,
             )
         )
         observer = DockerPathObserver(client.api, container_id=container.id)
@@ -465,6 +466,10 @@ def run(
                     prior_requests=prior_budget["requests"],
                     prior_auxiliary_requests=prior_budget["glm_and_memory_auxiliary_requests"],
                     remaining_seconds=max(0, remaining_at_stop - (time.monotonic() - stop_started)),
+                    run_request_budget=context.budget.run_request_budget,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    record_request_reservations=context.budget.record_request_reservations,
                 ),
                 audit=context.audit,
                 allowed_models=dict(config.gbrain.allowed_models),

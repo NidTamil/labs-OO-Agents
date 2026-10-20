@@ -59,6 +59,8 @@ class NativeModelDispatcher:
     ):
         if tools.policy_sha256 != policy.capability_policy_sha256:
             raise ValueError("native capability policy does not match model policy")
+        if tools.primary_takeover != policy.primary_takeover:
+            raise ValueError("native takeover policy does not match model policy")
         self.tools = tools
         self.audit = audit
         self._current = threading.local()
@@ -77,6 +79,7 @@ class NativeModelDispatcher:
             transport=transport,
             native_stream_observer=tools.observe_stream,
             native_stream_finished=tools.finish_stream,
+            native_provider_binding=tools.bind_provider if policy.primary_takeover is not None else None,
         )
         self.route = TaskModelRoute(self.gateway, task_token, self._connection)
 

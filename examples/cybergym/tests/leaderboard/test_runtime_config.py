@@ -201,6 +201,115 @@ def test_nested_config_is_immutable_and_policy_mutation_is_not_retained(prepared
     assert config.certification_policy.alternate_max_requests_by_role["independent_recon"] == 30
 
 
+def enable_takeover(prepared):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    prepared[0]["schema_version"] = 2
+    prepared[0]["policies"] = {
+        "primary_takeover_policy": json.loads(PrimaryTakeoverPolicy().manifest_json)
+    }
+
+
+def test_schema_two_binds_explicit_takeover_policy_to_model_and_public_freeze(prepared):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    legacy = load(prepared)
+    enable_takeover(prepared)
+    config = load(prepared)
+    policy = config.primary_takeover_policy
+    assert type(policy) is PrimaryTakeoverPolicy
+    assert policy.fallback.provider == "deepseek-official-api"
+    assert config.model_policy.primary_takeover == policy
+    assert config.model_policy.digest != legacy.model_policy.digest
+    summary = config.safe_summary()
+    assert summary["schema_version"] == 2
+    assert summary["primary_takeover_policy_sha256"] == policy.digest
+    assert summary["configuration_sha256"] != legacy.freeze_sha256
+    assert "synthetic-private" not in repr(config) + json.dumps(summary)
+    config.verify_unchanged()
+
+
+def test_schema_one_retains_legacy_public_and_model_binding_without_takeover(prepared):
+    config = load(prepared)
+    assert config.primary_takeover_policy is None
+    assert config.model_policy.primary_takeover is None
+    summary = config.safe_summary()
+    assert set(summary) == {
+        "schema_version",
+        "scope",
+        "epoch",
+        "run_ids",
+        "fixture_ids",
+        "configuration_file_sha256",
+        "image_id",
+        "vscode_version",
+        "vscode_commit",
+        "claude_extension_version",
+        "launcher_version",
+        "artifact_sha256",
+        "fixture_sha256",
+        "capability_registry_sha256",
+        "signing_key_id",
+        "signing_public_key_sha256",
+        "budgets",
+        "validation_scope",
+        "configuration_sha256",
+    }
+    assert summary["schema_version"] == 1
+    assert (
+        config.model_policy.digest
+        == hashlib.sha256(
+            canonical(
+                {
+                    "primary": "glm-5.3[1m]",
+                    "alternate_sha256": config.alternate_policy.digest,
+                    "capability_policy_sha256": config.registry.digest,
+                    "approved_zai_coding_plan_url": "https://api.z.ai/api/anthropic",
+                }
+            )
+        ).hexdigest()
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda c: c.pop("policies"),
+        lambda c: c.update(policies=None),
+        lambda c: c.update(policies={}),
+        lambda c: c["policies"].update(extra=True),
+        lambda c: c["policies"].update(primary_takeover_policy=None),
+        lambda c: c["policies"].update(primary_takeover_policy="enabled"),
+        lambda c: c["policies"]["primary_takeover_policy"].update(schema_version=True),
+        lambda c: c["policies"]["primary_takeover_policy"].update(max_transitions=2),
+        lambda c: c["policies"]["primary_takeover_policy"].update(extra=True),
+        lambda c: c["policies"]["primary_takeover_policy"]["fallback"].update(
+            base_url="https://unapproved.invalid/anthropic"
+        ),
+        lambda c: c.update(schema_version=1),
+        lambda c: c.update(schema_version=3),
+    ],
+)
+def test_takeover_requires_exact_versioned_policy_object(prepared, mutate):
+    enable_takeover(prepared)
+    mutate(prepared[0])
+    with pytest.raises(ValueError):
+        load(prepared)
+
+
+def test_takeover_policy_is_immutable_and_frozen_source_changes_are_rejected(prepared):
+    enable_takeover(prepared)
+    config = load(prepared)
+    policy = config.primary_takeover_policy
+    with pytest.raises(FrozenInstanceError):
+        policy.fallback.base_url = "https://unapproved.invalid"
+    prepared[0]["policies"]["primary_takeover_policy"]["fallback"]["model"] = "changed"
+    prepared[1]()
+    with pytest.raises(ValueError, match="changed|digest"):
+        config.verify_unchanged()
+    assert config.primary_takeover_policy.fallback.model == "deepseek-flash"
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

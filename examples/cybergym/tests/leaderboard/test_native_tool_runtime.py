@@ -20,6 +20,7 @@ def controller(
     observed_role=None,
     captured_schemas=None,
     task_id="task",
+    primary_takeover=None,
 ):
     parent_tools = parent_tools or frozenset({"Read", "Bash", "Agent"})
     return NativeToolController(
@@ -47,7 +48,78 @@ def controller(
         ),
         authorize=authorize,
         redact=lambda value: value,
+        primary_takeover=primary_takeover,
     )
+
+
+def test_takeover_provider_binding_is_durable_before_tool_authorization(tmp_path):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    policy = PrimaryTakeoverPolicy()
+    seen = []
+    c = controller(tmp_path, lambda call: seen.append(call) or True, primary_takeover=policy)
+    grant = c.begin_request(model_request())
+    for index, route in enumerate((policy.initial, policy.fallback)):
+        c.bind_provider(
+            grant, provider=route.provider, configured_model=route.model,
+            provider_model=route.wire_model, provider_attempt_id=f"provider-{index}",
+            takeover_policy_sha256=policy.digest,
+        )
+    with sqlite3.connect(c.database) as connection:
+        assert connection.execute(
+            "SELECT provider FROM provider_bindings ORDER BY sequence"
+        ).fetchall() == [("zai-coding-plan",), ("deepseek-official-api",)]
+    c.observe_stream(grant, tool_frames().replace(b"glm-5.3", b"deepseek-flash"))
+    assert c.authorize_hook(hook()) is True
+    assert seen[0].provider == "deepseek-official-api"
+    assert seen[0].configured_model == seen[0].provider_model == "deepseek-flash"
+    assert seen[0].provider_attempt_id == "provider-1"
+    assert seen[0].takeover_policy_sha256 == policy.digest
+
+
+def test_takeover_stream_requires_binding_and_cannot_rebind_after_bytes(tmp_path):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    policy = PrimaryTakeoverPolicy()
+    c = controller(tmp_path, primary_takeover=policy)
+    grant = c.begin_request(model_request())
+    with pytest.raises(PermissionError):
+        c.observe_stream(grant, tool_frames())
+    (tmp_path / "bound").mkdir()
+    d = controller(tmp_path / "bound", primary_takeover=policy)
+    grant = d.begin_request(model_request())
+    d.bind_provider(
+        grant, provider=policy.initial.provider, configured_model=policy.initial.model,
+        provider_model=policy.initial.wire_model, provider_attempt_id="provider-0",
+        takeover_policy_sha256=policy.digest,
+    )
+    d.observe_stream(grant, b"data:")
+    with pytest.raises(PermissionError):
+        d.bind_provider(
+            grant, provider=policy.fallback.provider, configured_model=policy.fallback.model,
+            provider_model=policy.fallback.wire_model, provider_attempt_id="provider-1",
+            takeover_policy_sha256=policy.digest,
+        )
+
+
+def test_takeover_binding_keeps_concurrent_glm_request_model(tmp_path):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    policy = PrimaryTakeoverPolicy()
+    c = controller(tmp_path, primary_takeover=policy)
+    first, second = c.begin_request(model_request()), c.begin_request(model_request())
+    for grant, route in ((first, policy.initial), (second, policy.fallback)):
+        c.bind_provider(
+            grant, provider=route.provider, configured_model=route.model,
+            provider_model=route.wire_model, provider_attempt_id=f"provider-{grant.request_id}",
+            takeover_policy_sha256=policy.digest,
+        )
+    c.observe_stream(first, tool_frames())
+    c.observe_stream(
+        second,
+        tool_frames().replace(b"glm-5.3", b"deepseek-flash").replace(b"tool-1", b"tool-2"),
+    )
+    assert c.summary() == {"observed": 2}
 
 
 def test_native_advertised_denied_tool_is_removed_before_provider(tmp_path):

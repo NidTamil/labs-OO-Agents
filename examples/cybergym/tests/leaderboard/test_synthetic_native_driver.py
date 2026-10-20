@@ -131,6 +131,102 @@ def test_post_oracle_capture_continues_accounting_with_a_strict_auxiliary_cap():
         full.reserve_request()
 
 
+@pytest.mark.parametrize("audit_ok", [True, False])
+def test_post_oracle_memory_debits_run_ledger_before_any_provider_permit(tmp_path, audit_ok):
+    from nooa_cybergym.leaderboard.run_request_budget import RunRequestBudget
+
+    tmp_path.chmod(0o700)
+    ledger = RunRequestBudget.create(
+        tmp_path / "requests.sqlite",
+        run_id="ten-run",
+        epoch="epoch",
+        policy_sha256="a" * 64,
+        ordered_task_ids=tuple(f"arvo:{i}" for i in range(10)),
+    )
+    ledger.reserve(
+        task_id="arvo:0",
+        attempt_id="attempt",
+        request_id="native-request",
+        allocation="primary_and_memory",
+    )
+
+    class Audit:
+        def record(self, event):
+            if event["event"] == "post_oracle_memory_model_reserved":
+                assert ledger.snapshot()["requests"] == 2
+                assert event["run_ordinal"] == 2
+                return audit_ok
+            return True
+
+    budget = _PostOracleMemoryBudget(
+        Audit(),
+        prior_requests=1,
+        prior_auxiliary_requests=1,
+        remaining_seconds=120,
+        run_request_budget=ledger,
+        task_id="arvo:0",
+        attempt_id="attempt",
+    )
+    if audit_ok:
+        assert budget.reserve_request() == 2
+    else:
+        with pytest.raises(PermissionError, match="audit"):
+            budget.reserve_request()
+        with pytest.raises(PermissionError, match="budget|halted"):
+            budget.reserve_request()
+    assert ledger.snapshot()["requests"] == 2
+
+
+def test_post_oracle_memory_rejects_stale_run_snapshot(tmp_path):
+    from nooa_cybergym.leaderboard.run_request_budget import RunRequestBudget
+
+    tmp_path.chmod(0o700)
+    ledger = RunRequestBudget.create(
+        tmp_path / "requests.sqlite",
+        run_id="ten-run",
+        epoch="epoch",
+        policy_sha256="a" * 64,
+        ordered_task_ids=tuple(f"arvo:{i}" for i in range(10)),
+    )
+    with pytest.raises(ValueError, match="snapshot"):
+        _PostOracleMemoryBudget(
+            None,
+            prior_requests=1,
+            prior_auxiliary_requests=1,
+            remaining_seconds=120,
+            run_request_budget=ledger,
+            task_id="arvo:0",
+            attempt_id="attempt",
+        )
+
+
+def test_post_oracle_fixture_debit_extends_same_allocation_ordinals():
+    events = []
+
+    class Audit:
+        def record(self, event):
+            events.append(event)
+            return True
+
+    budget = _PostOracleMemoryBudget(
+        Audit(),
+        prior_requests=8,
+        prior_auxiliary_requests=5,
+        remaining_seconds=120,
+        task_id="synthetic:length-header",
+        attempt_id="attempt",
+        record_request_reservations=True,
+    )
+    assert budget.reserve_request() == 9
+    assert budget.reserve_request() == 10
+    assert [row["task_ordinal"] for row in events] == [9, 10]
+    assert [row["allocation_ordinal"] for row in events] == [6, 7]
+    assert all(row["run_allocation"] == "primary_and_memory" for row in events)
+    assert all(row["task_id"] == "synthetic:length-header" for row in events)
+    assert len({row["request_id"] for row in events}) == 2
+    assert all("run_id" not in row for row in events)
+
+
 def test_writer_guard_is_pinned_by_signed_read_catalog(tmp_path):
     key = Ed25519PrivateKey.generate()
     signer = Ed25519Signer(private_key=key, key_id="memory-test")

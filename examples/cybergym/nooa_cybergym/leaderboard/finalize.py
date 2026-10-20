@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""One-shot custody of the GLM parent's declared final PoC.
+"""One-shot custody of the admitted primary parent's declared final PoC.
 
 The caller must supply an attestor backed by the native parent event and Xeus
 evidence authority. This component does not nominate a candidate, recover a
@@ -24,7 +24,10 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
+from .primary_takeover import PrimaryTakeoverPolicy
+
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _MAX_DECLARATION_BYTES = 1024 * 1024
 _DECLARATION_FIELDS = frozenset(
     {
@@ -37,6 +40,19 @@ _DECLARATION_FIELDS = frozenset(
         "selection_reason",
         "final_declaration",
         "selected_by",
+    }
+)
+_PRIMARY_IDENTITY_FIELDS = frozenset(
+    {
+        "provider",
+        "configured_model",
+        "provider_model",
+        "provider_attempt_id",
+        "takeover_policy_sha256",
+        "attempt_id",
+        "request_id",
+        "session_id",
+        "tool_id",
     }
 )
 
@@ -54,6 +70,27 @@ class ParentSelectionProof:
 
 
 @dataclass(frozen=True, slots=True)
+class PrimaryParentSelectionProof:
+    """V2 trusted native selection; never accepted by the legacy GLM verifier."""
+
+    schema_version: int
+    task_id: str
+    declaration_sha256: str
+    candidate_sha256: str
+    model: str
+    role: str
+    event_digest: str
+    provider: str
+    provider_model: str
+    provider_attempt_id: str
+    takeover_policy_sha256: str
+    attempt_id: str
+    request_id: str
+    session_id: str
+    tool_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class FinalLock:
     task_id: str
     sha256: str
@@ -64,19 +101,92 @@ class FinalLock:
     parent_event_digest: str
 
 
-def _validate_declaration(raw: bytes, expected_task_id: str) -> dict[str, Any]:
+def _validate_primary_identity(
+    identity: Mapping[str, Any], policy: PrimaryTakeoverPolicy
+) -> None:
+    if type(policy) is not PrimaryTakeoverPolicy:
+        raise ValueError("trusted primary takeover policy required")
+    if (
+        type(identity["takeover_policy_sha256"]) is not str
+        or identity["takeover_policy_sha256"] != policy.digest
+        or not any(
+            (
+                identity["provider"],
+                identity["configured_model"],
+                identity["provider_model"],
+            )
+            == (route.provider, route.model, route.wire_model)
+            for route in (policy.initial, policy.fallback)
+        )
+        or any(
+            type(identity[key]) is not str
+            for key in ("provider", "configured_model", "provider_model")
+        )
+    ):
+        raise ValueError("primary provider identity disagrees with takeover policy")
+    if any(
+        type(identity[key]) is not str or not _IDENTIFIER.fullmatch(identity[key])
+        for key in ("attempt_id", "request_id", "session_id", "tool_id", "provider_attempt_id")
+    ) or identity["provider_attempt_id"] == identity["request_id"]:
+        raise ValueError("distinct bounded native request and provider attempt identity required")
+
+
+def _primary_event_digest(declaration: Mapping[str, Any]) -> str:
+    """Bind the complete native parent invocation, independent of serialization."""
+    event = {
+        "schema_version": 2,
+        "task_id": declaration["task_id"],
+        "attempt_id": declaration["attempt_id"],
+        "request_id": declaration["request_id"],
+        "session_id": declaration["session_id"],
+        "agent_id": None,
+        "role": "parent",
+        "tool_id": declaration["tool_id"],
+        "tool_name": "mcp__finalizer__select_final",
+        "provider": declaration["provider"],
+        "configured_model": declaration["configured_model"],
+        "observed_provider_model": declaration["provider_model"],
+        "provider_attempt_id": declaration["provider_attempt_id"],
+        "takeover_policy_sha256": declaration["takeover_policy_sha256"],
+        "authority": "NativeToolController.resolve_mcp_call",
+        "arguments": {
+            key: declaration[key]
+            for key in ("candidate_path", "sha256", "byte_length", "selection_reason")
+        },
+    }
+    return hashlib.sha256(
+        json.dumps(event, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    ).hexdigest()
+
+
+def _validate_declaration(
+    raw: bytes,
+    expected_task_id: str,
+    *,
+    takeover_policy: PrimaryTakeoverPolicy | None = None,
+) -> dict[str, Any]:
     try:
         declaration = json.loads(raw)
     except (UnicodeDecodeError, ValueError):
         raise ValueError("invalid agent final declaration") from None
-    if not isinstance(declaration, dict) or frozenset(declaration) != _DECLARATION_FIELDS:
+    fields = _DECLARATION_FIELDS
+    version, selector = 1, "glm_parent"
+    if takeover_policy is not None:
+        if type(takeover_policy) is not PrimaryTakeoverPolicy:
+            raise ValueError("trusted primary takeover policy required")
+        fields |= _PRIMARY_IDENTITY_FIELDS
+        version, selector = 2, "primary_parent"
+    if not isinstance(declaration, dict) or frozenset(declaration) != fields:
         raise ValueError("agent final declaration fields are invalid")
-    if type(declaration["schema_version"]) is not int or declaration["schema_version"] != 1:
+    if type(declaration["schema_version"]) is not int or declaration["schema_version"] != version:
         raise ValueError("agent final declaration schema is invalid")
     if declaration["task_id"] != expected_task_id:
         raise ValueError("agent final task ID does not match")
-    if declaration["selected_by"] != "glm_parent" or declaration["final_declaration"] is not True:
-        raise ValueError("GLM parent did not declare an official final")
+    if declaration["selected_by"] != selector or declaration["final_declaration"] is not True:
+        parent = "GLM" if takeover_policy is None else "primary"
+        raise ValueError(f"{parent} parent did not declare an official final")
+    if takeover_policy is not None:
+        _validate_primary_identity(declaration, takeover_policy)
     if (
         type(declaration["sha256"]) is not str
         or not _SHA256.fullmatch(declaration["sha256"])
@@ -218,7 +328,8 @@ def lock_agent_final(
     evidence_dir: Path,
     expected_task_id: str,
     *,
-    attest_parent_selection: Callable[[bytes], ParentSelectionProof],
+    attest_parent_selection: Callable[[bytes], ParentSelectionProof | PrimaryParentSelectionProof],
+    takeover_policy: PrimaryTakeoverPolicy | None = None,
 ) -> FinalLock:
     """Copy exactly one attested agent-selected final into immutable custody."""
 
@@ -227,7 +338,8 @@ def lock_agent_final(
     if os.name != "posix" and (output.is_symlink() or not output.is_dir()):
         raise RuntimeError("agent output directory is missing or linked")
     if not callable(attest_parent_selection):
-        raise RuntimeError("trusted GLM parent selection attestor is required")
+        parent = "GLM" if takeover_policy is None else "primary"
+        raise RuntimeError(f"trusted {parent} parent selection attestor is required")
     if evidence.is_symlink() or evidence.resolve().is_relative_to(output.parent.resolve()):
         raise ValueError("final evidence must be outside the agent workspace")
     final = evidence / "final"
@@ -264,7 +376,9 @@ def lock_agent_final(
             raw_declaration = declaration_file.read_bytes()
         if len(raw_declaration) > _MAX_DECLARATION_BYTES:
             raise ValueError("agent final declaration is too large")
-        declaration = _validate_declaration(raw_declaration, expected_task_id)
+        declaration = _validate_declaration(
+            raw_declaration, expected_task_id, takeover_policy=takeover_policy
+        )
         if output_fd is not None:
             candidate = _regular_file_fd(
                 output_fd, _candidate_components(declaration["candidate_path"]), "candidate"
@@ -273,21 +387,38 @@ def lock_agent_final(
         else:
             candidate = _candidate_file(output, declaration["candidate_path"])
 
+        parent = "GLM" if takeover_policy is None else "primary"
         try:
             proof = attest_parent_selection(raw_declaration)
         except Exception:
-            raise RuntimeError("GLM parent selection attestation failed") from None
+            raise RuntimeError(f"{parent} parent selection attestation failed") from None
+        proof_type = ParentSelectionProof if takeover_policy is None else PrimaryParentSelectionProof
+        expected_model = (
+            "glm-5.3[1m]" if takeover_policy is None else declaration["configured_model"]
+        )
+        expected_role = "glm_parent" if takeover_policy is None else "primary_parent"
         if (
-            type(proof) is not ParentSelectionProof
+            type(proof) is not proof_type
             or proof.task_id != expected_task_id
             or proof.declaration_sha256 != hashlib.sha256(raw_declaration).hexdigest()
             or proof.candidate_sha256 != declaration["sha256"]
-            or proof.model != "glm-5.3[1m]"
-            or proof.role != "glm_parent"
+            or proof.model != expected_model
+            or proof.role != expected_role
             or type(proof.event_digest) is not str
             or not _SHA256.fullmatch(proof.event_digest)
         ):
-            raise RuntimeError("GLM parent selection attestation disagrees with declaration")
+            raise RuntimeError(f"{parent} parent selection attestation disagrees with declaration")
+        if takeover_policy is not None and (
+            type(proof.schema_version) is not int
+            or proof.schema_version != 2
+            or any(
+                type(getattr(proof, key)) is not str
+                or getattr(proof, key) != declaration[key]
+                for key in _PRIMARY_IDENTITY_FIELDS - {"configured_model"}
+            )
+            or proof.event_digest != _primary_event_digest(declaration)
+        ):
+            raise RuntimeError("primary parent selection attestation disagrees with declaration")
 
         evidence.mkdir(parents=True, exist_ok=True)
         stage = Path(tempfile.mkdtemp(prefix=".final-stage-", dir=evidence))

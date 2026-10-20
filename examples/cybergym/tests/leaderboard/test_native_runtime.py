@@ -35,7 +35,7 @@ def _exchange(port, host, path, body, headers=()):
     return int(head.split(b" ")[1]), content
 
 
-def _dispatcher(tmp_path, response):
+def _dispatcher(tmp_path, response, *, primary_takeover=None):
     peer = AdmittedPeer("a" * 64, "b" * 64, "127.0.0.1")
     tools = NativeToolController(
         tmp_path / "tools.sqlite",
@@ -56,12 +56,14 @@ def _dispatcher(tmp_path, response):
         ),
         authorize=lambda call: call.name == "Read",
         redact=lambda value: value,
+        primary_takeover=primary_takeover,
     )
     policy = ModelPolicy(
         primary="glm-5.3[1m]",
         alternate=AlternateModelPolicy.model_validate_json(CONFIG.read_text()),
         capability_policy_sha256="c" * 64,
         approved_zai_coding_plan_url="https://api.z.ai/api/anthropic",
+        primary_takeover=primary_takeover,
     )
     transport = Transport(response)
     dispatcher = NativeModelDispatcher(
@@ -76,6 +78,52 @@ def _dispatcher(tmp_path, response):
         transport=transport,
     )
     return dispatcher, tools, transport, peer
+
+
+def test_takeover_native_http_keeps_one_custody_request_and_true_provider(tmp_path):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    wire = tool_frames().replace(b"glm-5.3", b"deepseek-flash")
+    # Native usage accompanies the message; tool custody still checks full SSE.
+    frames = wire.decode().split("\n\n")
+    start = json.loads(frames[0][6:])
+    start["message"]["usage"] = {
+        "input_tokens": 3, "output_tokens": 1,
+        "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0,
+    }
+    wire = ("data: " + json.dumps(start) + "\n\n" + "\n\n".join(frames[1:])).encode()
+    dispatcher, tools, transport, peer = _dispatcher(
+        tmp_path, StreamResponse([], status=503), primary_takeover=PrimaryTakeoverPolicy()
+    )
+    original_open = transport.open_stream
+
+    async def sequence(*args, **kwargs):
+        if transport.calls:
+            transport.response = StreamResponse([wire])
+        return await original_open(*args, **kwargs)
+
+    transport.open_stream = sequence
+    payload = json.loads(model_request(names=("Read",)).body)
+    payload["messages"] = [{"role": "user", "content": "Inspect task source."}]
+    payload["tools"][0].update({
+        "description": "Read a file.",
+        "input_schema": {"type": "object", "properties": {"file_path": {"type": "string"}}},
+    })
+    request = replace(model_request(), body=json.dumps(payload).encode(), peer=peer)
+    with dispatcher:
+        with GatewayService(
+            ("127.0.0.1", 0), {"model-gateway": dispatcher}, lambda _: peer, tmp_path / "http.jsonl"
+        ) as server:
+            status, content = _exchange(server.port, "model-gateway", request.path, request.body)
+    assert status == 200 and content == wire
+    assert len(transport.calls) == 2
+    assert tools.authorize_hook(hook())
+    with sqlite3.connect(tools.database) as connection:
+        assert connection.execute("SELECT count(*) FROM requests").fetchone() == (1,)
+        assert connection.execute("SELECT status FROM request_lifecycle").fetchall() == [("completed",)]
+        assert connection.execute(
+            "SELECT provider FROM provider_bindings ORDER BY sequence"
+        ).fetchall() == [("zai-coding-plan",), ("deepseek-official-api",)]
 
 
 @pytest.mark.parametrize("native_path", ["/v1/messages", "/v1/messages?beta=true"])

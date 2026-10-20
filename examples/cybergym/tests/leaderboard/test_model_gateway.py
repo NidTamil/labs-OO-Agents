@@ -8,10 +8,12 @@ import hashlib
 import itertools
 import json
 import socket
+import ssl
 from dataclasses import replace
 from pathlib import Path
 
 import httpcore
+import httpx
 import pytest
 from nooa_cybergym.leaderboard.deepseek import (
     AlternateModelPolicy,
@@ -269,6 +271,367 @@ def policy():
         capability_policy_sha256=DIGEST,
         approved_zai_coding_plan_url="https://api.z.ai/api/anthropic",
     )
+
+
+def takeover_payload():
+    return {
+        "model": "glm-5.3",
+        "max_tokens": 128000,
+        "stream": True,
+        "thinking": {"type": "adaptive"},
+        "output_config": {"effort": "max"},
+        "messages": [{"role": "user", "content": "Inspect the task."}],
+    }
+
+
+def takeover_gateway(tmp_path, responses, *, observer=None, finished=None, binding=None):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPolicy
+
+    class SequenceTransport:
+        def __init__(self):
+            self.calls = []
+
+        async def open_stream(self, url, headers, body, timeout):
+            self.calls.append((url, headers, json.loads(body)))
+            if "api.deepseek.com" in url:
+                assert any(
+                    row["event"] == "primary_route_switched"
+                    for row in rows(tmp_path / "requests.jsonl")
+                )
+            item = responses[len(self.calls) - 1]
+            if isinstance(item, BaseException):
+                raise item
+            return item
+
+    transport = SequenceTransport()
+    budget = SharedCampaignBudget()
+    request_numbers = itertools.count(1)
+    core = NativeModelGateway(
+        task_id="task-1",
+        attempt_id="attempt-1",
+        task_token=TASK_TOKEN,
+        model_policy=replace(policy(), primary_takeover=PrimaryTakeoverPolicy()),
+        zai_coding_plan_url="https://api.z.ai/api/anthropic",
+        zai_coding_plan_token=ZAI_TOKEN,
+        deepseek_api_key=DEEPSEEK_TOKEN,
+        budget=budget,
+        audit=GatewayAudit(tmp_path / "requests.jsonl", tmp_path / "usage.jsonl"),
+        resolve_admission=lambda _: replace(admission(), request_id=f"req-{next(request_numbers)}"),
+        mark_started=lambda *_: True,
+        transport=transport,
+        native_stream_observer=observer,
+        native_stream_finished=finished,
+        native_provider_binding=binding,
+    )
+    return core, transport, budget
+
+
+def deepseek_native_stream():
+    response = primary_stream()
+    response.chunks = [part.replace(b"glm-5.3", b"deepseek-flash") for part in response.chunks]
+    return response
+
+
+def test_takeover_keeps_native_request_and_settles_two_primary_attempts(tmp_path):
+    finished, bindings = [], []
+    core, transport, budget = takeover_gateway(
+        tmp_path,
+        [httpx.ConnectError("synthetic unavailable"), deepseek_native_stream()],
+        finished=lambda grant, complete, code: finished.append((grant.request_id, complete, code)),
+        binding=lambda grant, **values: bindings.append((grant.request_id, values)),
+    )
+    result, headers, chunks = run(core, "/v1/messages", takeover_payload())
+    assert result.request_id == "req-1" and result.usage_status == "observed"
+    assert len(headers) == 1 and b"deepseek-flash" in b"".join(chunks)
+    assert len(transport.calls) == 2
+    assert transport.calls[1][0] == "https://api.deepseek.com/anthropic/v1/messages"
+    assert transport.calls[1][1]["Authorization"] == "Bearer " + DEEPSEEK_TOKEN
+    assert transport.calls[1][2]["model"] == "deepseek-flash"
+    assert budget.snapshot()["glm_and_memory_auxiliary_requests"] == 2
+    assert budget.snapshot()["deepseek_requests"] == 0
+    assert finished == [("req-1", True, None)]
+    usage = rows(tmp_path / "usage.jsonl")
+    assert [entry["model"] for entry in usage] == ["glm-5.3", "deepseek-flash"]
+    assert [entry["usage_status"] for entry in usage] == ["interrupted", "observed"]
+    assert usage[0]["counted_tokens"] == 1_000_000
+    assert len({entry["provider_attempt_id"] for entry in usage}) == 2
+    assert {entry["request_id"] for entry in usage} == {"req-1"}
+    assert [values["provider"] for _, values in bindings] == [
+        "zai-coding-plan", "deepseek-official-api"
+    ]
+
+
+@pytest.mark.parametrize("status", [429, 500, 502, 503, 504])
+def test_takeover_only_on_typed_availability_http_failures(tmp_path, status):
+    core, transport, _ = takeover_gateway(
+        tmp_path, [StreamResponse([], status=status), deepseek_native_stream()]
+    )
+    assert run(core, "/v1/messages", takeover_payload())[0].usage_status == "observed"
+    assert len(transport.calls) == 2
+
+
+@pytest.mark.parametrize("failure", [
+    401,
+    403,
+    400,
+    GatewayUpstreamError("unapproved provider destination"),
+    RuntimeError("unclassified transport failure"),
+    asyncio.CancelledError(),
+])
+def test_takeover_never_retries_unclassified_or_excluded_failures(tmp_path, failure):
+    if type(failure) is int:
+        failure = StreamResponse([], status=failure)
+    core, transport, _ = takeover_gateway(tmp_path, [failure, deepseek_native_stream()])
+    with pytest.raises((GatewayUpstreamError, asyncio.CancelledError)):
+        run(core, "/v1/messages", takeover_payload())
+    assert len(transport.calls) == 1
+
+
+def test_takeover_count_tokens_fails_closed_after_switch_without_dispatch(tmp_path):
+    core, transport, _ = takeover_gateway(
+        tmp_path, [StreamResponse([], status=503), deepseek_native_stream()]
+    )
+    run(core, "/v1/messages", takeover_payload())
+    with pytest.raises(GatewayPolicyError, match="count"):
+        run(core, "/v1/messages/count_tokens", {"model": "glm-5.3", "messages": []})
+    assert len(transport.calls) == 2
+
+
+def test_takeover_policy_is_opt_in_and_preserves_old_digest():
+    old = policy()
+    expected = hashlib.sha256(json.dumps({
+        "primary": old.primary,
+        "alternate_sha256": old.alternate.digest,
+        "capability_policy_sha256": old.capability_policy_sha256,
+        "approved_zai_coding_plan_url": old.approved_zai_coding_plan_url,
+    }, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert old.primary_takeover is None
+    assert old.digest == expected
+
+
+def test_takeover_never_retries_after_headers_even_when_client_write_fails(tmp_path):
+    core, transport, _ = takeover_gateway(tmp_path, [primary_stream(), deepseek_native_stream()])
+
+    async def headers(_status, _headers):
+        raise httpx.ReadTimeout("synthetic downstream timeout")
+
+    async def chunk(_value):
+        raise AssertionError("no chunk expected")
+
+    async def invoke():
+        await core.forward(
+            path="/v1/messages", authorization="Bearer " + TASK_TOKEN,
+            body=json.dumps(takeover_payload()).encode(), trusted_connection=object(),
+            send_headers=headers, send_chunk=chunk,
+        )
+
+    with pytest.raises(GatewayUpstreamError):
+        asyncio.run(invoke())
+    assert len(transport.calls) == 1
+
+
+def test_takeover_does_not_retry_failed_deepseek_or_revert_on_later_request(tmp_path):
+    core, transport, budget = takeover_gateway(
+        tmp_path, [StreamResponse([], status=503), StreamResponse([], status=503), primary_stream()]
+    )
+    with pytest.raises(GatewayUpstreamError):
+        run(core, "/v1/messages", takeover_payload())
+    with pytest.raises(GatewayPolicyError):
+        run(core, "/v1/messages", takeover_payload())
+    assert len(transport.calls) == 2 and budget.snapshot()["requests"] == 2
+
+
+def test_takeover_continues_on_deepseek_without_another_transition(tmp_path):
+    core, transport, budget = takeover_gateway(
+        tmp_path, [StreamResponse([], status=503), deepseek_native_stream(), deepseek_native_stream()]
+    )
+    run(core, "/v1/messages", takeover_payload())
+    run(core, "/v1/messages", takeover_payload())
+    assert [call[2]["model"] for call in transport.calls] == [
+        "glm-5.3", "deepseek-flash", "deepseek-flash"
+    ]
+    assert budget.snapshot()["glm_and_memory_auxiliary_requests"] == 3
+    assert len([r for r in rows(tmp_path / "requests.jsonl") if r["event"] == "primary_route_switched"]) == 1
+
+
+def test_takeover_transition_audit_failure_prevents_second_dispatch(tmp_path, monkeypatch):
+    from nooa_cybergym.leaderboard.primary_takeover import PrimaryTakeoverPersistenceError
+
+    core, transport, _ = takeover_gateway(
+        tmp_path, [StreamResponse([], status=503), deepseek_native_stream()]
+    )
+    write = core._audit.record_request
+
+    def fail_switch(event):
+        if event["event"] == "primary_route_switched":
+            raise OSError("synthetic audit failure")
+        write(event)
+
+    monkeypatch.setattr(core._audit, "record_request", fail_switch)
+    with pytest.raises(PrimaryTakeoverPersistenceError):
+        run(core, "/v1/messages", takeover_payload())
+    assert len(transport.calls) == 1
+    assert rows(tmp_path / "usage.jsonl")[0]["counted_tokens"] == 1_000_000
+
+
+def test_takeover_does_not_borrow_advisory_capacity(tmp_path):
+    core, transport, budget = takeover_gateway(
+        tmp_path, [StreamResponse([], status=503), deepseek_native_stream()]
+    )
+    for _ in range(1409):
+        budget.reserve_request()
+    with pytest.raises(GatewayPolicyError):
+        run(core, "/v1/messages", takeover_payload())
+    assert len(transport.calls) == 1
+    assert budget.snapshot()["requests"] == 1410
+    assert budget.snapshot()["deepseek_requests"] == 0
+
+
+def test_takeover_rejects_unsupported_native_payload_before_deepseek_reservation(tmp_path):
+    core, transport, budget = takeover_gateway(
+        tmp_path, [StreamResponse([], status=503), deepseek_native_stream()]
+    )
+    payload = takeover_payload() | {"thinking": {"type": "enabled", "budget_tokens": 2048}}
+    with pytest.raises(GatewayPolicyError, match="unsupported"):
+        run(core, "/v1/messages", payload)
+    assert len(transport.calls) == 1 and budget.snapshot()["requests"] == 1
+
+
+def test_takeover_failure_retains_known_provider_status_when_native_terminal_fails(tmp_path):
+    def fail_finished(*args):
+        raise PermissionError("synthetic invalid custody")
+
+    core, transport, _ = takeover_gateway(
+        tmp_path, [StreamResponse([], status=503), deepseek_native_stream()], finished=fail_finished
+    )
+    with pytest.raises(GatewayUpstreamError, match="custody"):
+        run(core, "/v1/messages", takeover_payload())
+    assert len(transport.calls) == 2
+    terminal = rows(tmp_path / "requests.jsonl")[-1]
+    assert terminal["event"] == "native_request_terminal"
+    assert terminal["outcome"] == "audit_failed"
+    assert terminal["failure_code"] == "native_custody_failed"
+    with pytest.raises(GatewayPolicyError, match="audit"):
+        run(core, "/v1/messages", takeover_payload())
+
+
+def test_takeover_does_not_treat_tls_identity_failure_as_connection_unavailability(tmp_path):
+    failure = httpx.ConnectError("synthetic TLS verification failed")
+    failure.__cause__ = ssl.SSLCertVerificationError("synthetic certificate mismatch")
+    core, transport, _ = takeover_gateway(tmp_path, [failure, deepseek_native_stream()])
+    with pytest.raises(GatewayUpstreamError):
+        run(core, "/v1/messages", takeover_payload())
+    assert len(transport.calls) == 1
+
+
+def test_takeover_cancellation_during_failed_provider_close_never_dispatches_fallback(tmp_path):
+    async def invoke():
+        closing = asyncio.Event()
+
+        class ClosingResponse(StreamResponse):
+            async def aclose(self):
+                closing.set()
+                await asyncio.Event().wait()
+
+        core, transport, _ = takeover_gateway(
+            tmp_path, [ClosingResponse([], status=503), deepseek_native_stream()]
+        )
+
+        async def discard(*_args):
+            return None
+
+        task = asyncio.create_task(core.forward(
+            path="/v1/messages", authorization="Bearer " + TASK_TOKEN,
+            body=json.dumps(takeover_payload()).encode(), trusted_connection=object(),
+            send_headers=discard, send_chunk=discard,
+        ))
+        await closing.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert len(transport.calls) == 1
+        assert not any(
+            event["event"] == "primary_route_switched"
+            for event in rows(tmp_path / "requests.jsonl")
+        )
+
+    asyncio.run(invoke())
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_takeover_unavailable_completed_usage_halts_native_request_without_retry(tmp_path, fallback):
+    response = deepseek_native_stream() if fallback else primary_stream()
+    response.chunks = [
+        chunk.replace(b'"output_tokens": 5', b'"output_tokens": -1') for chunk in response.chunks
+    ]
+    finished = []
+    responses = [StreamResponse([], status=503), response] if fallback else [response]
+    core, transport, _ = takeover_gateway(
+        tmp_path, responses, finished=lambda grant, complete, code: finished.append((complete, code))
+    )
+    with pytest.raises(GatewayUpstreamError, match="usage"):
+        run(core, "/v1/messages", takeover_payload())
+    assert finished == [(False, "provider_usage_invalid")]
+    assert len(transport.calls) == (2 if fallback else 1)
+    assert rows(tmp_path / "usage.jsonl")[-1]["usage_status"] == "interrupted"
+
+
+def test_takeover_concurrent_late_glm_failure_uses_persisted_transition_once(tmp_path):
+    async def invoke():
+        release = asyncio.Event()
+        waiting = asyncio.Event()
+
+        class LateFailure(StreamResponse):
+            async def aiter_bytes(self):
+                waiting.set()
+                await release.wait()
+                raise httpx.ReadTimeout("synthetic late GLM outage")
+                yield  # pragma: no cover - declares an async iterator
+
+        class SignalSuccess(StreamResponse):
+            async def aclose(self):
+                release.set()
+
+        response = deepseek_native_stream()
+        core, transport, budget = takeover_gateway(tmp_path, [
+            LateFailure([]), StreamResponse([], status=503),
+            SignalSuccess(response.chunks), deepseek_native_stream(), deepseek_native_stream(),
+        ])
+
+        async def discard(*_args):
+            return None
+
+        async def request():
+            return await core.forward(
+                path="/v1/messages", authorization="Bearer " + TASK_TOKEN,
+                body=json.dumps(takeover_payload()).encode(), trusted_connection=object(),
+                send_headers=discard, send_chunk=discard,
+            )
+
+        first = asyncio.create_task(request())
+        await waiting.wait()
+        second = await request()
+        assert (await first).usage_status == second.usage_status == "observed"
+        assert (await request()).usage_status == "observed"
+        assert [call[2]["model"] for call in transport.calls] == [
+            "glm-5.3", "glm-5.3", "deepseek-flash", "deepseek-flash", "deepseek-flash",
+        ]
+        assert budget.snapshot()["glm_and_memory_auxiliary_requests"] == 5
+        events = rows(tmp_path / "requests.jsonl")
+        transitions = [event for event in events if event["event"] == "primary_route_switched"]
+        continuations = [event for event in events if event["event"] == "primary_request_continued"]
+        assert len(transitions) == len(continuations) == 1
+        transition, continuation = transitions[0], continuations[0]
+        assert continuation["transition_request_id"] == transition["request_id"] == "req-2"
+        assert continuation["request_id"] == "req-1"
+        assert continuation["transition_sha256"] == hashlib.sha256(
+            json.dumps(transition, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        assert continuation["transition_failed_provider_attempt_id"] == transition["failed_provider_attempt_id"]
+        assert continuation["transition_fallback_provider_attempt_id"] == transition["fallback_provider_attempt_id"]
+        assert len({row["provider_attempt_id"] for row in rows(tmp_path / "usage.jsonl")}) == 5
+
+    asyncio.run(invoke())
 
 
 @pytest.mark.parametrize(

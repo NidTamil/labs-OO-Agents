@@ -20,8 +20,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from .deepseek import SharedCampaignBudget
+from .deepseek import BudgetExceeded, SharedCampaignBudget
 from .model_gateway import _hex_forms, _redact, _secret_forms
+from .run_request_budget import RequestBudgetExceeded, RunRequestBudget
 
 
 def _canonical(value):
@@ -216,10 +217,110 @@ class RuntimeAudit:
 class _ContextBudget(SharedCampaignBudget):
     """One clock and allocation ledger; halt never discards consumed reservations."""
 
-    def __init__(self, audit: RuntimeAudit):
+    def __init__(
+        self,
+        audit: RuntimeAudit,
+        run_request_budget: RunRequestBudget | None = None,
+        *,
+        record_request_reservations: bool = False,
+    ):
+        if type(record_request_reservations) is not bool:
+            raise TypeError("explicit request reservation audit selection required")
         super().__init__()
         self._audit = audit
         self._halted = threading.Event()
+        self.record_request_reservations = record_request_reservations
+        if run_request_budget is not None:
+            if type(run_request_budget) is not RunRequestBudget:
+                raise TypeError("validated run request budget required")
+            task = run_request_budget.snapshot()["tasks"].get(audit.start.task_id)
+            if task is None:
+                raise ValueError("task is not bound to run request budget")
+            if task["requests"]:
+                raise RuntimeError("run task already reserved; clock reset or resume forbidden")
+        self.run_request_budget = run_request_budget
+
+    def _reserve_allocation(self, allocation, allocation_limit):
+        ledger = self.run_request_budget
+        if ledger is None and not self.record_request_reservations:
+            return super()._reserve_allocation(allocation, allocation_limit)
+        durable_allocation = {
+            "glm_and_memory_auxiliary": "primary_and_memory",
+            "deepseek": "deepseek_advisory",
+        }[allocation]
+        with self._lock:
+            if self.remaining_seconds() <= 0:
+                raise BudgetExceeded("shared campaign request/time budget exhausted")
+            if ledger is None:
+                if self._requests >= 1500:
+                    raise BudgetExceeded("shared campaign request budget exhausted")
+                if self._allocation_requests[allocation] >= allocation_limit:
+                    raise BudgetExceeded("declared caller request allocation exhausted")
+                self._requests += 1
+                self._allocation_requests[allocation] += 1
+                # A synthetic fixture has no ten-task run identity. Its same
+                # create-once attempt audit still records every debit before
+                # giving any model lane permission to dispatch.
+                try:
+                    accepted = self._audit.record(
+                        {
+                            "event": "task_request_reserved",
+                            "task_id": self._audit.start.task_id,
+                            "attempt_id": self._audit.start.attempt_id,
+                            "request_id": uuid4().hex,
+                            "allocation": durable_allocation,
+                            "task_ordinal": self._requests,
+                            "allocation_ordinal": self._allocation_requests[allocation],
+                        }
+                    )
+                    if accepted is not True:
+                        raise RuntimeError("task reservation audit unavailable")
+                except BaseException:
+                    self._halted.set()
+                    raise
+                return self._requests
+            try:
+                reservation = ledger.reserve(
+                    task_id=self._audit.start.task_id,
+                    attempt_id=self._audit.start.attempt_id,
+                    request_id=uuid4().hex,
+                    allocation=durable_allocation,
+                )
+                if (
+                    reservation.task_ordinal != self._requests + 1
+                    or reservation.allocation_ordinal != self._allocation_requests[allocation] + 1
+                ):
+                    raise RuntimeError("run reservation differs from live task custody")
+                self._requests = reservation.task_ordinal
+                self._allocation_requests[allocation] = reservation.allocation_ordinal
+                if (
+                    self._audit.record({"event": "run_request_reserved", **asdict(reservation)})
+                    is not True
+                ):
+                    raise RuntimeError("run reservation audit unavailable")
+                return reservation.task_ordinal
+            except RequestBudgetExceeded:
+                # Normal allocation depletion does not consume a reservation
+                # or disable the other pool. Full limits still reject in SQLite.
+                raise BudgetExceeded("run request or allocation budget exhausted") from None
+            except BaseException:
+                # A debit may already be durable. Never refund or dispatch after
+                # failed acknowledgement; snapshots still expose the true debit.
+                self._halted.set()
+                raise
+
+    def snapshot(self):
+        if self.run_request_budget is None:
+            return super().snapshot()
+        with self._lock:
+            task = self.run_request_budget.snapshot()["tasks"][self._audit.start.task_id]
+            return {
+                "requests": task["requests"],
+                "remaining_seconds": self.remaining_seconds(),
+                # Keep the existing snapshot contract for stopped-task consumers.
+                "glm_and_memory_auxiliary_requests": task["primary_and_memory"],
+                "deepseek_requests": task["deepseek_advisory"],
+            }
 
     def remaining_seconds(self):
         if self._halted.is_set() or not self._audit.available:
@@ -241,7 +342,16 @@ class TaskRuntimeContext:
     with a reset in-memory budget.
     """
 
-    def __init__(self, evidence: Path, *, task_id: str, attempt_id: str, secrets: tuple[str, ...]):
+    def __init__(
+        self,
+        evidence: Path,
+        *,
+        task_id: str,
+        attempt_id: str,
+        secrets: tuple[str, ...],
+        run_request_budget: RunRequestBudget | None = None,
+        record_request_reservations: bool = False,
+    ):
         self.evidence = Path(evidence)
         self.start = AttemptStart(
             self.evidence / "attempt-start.sqlite", task_id=task_id, attempt_id=attempt_id
@@ -249,7 +359,15 @@ class TaskRuntimeContext:
         self.audit = RuntimeAudit(
             self.evidence / "runtime-events.jsonl", secrets=secrets, start=self.start
         )
-        self.budget = _ContextBudget(self.audit)
+        try:
+            self.budget = _ContextBudget(
+                self.audit,
+                run_request_budget,
+                record_request_reservations=record_request_reservations,
+            )
+        except BaseException:
+            self.audit.close()
+            raise
 
     @property
     def active(self):

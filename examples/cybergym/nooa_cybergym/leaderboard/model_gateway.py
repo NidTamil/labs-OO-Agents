@@ -24,10 +24,11 @@ import ssl
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 import httpcore
 import httpx
@@ -44,6 +45,8 @@ from .deepseek import (
     FailureEvidence,
     SharedCampaignBudget,
 )
+from .deepseek_native import DEEPSEEK_NATIVE_BASE_URL, prepare_deepseek_native_request
+from .primary_takeover import PrimaryRoute, PrimaryTakeoverPolicy, PrimaryTakeoverState
 
 PRIMARY_MODEL = "glm-5.3[1m]"
 # Claude's [1m] suffix selects the client context window and is removed on
@@ -101,6 +104,34 @@ class GatewayUpstreamError(RuntimeError):
     """The provider failed; its body and transport exception are withheld."""
 
 
+class ProviderAvailabilityFailure(GatewayUpstreamError):
+    """A trusted transport/status observation, never inferred from error text."""
+
+    def __init__(self, failure_kind: str):
+        if failure_kind not in PrimaryTakeoverPolicy().eligible_failure_kinds:
+            raise ValueError("unclassified provider availability failure")
+        self.failure_kind = failure_kind
+        super().__init__("provider availability failure")
+
+
+def _connection_failure(error: Exception) -> GatewayUpstreamError:
+    """A TLS verification failure is an identity failure, even inside ConnectError."""
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if len(seen) > 32 or isinstance(current, (ssl.SSLError, GatewayPolicyError)):
+            return GatewayUpstreamError("provider identity missing or changed")
+        pending.extend(
+            item for item in (current.__cause__, current.__context__)
+            if isinstance(item, BaseException)
+        )
+    return ProviderAvailabilityFailure("connection_failure")
+
+
 def _failure_code(error: Exception | None) -> str | None:
     """Audit fixed internal failure categories without copying upstream text."""
     if error is None:
@@ -133,6 +164,7 @@ class ModelPolicy:
     alternate: AlternateModelPolicy
     capability_policy_sha256: str
     approved_zai_coding_plan_url: str
+    primary_takeover: PrimaryTakeoverPolicy | None = None
 
     def __post_init__(self) -> None:
         if self.primary != PRIMARY_MODEL:
@@ -144,16 +176,21 @@ class ModelPolicy:
             raise ValueError("capability policy digest required")
         if self.approved_zai_coding_plan_url != PRIMARY_CODING_PLAN_BASE_URL:
             raise ValueError("approved Z.ai Coding Plan endpoint required")
+        if self.primary_takeover is not None and type(self.primary_takeover) is not PrimaryTakeoverPolicy:
+            raise TypeError("validated primary takeover policy required")
 
     @property
     def digest(self) -> str:
-        canonical = json.dumps(
-            {
+        manifest = {
                 "primary": self.primary,
                 "alternate_sha256": self.alternate.digest,
                 "capability_policy_sha256": self.capability_policy_sha256,
                 "approved_zai_coding_plan_url": self.approved_zai_coding_plan_url,
-            },
+            }
+        if self.primary_takeover is not None:
+            manifest["primary_takeover_sha256"] = self.primary_takeover.digest
+        canonical = json.dumps(
+            manifest,
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -279,6 +316,12 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
             )
         except asyncio.CancelledError:
             raise
+        except GatewayUpstreamError:
+            raise
+        except (httpcore.ConnectTimeout, httpx.ConnectTimeout):
+            raise ProviderAvailabilityFailure("connect_timeout") from None
+        except (httpcore.ConnectError, httpx.ConnectError, socket.gaierror) as error:
+            raise _connection_failure(error) from None
         except Exception:
             raise GatewayUpstreamError("provider connection failed") from None
 
@@ -364,6 +407,7 @@ class HttpxStreamingTransport:
             PRIMARY_CODING_PLAN_BASE_URL + "/v1/messages": "api.z.ai",
             PRIMARY_CODING_PLAN_BASE_URL + "/v1/messages/count_tokens": "api.z.ai",
             ENDPOINT: "api.deepseek.com",
+            DEEPSEEK_NATIVE_BASE_URL + "/v1/messages": "api.deepseek.com",
         }
         if url not in approved:
             raise GatewayUpstreamError("unapproved provider route")
@@ -440,13 +484,16 @@ class GatewayAudit:
 class _StreamObservation:
     """Parse telemetry from SSE while forwarding the original bytes unchanged."""
 
-    def __init__(self, request_id: str, model: str, role: str | None, *, count_tokens=False):
+    def __init__(
+        self, request_id: str, model: str, role: str | None, *, count_tokens=False,
+        anthropic=False,
+    ):
         self.request_id = request_id
         self.model = model
         self.role = role
         self._buffer = bytearray()
         self._data: list[bytes] = []
-        self._is_deepseek = model == MODEL
+        self._is_deepseek = model == MODEL and not anthropic
         self._count_tokens = count_tokens
         self._json_body = bytearray()
         self.usage_payload_nonempty = False
@@ -525,6 +572,10 @@ class _StreamObservation:
                 self.metadata_mismatch = True
             self.returned_model = model or self.returned_model
             self.provider_request_id = self._string(message.get("id")) or self.provider_request_id
+            self.model_version = self._string(message.get("model_version")) or self.model_version
+            self.system_fingerprint = (
+                self._string(message.get("system_fingerprint")) or self.system_fingerprint
+            )
             usage = message.get("usage")
         elif kind == "message_delta":
             usage = event.get("usage")
@@ -533,7 +584,11 @@ class _StreamObservation:
         if isinstance(usage, dict):
             # Z.ai's Anthropic stream omits cache creation when none was billed.
             # Keep the other mandatory counters unknown until actually observed.
-            if "cache_creation_input_tokens" not in usage and kind == "message_delta":
+            if (
+                self.model == PRIMARY_WIRE_MODEL
+                and "cache_creation_input_tokens" not in usage
+                and kind == "message_delta"
+            ):
                 if self.cache_creation_tokens is None:
                     self.cache_creation_tokens = 0
             for source, destination in (
@@ -988,6 +1043,7 @@ class NativeModelGateway:
         transport: StreamingTransport | None = None,
         native_stream_observer: Callable[[TrustedAdmission, bytes], None] | None = None,
         native_stream_finished: Callable[[TrustedAdmission, bool, str | None], bool] | None = None,
+        native_provider_binding: Callable[..., None] | None = None,
     ):
         if not all(
             type(value) is str and value
@@ -1012,6 +1068,7 @@ class NativeModelGateway:
         self._transport = transport or HttpxStreamingTransport()
         self._native_stream_observer = native_stream_observer
         self._native_stream_finished = native_stream_finished
+        self._native_provider_binding = native_provider_binding
         self._lock = asyncio.Lock()
         self._started = False
         self._halted_for_usage = False
@@ -1021,6 +1078,24 @@ class NativeModelGateway:
         self._role_usage = {
             role: {"requests": 0, "tokens": 0, "seconds": 0.0} for role in DeepSeekRole
         }
+        self._takeover_transition: dict | None = None
+        self._takeover = (
+            PrimaryTakeoverState(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                policy=model_policy.primary_takeover,
+                policy_sha256=model_policy.primary_takeover.digest,
+                event_writer=self._record_takeover,
+            )
+            if model_policy.primary_takeover is not None
+            else None
+        )
+
+    def _record_takeover(self, event) -> bool:
+        transition = asdict(event)
+        self._audit.record_request(transition)
+        self._takeover_transition = transition
+        return True
 
     def __repr__(self):
         return "<NativeModelGateway controller-owned state>"
@@ -1058,6 +1133,131 @@ class NativeModelGateway:
         ):
             raise GatewayPolicyError("trusted task/attempt admission required")
         route = validate_request(payload, self._policy, path, grant)
+        if self._takeover is None or route != "primary":
+            return await self._forward_attempt(
+                path=path, body=body, payload=payload, grant=grant, route=route,
+                send_headers=send_headers, send_chunk=send_chunk, upstream_headers=upstream_headers,
+            )
+        complete = False
+        failure_code = None
+        try:
+            # Capture a route once for this admitted call. A concurrent switch
+            # never rewrites the identity of an already running GLM request.
+            async with self._lock:
+                primary_route = self._takeover.route
+            provider_attempt_id = str(uuid4())
+            try:
+                result = await self._forward_attempt(
+                    path=path, body=body, payload=payload, grant=grant, route=route,
+                    send_headers=send_headers, send_chunk=send_chunk,
+                    upstream_headers=upstream_headers, primary_route=primary_route,
+                    provider_attempt_id=provider_attempt_id,
+                )
+            except ProviderAvailabilityFailure as failure:
+                fallback_attempt_id = str(uuid4())
+                async with self._lock:
+                    if self._halted_for_audit or self._halted_for_usage:
+                        raise GatewayPolicyError("controller admission halted") from None
+                    if self._budget.remaining_seconds() <= 0:
+                        raise GatewayDeadlineExceeded("task deadline exhausted before takeover") from None
+                    if self._takeover.route == self._policy.primary_takeover.fallback:
+                        # A different request may already have switched while
+                        # this GLM attempt was in flight. Its own eligible,
+                        # unexposed failure gets one separately charged
+                        # continuation under that same durable transition.
+                        transition = self._takeover_transition
+                        if transition is None:
+                            self._halted_for_audit = True
+                            raise GatewayUpstreamError("takeover evidence unavailable") from None
+                        try:
+                            self._audit.record_request({
+                                "event": "primary_request_continued",
+                                "task_id": self._task_id,
+                                "attempt_id": self._attempt_id,
+                                "request_id": grant.request_id,
+                                "policy_sha256": self._policy.primary_takeover.digest,
+                                "failure_kind": failure.failure_kind,
+                                "response_started": False,
+                                "failed_provider_attempt_id": provider_attempt_id,
+                                "fallback_provider_attempt_id": fallback_attempt_id,
+                                "transition_request_id": transition["request_id"],
+                                "transition_failed_provider_attempt_id": transition["failed_provider_attempt_id"],
+                                "transition_fallback_provider_attempt_id": transition["fallback_provider_attempt_id"],
+                                "transition_sha256": hashlib.sha256(json.dumps(
+                                    transition, sort_keys=True, separators=(",", ":"), allow_nan=False,
+                                ).encode()).hexdigest(),
+                            })
+                        except Exception:
+                            self._halted_for_audit = True
+                            raise GatewayUpstreamError("takeover continuation audit failed") from None
+                        primary_route = self._takeover.route
+                    else:
+                        primary_route = self._takeover.switch(
+                            request_id=grant.request_id,
+                            failure_kind=failure.failure_kind,
+                            response_started=False,
+                            failed_provider_attempt_id=provider_attempt_id,
+                            fallback_provider_attempt_id=fallback_attempt_id,
+                        )
+                result = await self._forward_attempt(
+                    path=path, body=body, payload=payload, grant=grant, route=route,
+                    send_headers=send_headers, send_chunk=send_chunk,
+                    upstream_headers=upstream_headers, primary_route=primary_route,
+                    provider_attempt_id=fallback_attempt_id, continuation=True,
+                )
+            complete = True
+            return result
+        except asyncio.CancelledError:
+            failure_code = "client_cancelled"
+            raise
+        except Exception as error:
+            failure_code = _failure_code(error)
+            raise
+        finally:
+            if not complete:
+                self._halted_for_usage = True
+            custody_failed = False
+            if self._native_stream_finished is not None:
+                try:
+                    self._native_stream_finished(grant, complete, failure_code)
+                except Exception:
+                    self._halted_for_audit = True
+                    custody_failed = True
+            try:
+                self._audit.record_request({
+                    "event": "native_request_terminal",
+                    "task_id": self._task_id,
+                    "attempt_id": self._attempt_id,
+                    "request_id": grant.request_id,
+                    "takeover_policy_sha256": self._policy.primary_takeover.digest,
+                    "outcome": "audit_failed" if custody_failed else "completed" if complete else "interrupted",
+                    "failure_code": "native_custody_failed" if custody_failed else failure_code,
+                })
+            except Exception:
+                self._halted_for_audit = True
+                if complete:
+                    raise GatewayUpstreamError("native terminal audit failed") from None
+            if custody_failed and complete:
+                raise GatewayUpstreamError("native stream custody failed") from None
+
+    async def _forward_attempt(
+        self, *, path, body, payload, grant, route, send_headers, send_chunk,
+        upstream_headers, primary_route: PrimaryRoute | None = None,
+        provider_attempt_id: str | None = None, continuation: bool = False,
+    ) -> GatewayResult:
+        new_primary = primary_route is not None
+        fallback = new_primary and primary_route == self._policy.primary_takeover.fallback
+        if fallback:
+            # DeepSeek's count endpoint has not been verified. Never fabricate
+            # token counts or silently send this request back to GLM.
+            if path == "/v1/messages/count_tokens":
+                raise GatewayPolicyError("DeepSeek native count_tokens support is unverified")
+            try:
+                payload = prepare_deepseek_native_request(payload)
+            except ValueError:
+                raise GatewayPolicyError("DeepSeek native request unsupported") from None
+            body = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+        response_started = False
 
         async def emit_chunk(chunk: bytes) -> None:
             if self._native_stream_observer is not None and route == "primary":
@@ -1075,7 +1275,7 @@ class NativeModelGateway:
                 raise GatewayPolicyError("controller audit unavailable; further admission denied")
             if self._halted_for_usage:
                 raise GatewayPolicyError("usage unavailable; controller review required")
-            if grant.request_id in self._seen_request_ids:
+            if grant.request_id in self._seen_request_ids and not continuation:
                 raise GatewayPolicyError("duplicate request identity")
             try:
                 remaining = self._budget.remaining_seconds()
@@ -1105,7 +1305,9 @@ class NativeModelGateway:
             first_request = not self._started
         started_at = time.monotonic()
         requested_at = datetime.now(UTC).isoformat()
-        upstream_url = ENDPOINT if role else self._zai_url + path
+        upstream_url = (
+            primary_route.base_url + path if new_primary else ENDPOINT if role else self._zai_url + path
+        )
         base_event = {
             "task_id": self._task_id,
             "attempt_id": self._attempt_id,
@@ -1114,20 +1316,28 @@ class NativeModelGateway:
             "role": role.value if role else "primary",
             "trigger": grant.trigger,
             "requested_model": payload["model"],
-            "configured_model": MODEL if role else self._policy.primary,
+            "configured_model": primary_route.model if new_primary else MODEL if role else self._policy.primary,
             "request_sha256": hashlib.sha256(body).hexdigest(),
             "policy_sha256": self._policy.digest,
             "capability_policy_sha256": self._policy.capability_policy_sha256,
             "upstream_endpoint": upstream_url,
             "shared_request_number": shared_number,
             "requested_at_utc": requested_at,
-            "official_final_selector": "glm_parent",
+            "official_final_selector": "primary_parent" if new_primary else "glm_parent",
         }
+        if new_primary:
+            base_event.update({
+                "provider": primary_route.provider,
+                "provider_attempt_id": provider_attempt_id,
+                "takeover_policy_sha256": self._policy.primary_takeover.digest,
+                "allocation": primary_route.allocation,
+            })
         observation = _StreamObservation(
             grant.request_id,
             payload["model"],
             role.value if role else None,
             count_tokens=path == "/v1/messages/count_tokens",
+            anthropic=new_primary,
         )
         secret_forms = _secret_forms(self._secrets())
         hex_forms = _hex_forms(self._secrets())
@@ -1163,7 +1373,7 @@ class NativeModelGateway:
         except Exception:
             pre_forward_audit_failed = True
         url = upstream_url
-        credential = self._deepseek_key if role else self._zai_token
+        credential = self._deepseek_key if role or fallback else self._zai_token
         headers = {"Authorization": "Bearer " + credential, "Content-Type": "application/json"}
         if upstream_headers and role is None:
             for name, value in upstream_headers.items():
@@ -1186,9 +1396,25 @@ class NativeModelGateway:
                 raise GatewayDeadlineExceeded("task deadline exhausted before provider dispatch")
             hard_deadline = time.monotonic() + remaining
             async with asyncio.timeout(remaining):
+                if new_primary and self._native_provider_binding is not None:
+                    try:
+                        self._native_provider_binding(
+                            grant, provider=primary_route.provider,
+                            configured_model=primary_route.model,
+                            provider_model=primary_route.wire_model,
+                            provider_attempt_id=provider_attempt_id,
+                            takeover_policy_sha256=self._policy.primary_takeover.digest,
+                        )
+                    except Exception:
+                        self._halted_for_audit = True
+                        raise GatewayUpstreamError("native provider binding failed") from None
                 response = await self._transport.open_stream(url, headers, body, remaining)
                 status = response.status_code
                 if status < 200 or status >= 300:
+                    if new_primary and status in {429, 500, 502, 503, 504}:
+                        raise ProviderAvailabilityFailure(
+                            "rate_limited" if status == 429 else "provider_unavailable"
+                        )
                     raise GatewayUpstreamError("provider returned non-success status")
                 if any(
                     _contains_semantic_secret(name, secret_forms, hex_forms)
@@ -1220,6 +1446,7 @@ class NativeModelGateway:
                             raise GatewayUpstreamError("provider identity missing or changed")
                         if observation.returned_model == payload["model"] and not count_tokens:
                             identity_verified = True
+                            response_started = True
                             await send_headers(status, safe_headers)
                             for held_chunk in pending:
                                 await emit_chunk(held_chunk)
@@ -1256,6 +1483,7 @@ class NativeModelGateway:
                         raise GatewayUpstreamError("provider usage invalid")
                     if observation.returned_model not in (None, payload["model"]):
                         raise GatewayUpstreamError("provider identity missing or changed")
+                    response_started = True
                     await send_headers(status, safe_headers)
                     for held_chunk in pending:
                         await emit_chunk(held_chunk)
@@ -1273,7 +1501,20 @@ class NativeModelGateway:
                     )
                 ):
                     raise GatewayUpstreamError("provider usage invalid")
+                if new_primary and observation.usage_row(
+                    outcome="completed", reserved_tokens=reserved_tokens, secrets=()
+                )["usage_status"] != "observed":
+                    raise GatewayUpstreamError("provider usage invalid")
             outcome = "completed"
+        except (httpx.ConnectTimeout, httpcore.ConnectTimeout):
+            outcome = "transport_error"
+            error = ProviderAvailabilityFailure("connect_timeout")
+        except (httpx.ReadTimeout, httpcore.ReadTimeout):
+            outcome = "transport_error"
+            error = ProviderAvailabilityFailure("read_timeout")
+        except (httpx.ConnectError, httpcore.ConnectError) as exc:
+            outcome = "transport_error"
+            error = _connection_failure(exc)
         except TimeoutError:
             outcome = "deadline_exceeded"
             error = GatewayDeadlineExceeded("hard task or role deadline exceeded")
@@ -1304,9 +1545,28 @@ class NativeModelGateway:
                         outcome = "transport_error"
                         error = GatewayUpstreamError("provider stream close failed")
             duration = time.monotonic() - started_at
+            cancelled_after_close = bool(
+                new_primary and asyncio.current_task().cancelling()
+            )
+            if cancelled_after_close:
+                # The bounded legacy close helper deliberately swallows its
+                # wait cancellation. New takeover must never continue from it.
+                outcome = "cancelled"
+            takeover_eligible = bool(
+                new_primary and not fallback and path == "/v1/messages"
+                and isinstance(error, ProviderAvailabilityFailure)
+                and not response_started and outcome not in {"cancelled", "deadline_exceeded"}
+                and not self._halted_for_audit
+            )
+            if isinstance(error, ProviderAvailabilityFailure) and not takeover_eligible:
+                # Only an eligible first attempt may escape to the takeover
+                # wrapper. All fallback and exposed-response failures halt.
+                error = GatewayUpstreamError("provider stream failed")
             failure_code = "client_cancelled" if outcome == "cancelled" else _failure_code(error)
+            if takeover_eligible:
+                failure_code = error.failure_kind
             retryable = False
-            if self._native_stream_finished is not None and route == "primary":
+            if self._native_stream_finished is not None and route == "primary" and not new_primary:
                 try:
                     custody_retry = self._native_stream_finished(
                         grant, outcome == "completed", failure_code
@@ -1332,6 +1592,17 @@ class NativeModelGateway:
                 secrets=secret_forms,
                 hex_forms=hex_forms,
             )
+            if new_primary:
+                usage.update({
+                    "task_id": self._task_id,
+                    "attempt_id": self._attempt_id,
+                    "provider": primary_route.provider,
+                    "configured_model": primary_route.model,
+                    "provider_attempt_id": provider_attempt_id,
+                    "takeover_policy_sha256": self._policy.primary_takeover.digest,
+                    "shared_request_number": shared_number,
+                    "allocation": primary_route.allocation,
+                })
             audit_failed = False
             try:
                 self._audit.record_usage(usage)
@@ -1346,6 +1617,8 @@ class NativeModelGateway:
                             "outcome": "audit_failed" if audit_failed else outcome,
                             "failure_code": failure_code,
                             "retryable": retryable,
+                            **({"takeover_eligible": takeover_eligible,
+                                "response_started": response_started} if new_primary else {}),
                             "http_status": status,
                             "duration_seconds": duration,
                             "usage_status": usage["usage_status"],
@@ -1369,12 +1642,14 @@ class NativeModelGateway:
                     self._active_roles.discard(role)
                     if usage["usage_status"] == "observed" and not audit_failed:
                         state["tokens"] += usage["counted_tokens"] - reserved_tokens
-                if usage["usage_status"] != "observed" and not retryable:
+                if usage["usage_status"] != "observed" and not retryable and not takeover_eligible:
                     self._halted_for_usage = True
                 if pre_forward_audit_failed or audit_failed:
                     self._halted_for_audit = True
                 if audit_failed:
                     error = GatewayUpstreamError("controller audit failed after provider dispatch")
+        if cancelled_after_close:
+            raise asyncio.CancelledError
         if error is not None:
             raise error
         return GatewayResult(

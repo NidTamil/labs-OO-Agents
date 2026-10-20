@@ -38,6 +38,7 @@ from .native_launcher import NativeLaunchAuthority, build_launch_manifest
 from .native_process import frozen_hook_verifier, frozen_parent_verifier
 from .native_start_intent import wait_start_intent
 from .native_workflows import frozen_workflows
+from .run_request_budget import RunRequestBudget
 from .runtime_config import NativeRuntimeConfig, load_runtime_config
 from .runtime_custody import TaskRuntimeContext
 from .services_runtime import NativeServices, SealedRoutes
@@ -138,6 +139,10 @@ class _PostOracleMemoryBudget:
         prior_requests: int,
         prior_auxiliary_requests: int,
         remaining_seconds: float,
+        run_request_budget: RunRequestBudget | None = None,
+        task_id: str | None = None,
+        attempt_id: str | None = None,
+        record_request_reservations: bool = False,
     ):
         if (
             type(prior_requests) is not int
@@ -148,12 +153,40 @@ class _PostOracleMemoryBudget:
             or not 0 <= remaining_seconds <= 43200
         ):
             raise ValueError("prior attempt budget snapshot required")
+        if type(record_request_reservations) is not bool or (
+            record_request_reservations
+            and (
+                type(task_id) is not str
+                or not task_id
+                or type(attempt_id) is not str
+                or not attempt_id
+            )
+        ):
+            raise ValueError("explicit post-oracle reservation identity required")
         self._deadline = time.monotonic() + min(120, remaining_seconds)
         self._audit = audit
         self._prior_requests = prior_requests
         self._prior_auxiliary = prior_auxiliary_requests
         self._reserved = 0
         self._lock = threading.Lock()
+        self._halted = False
+        self._run_request_budget = run_request_budget
+        self._task_id, self._attempt_id = task_id, attempt_id
+        self._record_request_reservations = record_request_reservations
+        if run_request_budget is not None:
+            if (
+                type(run_request_budget) is not RunRequestBudget
+                or type(task_id) is not str
+                or type(attempt_id) is not str
+                or not attempt_id
+            ):
+                raise ValueError("post-oracle run budget identity required")
+            task = run_request_budget.snapshot()["tasks"].get(task_id)
+            if task is None or (
+                task["requests"] != prior_requests
+                or task["primary_and_memory"] != prior_auxiliary_requests
+            ):
+                raise ValueError("post-oracle run budget snapshot mismatch")
 
     def remaining_seconds(self):
         return max(0.0, self._deadline - time.monotonic())
@@ -161,7 +194,8 @@ class _PostOracleMemoryBudget:
     def reserve_request(self):
         with self._lock:
             if (
-                self.remaining_seconds() <= 0
+                self._halted
+                or self.remaining_seconds() <= 0
                 or self._reserved >= 4
                 or self._prior_requests + self._reserved >= 1500
                 or self._prior_auxiliary + self._reserved >= 1410
@@ -169,17 +203,42 @@ class _PostOracleMemoryBudget:
                 self._audit.record({"event": "post_oracle_memory_model_denied"})
                 raise PermissionError("post-oracle memory budget exhausted")
             number = self._prior_requests + self._reserved + 1
-            if (
-                self._audit.record(
-                    {
-                        "event": "post_oracle_memory_model_reserved",
-                        "request_number": number,
-                        "allocation": "glm_and_memory_auxiliary",
-                    }
-                )
-                is not True
-            ):
-                raise PermissionError("post-oracle memory audit unavailable")
+            event = {
+                "event": "post_oracle_memory_model_reserved",
+                "request_number": number,
+                "allocation": "glm_and_memory_auxiliary",
+            }
+            try:
+                if self._run_request_budget is not None:
+                    reservation = self._run_request_budget.reserve(
+                        task_id=self._task_id,
+                        attempt_id=self._attempt_id,
+                        request_id=uuid4().hex,
+                        allocation="primary_and_memory",
+                    )
+                    if (
+                        reservation.task_ordinal != number
+                        or reservation.allocation_ordinal
+                        != self._prior_auxiliary + self._reserved + 1
+                    ):
+                        raise PermissionError("post-oracle run reservation custody mismatch")
+                    event.update(asdict(reservation))
+                    event["run_allocation"] = event["allocation"]
+                    event["allocation"] = "glm_and_memory_auxiliary"
+                elif self._record_request_reservations:
+                    event.update(
+                        task_id=self._task_id,
+                        attempt_id=self._attempt_id,
+                        request_id=uuid4().hex,
+                        task_ordinal=number,
+                        allocation_ordinal=self._prior_auxiliary + self._reserved + 1,
+                        run_allocation="primary_and_memory",
+                    )
+                if self._audit.record(event) is not True:
+                    raise PermissionError("post-oracle memory audit unavailable")
+            except BaseException:
+                self._halted = True
+                raise
             self._reserved += 1
             return number
 
@@ -392,6 +451,7 @@ def run(
                 task_id=task_id,
                 attempt_id=attempt_id,
                 secrets=(zai, deepseek),
+                record_request_reservations=config.primary_takeover_policy is not None,
             )
         )
         observer = DockerPathObserver(client.api, container_id=container.id)
@@ -570,6 +630,10 @@ def run(
                     prior_requests=prior_budget["requests"],
                     prior_auxiliary_requests=prior_budget["glm_and_memory_auxiliary_requests"],
                     remaining_seconds=max(0, remaining_at_stop - (time.monotonic() - stop_started)),
+                    run_request_budget=context.budget.run_request_budget,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    record_request_reservations=context.budget.record_request_reservations,
                 ),
                 audit=context.audit,
                 allowed_models=dict(config.gbrain.allowed_models),
