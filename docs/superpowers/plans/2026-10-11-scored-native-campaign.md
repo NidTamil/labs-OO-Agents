@@ -367,6 +367,8 @@ New source-pin preparation (2026-10-20): the operator directly chose to re-certi
 
 Model-route decision (2026-10-21 Australia/Sydney): the operator directly chose GLM-5.3 primary with DeepSeek Flash V4.1-Flash-1017 as a recorded fallback for the new-pin recertification. Exact returned model identities and each fallback use still require observation. This is a route decision only; bounded provider budget, signer/trust, live controls, and signed scored admission remain open.
 
+Reconnect-control time decision (2026-10-21 Australia/Sydney): the operator chose a four-hour wall-clock limit for the next separately identified control and rejected the proposed 100-request cap. A replacement provider-request, token, or spend bound remains undecided. This is not an aggregate readiness budget or ten-task cap; no provider-bearing control has launched on this basis.
+
 ### Task 6: Scored go-live and submission
 
 - [ ] After Tasks 1–5 pass, present the exact frozen bundle, capacity, model, budget and dry-run results for an explicit scored-launch go/no-go.
