@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -23,11 +24,12 @@ from .deepseek import CONTEXT_TOKENS, ROLE_LIMITS, DeepSeekRole
 from .primary_takeover import PrimaryTakeoverPolicy
 from .raw_fixture_attestor import (
     RawEvidenceError,
+    _deepseek_usage_from_rows,
     _evidence_child,
     _read,
     _require,
-    verify_audit_chain,
-    verify_deepseek_model_usage,
+    _synthetic_audit_order,
+    _verified_audit_rows,
 )
 
 _ALLOCATIONS = {"primary_and_memory": 1410, "deepseek_advisory": 90}
@@ -87,6 +89,21 @@ class VerifiedRequestAccounting:
         return hashlib.sha256(self._canonical).hexdigest()
 
 
+@dataclass(frozen=True, slots=True)
+class VerifiedPreOracleAccounting:
+    """Accounting only; no final absence, terminal, cleanup or certification claim."""
+
+    _canonical: bytes
+
+    @property
+    def manifest(self) -> dict[str, Any]:
+        return json.loads(self._canonical)
+
+    @property
+    def digest(self) -> str:
+        return hashlib.sha256(self._canonical).hexdigest()
+
+
 def _lines(raw: bytes) -> list[dict]:
     def pairs(items):
         result = {}
@@ -108,7 +125,7 @@ def _lines(raw: bytes) -> list[dict]:
     return result
 
 
-def _reservations(events, *, task_id, attempt_id, budget_run_id):
+def _reservations(events, *, task_id, attempt_id, budget_run_id, allow_empty=False):
     reservations, counts, request_ids, run_ordinals = (
         {},
         dict.fromkeys(_ALLOCATIONS, 0),
@@ -180,7 +197,7 @@ def _reservations(events, *, task_id, attempt_id, budget_run_id):
             "_event_index": index,
             "_post": post,
         }
-    _require(bool(reservations), "durable request reservations absent")
+    _require(bool(reservations) or allow_empty, "durable request reservations absent")
     return reservations, counts
 
 
@@ -209,7 +226,11 @@ def _unknown_row(**values):
     }
 
 
-def _primary_attempts(requests, usage_rows, policy, task_id, attempt_id, claim):
+def _primary_attempts(
+    requests, usage_rows, policy, task_id, attempt_id, claim, *, allow_empty=False
+):
+    if allow_empty and not requests and not usage_rows:
+        return []
     reserved, terminal, native, positions, transitions = {}, {}, {}, {}, []
     for index, row in enumerate(requests):
         event = row.get("event")
@@ -490,13 +511,25 @@ def _verify_transitions(
             )
 
 
-def _advisory_attempts(events, root, task_id, attempt_id, registry, alternate, reservations, claim):
-    verify_deepseek_model_usage(
-        root,
+def _advisory_attempts(
+    events,
+    audit_rows,
+    task_id,
+    attempt_id,
+    registry,
+    alternate,
+    reservations,
+    claim,
+    *,
+    require_all_roles=True,
+):
+    _deepseek_usage_from_rows(
+        audit_rows,
         task_id=task_id,
         attempt_id=attempt_id,
         registry_sha256=registry,
         policy_sha256=alternate,
+        require_all_roles=require_all_roles,
     )
     requested, completed, positions = {}, {}, {}
     for index, event in enumerate(events):
@@ -644,7 +677,7 @@ def _memory_attempts(events, reservations, bindings, claim):
     return reconciled
 
 
-def verify_request_accounting(
+def _verify_request_accounting(
     evidence_root: Path,
     *,
     task_id: str,
@@ -654,6 +687,7 @@ def verify_request_accounting(
     alternate_policy_sha256: str,
     memory_model_bindings: Mapping,
     budget_run_id: str | None = None,
+    pre_oracle: bool = False,
 ) -> VerifiedRequestAccounting:
     """Reconcile all raw request lanes under explicit new frozen policy inputs."""
     _require(
@@ -675,17 +709,27 @@ def verify_request_accounting(
         for name in ("runtime-events.jsonl", "model-requests.jsonl", "model-usage.jsonl")
     }
     logs = {name: _lines(raw) for name, raw in files.items()}
-    verify_audit_chain(root / "runtime-events.jsonl", task_id=task_id, attempt_id=attempt_id)
-    events = [row["event"] for row in logs["runtime-events.jsonl"]]
+    rows = _verified_audit_rows(
+        files["runtime-events.jsonl"], task_id=task_id, attempt_id=attempt_id
+    )
+    events = [row["event"] for row in rows]
     _require(
-        all(type(row) is dict and _identity(row.get("event")) for row in events),
+        all(_identity(row.get("event")) for row in events),
         "runtime event malformed",
     )
+    if pre_oracle:
+        _require(
+            not any("oracle" in row["event"] for row in events),
+            "pre-oracle accounting contains oracle or post-oracle activity",
+        )
+    else:
+        _synthetic_audit_order(rows)
     reservations, counts = _reservations(
         events,
         task_id=task_id,
         attempt_id=attempt_id,
         budget_run_id=budget_run_id,
+        allow_empty=pre_oracle,
     )
     claimed = {}
 
@@ -710,16 +754,18 @@ def verify_request_accounting(
         task_id,
         attempt_id,
         claim,
+        allow_empty=pre_oracle,
     )
     _advisory_attempts(
         events,
-        root,
+        rows,
         task_id,
         attempt_id,
         registry_sha256,
         alternate_policy_sha256,
         reservations,
         claim,
+        require_all_roles=not pre_oracle,
     )
     reconciled = _memory_attempts(events, reservations, bindings, claim)
     rows, provider_ids = [], set()
@@ -772,3 +818,73 @@ def verify_request_accounting(
         "transitions": transitions,
     }
     return VerifiedRequestAccounting(canonical_json(manifest))
+
+
+def verify_request_accounting(
+    evidence_root: Path,
+    *,
+    task_id: str,
+    attempt_id: str,
+    takeover_policy: PrimaryTakeoverPolicy,
+    registry_sha256: str,
+    alternate_policy_sha256: str,
+    memory_model_bindings: Mapping,
+    budget_run_id: str | None = None,
+) -> VerifiedRequestAccounting:
+    """Synthetic success accounting retains its oracle-before-memory requirement."""
+    return _verify_request_accounting(
+        evidence_root,
+        task_id=task_id,
+        attempt_id=attempt_id,
+        takeover_policy=takeover_policy,
+        registry_sha256=registry_sha256,
+        alternate_policy_sha256=alternate_policy_sha256,
+        memory_model_bindings=memory_model_bindings,
+        budget_run_id=budget_run_id,
+    )
+
+
+def verify_pre_oracle_request_accounting(
+    evidence_root: Path,
+    *,
+    task_id: str,
+    attempt_id: str,
+    takeover_policy: PrimaryTakeoverPolicy,
+    registry_sha256: str,
+    alternate_policy_sha256: str,
+    memory_model_bindings: Mapping,
+    budget_run_id: str,
+) -> VerifiedPreOracleAccounting:
+    """Read pre-oracle debits with settled provider lifecycles, without an oracle.
+
+    Requires an actual hash-linked runtime log, even for zero dispatches. This
+    does not verify that no final/oracle artifact exists, that writers stopped,
+    or that the run ledger matches: terminal and quiescence callers must prove
+    those separately. Unknown and unmatched pre-dispatch debits remain explicit.
+    A provider dispatch without its terminal, usage and native-terminal records
+    still fails closed: recovery of a hard-killed lifecycle is a separate gate.
+    """
+    _require(
+        type(task_id) is str
+        and re.fullmatch(r"(?:arvo|oss-fuzz):[0-9]+", task_id) is not None
+        and _identity(attempt_id)
+        and _identity(budget_run_id),
+        "explicit official-shaped attempt and aggregate run identity required",
+    )
+    result = _verify_request_accounting(
+        evidence_root,
+        task_id=task_id,
+        attempt_id=attempt_id,
+        takeover_policy=takeover_policy,
+        registry_sha256=registry_sha256,
+        alternate_policy_sha256=alternate_policy_sha256,
+        memory_model_bindings=memory_model_bindings,
+        budget_run_id=budget_run_id,
+        pre_oracle=True,
+    )
+    manifest = result.manifest | {
+        "schema_version": 1,
+        "scope": "pre_oracle_attempt_accounting",
+        "budget_run_id": budget_run_id,
+    }
+    return VerifiedPreOracleAccounting(canonical_json(manifest))

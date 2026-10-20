@@ -157,40 +157,65 @@ def _evidence_child(root: Path, value: Any) -> Path:
     return path
 
 
-def verify_audit_chain(path: Path, *, task_id: str, attempt_id: str) -> AuditChain:
-    """Verify every hash link and the private-oracle-before-memory invariant."""
+def _verified_audit_rows(raw: bytes, *, task_id: str, attempt_id: str) -> list[dict]:
+    """Verify the exact captured bytes, independently of an attempt's outcome."""
+    _require(
+        type(raw) is bytes and 0 < len(raw) <= _MAX_JSON and raw.endswith(b"\n"),
+        "runtime audit bytes absent, oversized or incomplete",
+    )
+
+    def pairs(items):
+        result = {}
+        for key, value in items:
+            _require(key not in result, "duplicate runtime audit key")
+            result[key] = value
+        return result
+
     previous = _ZERO
-    oracle_at = memory_at = None
-    oracle_digest = None
-    rows = 0
-    for row in _json_lines(Path(path)):
-        rows += 1
-        digest = row.pop("sha256", None)
+    rows = []
+    for sequence, line in enumerate(raw.splitlines(), 1):
+        try:
+            row = json.loads(line, object_pairs_hook=pairs)
+            _require(type(row) is dict, "runtime audit row malformed")
+            body = {key: value for key, value in row.items() if key != "sha256"}
+            actual = hashlib.sha256(canonical_json(body)).hexdigest()
+        except (ValueError, UnicodeError, TypeError, RecursionError) as error:
+            raise RawEvidenceError("runtime audit row malformed") from error
+        digest = row.get("sha256")
         _require(
             type(digest) is str
             and len(digest) == 64
-            and row.get("sequence") == rows
+            and type(row.get("sequence")) is int
+            and row["sequence"] == sequence
             and row.get("previous_sha256") == previous
             and row.get("task_id") == task_id
             and row.get("attempt_id") == attempt_id
-            and hashlib.sha256(canonical_json(row)).hexdigest() == digest,
+            and actual == digest,
             "runtime audit chain invalid",
         )
+        _require(type(row.get("event")) is dict, "runtime audit event malformed")
+        rows.append(row)
+        previous = digest
+    return rows
+
+
+def _synthetic_audit_order(rows: list[dict]) -> AuditChain:
+    oracle_at = memory_at = None
+    oracle_digest = None
+    for index, row in enumerate(rows, 1):
         event = row.get("event")
-        _require(type(event) is dict, "runtime audit event malformed")
         if event.get("event") == "synthetic_oracle_observed":
             _require(oracle_at is None and event.get("oracle_true") is True, "oracle audit invalid")
-            oracle_at = rows
+            oracle_at = index
             oracle_digest = event.get("evidence_sha256")
         elif event.get("event") == "memory_oracle_episode_written":
             _require(
                 memory_at is None and event.get("actor") == "controller",
                 "controller memory audit invalid",
             )
-            memory_at = rows
-        previous = digest
+            memory_at = index
     _require(
-        rows > 0
+        bool(rows)
         and oracle_at is not None
         and memory_at is not None
         and oracle_at < memory_at
@@ -198,7 +223,14 @@ def verify_audit_chain(path: Path, *, task_id: str, attempt_id: str) -> AuditCha
         and len(oracle_digest) == 64,
         "oracle-before-memory evidence absent",
     )
-    return AuditChain(rows, previous, oracle_digest)
+    return AuditChain(len(rows), rows[-1]["sha256"], oracle_digest)
+
+
+def verify_audit_chain(path: Path, *, task_id: str, attempt_id: str) -> AuditChain:
+    """Verify every hash link and the synthetic oracle-before-memory invariant."""
+    return _synthetic_audit_order(
+        _verified_audit_rows(_read(Path(path)), task_id=task_id, attempt_id=attempt_id)
+    )
 
 
 def _verify_oracle(root: Path, verifier: SignatureVerifier, expected: dict) -> tuple[str, str]:
@@ -477,7 +509,28 @@ def verify_deepseek_model_usage(
             "DeepSeek frozen digest invalid",
         )
     audit_path = _evidence_child(root, str(root / "runtime-events.jsonl"))
-    verify_audit_chain(audit_path, task_id=task_id, attempt_id=attempt_id)
+    rows = _verified_audit_rows(_read(audit_path), task_id=task_id, attempt_id=attempt_id)
+    _synthetic_audit_order(rows)
+    return _deepseek_usage_from_rows(
+        rows,
+        task_id=task_id,
+        attempt_id=attempt_id,
+        registry_sha256=registry_sha256,
+        policy_sha256=policy_sha256,
+        require_all_roles=True,
+    )
+
+
+def _deepseek_usage_from_rows(
+    rows,
+    *,
+    task_id,
+    attempt_id,
+    registry_sha256,
+    policy_sha256,
+    require_all_roles,
+):
+    """Validate advisory settlements in already verified, captured audit rows."""
     requested: dict[str, dict[str, Any]] = {}
     terminal: dict[str, dict[str, Any]] = {}
     settings = {
@@ -486,7 +539,7 @@ def verify_deepseek_model_usage(
         "reasoning_effort": "max",
         "max_tokens": _DEEPSEEK_MAX_OUTPUT_TOKENS,
     }
-    for row in _json_lines(audit_path):
+    for row in rows:
         event = row.get("event")
         if type(event) is not dict or event.get("event") not in {"request", "response", "failure"}:
             continue
@@ -528,7 +581,9 @@ def verify_deepseek_model_usage(
         destination[request_id] = event
     _require(
         requested.keys() == terminal.keys()
-        and {row["role"] for row in requested.values()} == _ADVISORY_ROLES,
+        and (
+            not require_all_roles or {row["role"] for row in requested.values()} == _ADVISORY_ROLES
+        ),
         "DeepSeek role request lifecycle incomplete",
     )
 
