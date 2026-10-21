@@ -1,6 +1,13 @@
 # Disposable Linux preparation decision
 
-Status: **PROPOSED; no download, import, boot or configuration has occurred.**
+Status: **SETUP APPROVED directly by the operator on 21 October 2026**, answering
+"Approve this WSL setup" to the exact question naming this proposal. This permits
+only the setup, inventory and exact termination below. At the approval checkpoint,
+no download, import, boot or configuration had occurred.
+The [approved attempt](scored-subset-disposable-linux-setup_2026-10-21.md)
+subsequently stopped during its sole download's TLS handshake with zero bytes;
+no distribution was imported or started. This approval does not authorize an
+automatic repeat of that consumed single attempt.
 This is an exact local-environment choice following the already approved
 [restricted UI route design](scored-subset-rpc-route-decision_2026-10-21.md).
 It does not ask that design question again. The existing Linux inventory listed
