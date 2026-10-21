@@ -1,6 +1,6 @@
 # Schema-two subset UI RPC route decision
 
-Status: proposed operator route-design decision, not permission to change the production host, run a control, issue a provider request, sign an artifact or admit a scored task. An affirmative design choice authorizes only source and disposable-platform preparation. Production account, credential, forced-command and manager configuration plus the host handshake require a later direct approval of their exact reviewed configuration and rollback. Source and fake-backend observations remain below the production proof threshold.
+Status: operator approved the route **design for source and disposable-platform preparation** on 21 October 2026 (Australia/Sydney), in a direct reply to the exact question naming this document. This is not permission to change the production host, create or install an account/key, run a handshake or control, issue a provider request, sign an artifact or admit a scored task. Production account, credential, forced-command and manager configuration plus the host handshake require a later direct approval of their exact reviewed configuration and rollback. Source and fake-backend observations remain below the production proof threshold.
 
 ## Decision needed
 
