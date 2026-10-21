@@ -35,3 +35,14 @@ No native bootstrap, protected registration, matching restricted shim, durable
 recovery, calibrated 64-connection capacity, OS peer/ACK proof or remote closure
 exists. The original held route files remain unchanged; neither their P2 nor
 the production approval/platform requirements are closed by this adapter.
+
+Standalone primitive preparation: a new held experiment now contains a concrete
+one-shot Linux inherited-listener/client observation path with no imports of the
+held candidates. Its [source review](scored-subset-native-listener-probe-review_2026-10-21.md)
+records 44 author-observed synthetic passes and independent read-only review,
+with zero native observations. Environment/FD/path facts do not authenticate a
+manager; destructive permission controls remain unimplemented. A separate
+[local WSL preparation choice](scored-subset-disposable-linux-proposal_2026-10-21.md)
+is proposed for exact setup and read-only inventory only. The prior route-design
+approval is preserved; neither the local setup nor probe execution is inferred
+from a generic acknowledgement or this documentation.
