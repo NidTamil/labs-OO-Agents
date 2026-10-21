@@ -17,7 +17,7 @@ import json
 import os
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -82,6 +82,16 @@ _SCHEMA = (
         WHEN EXISTS(SELECT 1 FROM identity WHERE id=NEW.id)
         BEGIN SELECT RAISE(ABORT, 'resource identity cannot be replaced'); END""",
 )
+_SCHEMA_V2 = (
+    """CREATE TABLE identity (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        binding TEXT NOT NULL,
+        boot_domain_sha256 TEXT NOT NULL,
+        started_at_ns INTEGER NOT NULL CHECK(started_at_ns>0),
+        deadline_ns INTEGER NOT NULL CHECK(deadline_ns>started_at_ns)
+    ) STRICT""",
+    *_SCHEMA[1:],
+)
 _STOP_REASONS = frozenset(
     {
         "elapsed_limit",
@@ -92,6 +102,7 @@ _STOP_REASONS = frozenset(
         "controller_failure",
     }
 )
+_STOP_REASONS_V2 = _STOP_REASONS | {"clock_untrusted"}
 
 
 class ResourceBudgetError(RunRequestBudgetError):
@@ -111,6 +122,34 @@ def _clock() -> int:
     if type(now) is not int or not 0 < now < 2**63 - 1:
         raise ResourceBudgetError("invalid controller clock")
     return now
+
+
+@dataclass(frozen=True, slots=True)
+class BootUptimeSample:
+    """Provisional caller sample; this type does not authenticate a boot or clock.
+
+    The caller must independently prove that the digest identifies this boot
+    and that the uptime nanoseconds include suspend time. This component only
+    checks the sample's shape and continuity, and grants no effect permission.
+    """
+
+    boot_domain_sha256: str
+    uptime_ns: int
+
+
+def _boot_sample(source: Callable[[], BootUptimeSample]) -> BootUptimeSample:
+    try:
+        sample = source()
+    except Exception as error:
+        raise ResourceBudgetError("boot clock source failed") from error
+    if (
+        type(sample) is not BootUptimeSample
+        or not _digest(sample.boot_domain_sha256)
+        or type(sample.uptime_ns) is not int
+        or not 0 < sample.uptime_ns < 2**63 - 1
+    ):
+        raise ResourceBudgetError("invalid boot clock sample")
+    return sample
 
 
 def _binding(budget, authority, metering) -> str:
@@ -142,6 +181,10 @@ class RunResourceBudget:
     _metering: VerifiedMeteringPolicy
     _bound_identity: str
     _file_identity: tuple[int, int]
+    _schema_version: int = field(default=1, repr=False, compare=False)
+    _boot_clock_source: Callable[[], BootUptimeSample] | None = field(
+        default=None, repr=False, compare=False
+    )
     _write_failed: bool = field(default=False, init=False, repr=False, compare=False)
 
     @classmethod
@@ -209,6 +252,89 @@ class RunResourceBudget:
         except OSError as error:
             raise ResourceBudgetError("cannot open resource budget store") from error
 
+    @classmethod
+    def create_v2(
+        cls,
+        path: str | Path,
+        *,
+        budget: VerifiedSubsetBudget,
+        authority: CampaignAuthority,
+        metering: VerifiedMeteringPolicy,
+        clock_source: Callable[[], BootUptimeSample],
+    ) -> RunResourceBudget:
+        """Create a separate boot-uptime schema before preparation.
+
+        ``clock_source`` is a provisional input, not independent boot authority.
+        No provider, worker or remote effect may be authorized by this method.
+        """
+        binding = _binding(budget, authority, metering)
+        if not callable(clock_source):
+            raise ResourceBudgetError("boot clock source required")
+        path = Path(path)
+        try:
+            _private_path(path, required=False)
+            for suffix in ("-journal", "-wal", "-shm"):
+                if path.with_name(path.name + suffix).exists():
+                    raise ResourceBudgetError("existing SQLite sidecar prevents creation")
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.close(descriptor)
+            info = path.stat()
+            ledger = cls(
+                path, budget, metering, binding, (info.st_dev, info.st_ino), 2, clock_source
+            )
+            with ledger._transaction(write=True) as connection:
+                sample = _boot_sample(clock_source)
+                deadline = sample.uptime_ns + budget.max_elapsed_seconds * _NS
+                if deadline >= 2**63 - 1:
+                    raise ResourceBudgetError("aggregate deadline exceeds supported clock range")
+                for statement in _SCHEMA_V2:
+                    connection.execute(statement)
+                connection.execute(f"PRAGMA application_id={_APPLICATION_ID}")
+                connection.execute("PRAGMA user_version=2")
+                connection.execute(
+                    "INSERT INTO identity VALUES(1,?,?,?,?)",
+                    (binding, sample.boot_domain_sha256, sample.uptime_ns, deadline),
+                )
+                connection.execute("INSERT INTO clock VALUES(1,?)", (sample.uptime_ns,))
+            if os.name == "posix":
+                directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+            return ledger
+        except OSError as error:
+            raise ResourceBudgetError("cannot exclusively create resource budget store") from error
+
+    @classmethod
+    def open_v2(
+        cls,
+        path: str | Path,
+        *,
+        budget: VerifiedSubsetBudget,
+        authority: CampaignAuthority,
+        metering: VerifiedMeteringPolicy,
+        clock_source: Callable[[], BootUptimeSample],
+    ) -> RunResourceBudget:
+        """Open v2 for read or accounting; permission calls resample inside writes."""
+        binding = _binding(budget, authority, metering)
+        if not callable(clock_source):
+            raise ResourceBudgetError("boot clock source required")
+        path = Path(path)
+        try:
+            info = _private_path(path, required=True)
+            assert info is not None
+            ledger = cls(
+                path, budget, metering, binding, (info.st_dev, info.st_ino), 2, clock_source
+            )
+            # This is historical attestation only. It deliberately does not
+            # sample the current boot, so evidence remains readable after a
+            # boot change or clock-source failure. Mutations must sample.
+            ledger.snapshot()
+            return ledger
+        except OSError as error:
+            raise ResourceBudgetError("cannot open resource budget store") from error
+
     @contextmanager
     def _transaction(self, *, write: bool) -> Iterator[sqlite3.Connection]:
         connection = None
@@ -245,34 +371,46 @@ class RunResourceBudget:
             if connection is not None:
                 connection.close()
 
-    def _validate_store(self, connection: sqlite3.Connection) -> tuple[int, int, int]:
+    def _validate_store(self, connection: sqlite3.Connection) -> tuple[int, int, int, str | None]:
         schema = {
             row[0]
             for row in connection.execute("SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL")
         }
         if (
-            schema != set(_SCHEMA)
-            or connection.execute("PRAGMA user_version").fetchone()[0] != 1
+            schema != set(_SCHEMA_V2 if self._schema_version == 2 else _SCHEMA)
+            or connection.execute("PRAGMA user_version").fetchone()[0] != self._schema_version
             or connection.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID
         ):
             raise ResourceBudgetError("resource budget schema mismatch")
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise ResourceBudgetError("corrupt resource budget store")
-        identity = connection.execute(
-            "SELECT binding,started_at_ns,deadline_ns FROM identity ORDER BY id"
-        ).fetchall()
+        if self._schema_version == 2:
+            identity = connection.execute(
+                "SELECT binding,boot_domain_sha256,started_at_ns,deadline_ns "
+                "FROM identity ORDER BY id"
+            ).fetchall()
+        else:
+            identity = connection.execute(
+                "SELECT binding,started_at_ns,deadline_ns FROM identity ORDER BY id"
+            ).fetchall()
         if len(identity) != 1 or identity[0][0] != self._bound_identity:
             raise ResourceBudgetError("resource budget identity mismatch")
-        _, started, deadline = identity[0]
+        if self._schema_version == 2:
+            _, boot_domain_sha256, started, deadline = identity[0]
+            if not _digest(boot_domain_sha256):
+                raise ResourceBudgetError("invalid resource boot identity")
+        else:
+            _, started, deadline = identity[0]
+            boot_domain_sha256 = None
         if deadline != started + self._budget.max_elapsed_seconds * _NS:
             raise ResourceBudgetError("resource budget deadline mismatch")
         clocks = connection.execute("SELECT observed_ns FROM clock ORDER BY id").fetchall()
         if len(clocks) != 1 or clocks[0][0] < started:
             raise ResourceBudgetError("invalid resource clock high-watermark")
-        return started, deadline, clocks[0][0]
+        return started, deadline, clocks[0][0], boot_domain_sha256
 
     def _snapshot(self, connection: sqlite3.Connection) -> dict:
-        started, deadline, observed_clock = self._validate_store(connection)
+        started, deadline, observed_clock, boot_domain_sha256 = self._validate_store(connection)
         state = {
             "run_id": self._budget.run_id,
             "epoch": self._budget.epoch,
@@ -293,6 +431,14 @@ class RunResourceBudget:
             "stop": None,
             "event_ordinal": 0,
         }
+        if self._schema_version == 2:
+            state.update(
+                {
+                    "schema_version": 2,
+                    "clock_basis": "suspend_aware_uptime_ns",
+                    "boot_domain_sha256": boot_domain_sha256,
+                }
+            )
         history = hashlib.sha256(self._bound_identity.encode()).digest()
         request_ids = set()
         attempt_tasks = {}
@@ -366,7 +512,8 @@ class RunResourceBudget:
                 elif kind == "stop":
                     if (
                         set(body) != {"reason"}
-                        or body["reason"] not in _STOP_REASONS
+                        or body["reason"]
+                        not in (_STOP_REASONS_V2 if self._schema_version == 2 else _STOP_REASONS)
                         or state["stop"] is not None
                     ):
                         raise ValueError("invalid stop history")
@@ -508,6 +655,34 @@ class RunResourceBudget:
         state["event_ordinal"] += 1
         RunResourceBudget._advance_clock(connection, state, now)
 
+    def _observed_clock(self, connection, state) -> tuple[int, str | None]:
+        if self._schema_version == 1:
+            return _clock(), None
+        try:
+            assert self._boot_clock_source is not None
+            sample = _boot_sample(self._boot_clock_source)
+            if (
+                sample.boot_domain_sha256 != state["boot_domain_sha256"]
+                or sample.uptime_ns < state["last_observed_ns"]
+            ):
+                raise ResourceBudgetError("boot clock changed or regressed")
+        except (ResourceBudgetError, AssertionError):
+            # The last trusted tick is the only honest time we can record.
+            # Commit this stop before reporting it to the caller. If commit
+            # fails, _transaction denies the operation without claiming that
+            # the stop became durable.
+            if state["stop"] is None:
+                self._append(
+                    connection,
+                    state,
+                    "stop",
+                    state["last_observed_ns"],
+                    {"reason": "clock_untrusted"},
+                )
+                return state["last_observed_ns"], "clock_untrusted"
+            return state["last_observed_ns"], state["stop"]["reason"]
+        return sample.uptime_ns, None
+
     def _check(self, connection, state, *, now: int, charge: int = 0) -> str | None:
         if state["stop"] is not None:
             return state["stop"]["reason"]
@@ -534,8 +709,8 @@ class RunResourceBudget:
             # History is bounded by 15,000 reservations, ten closures and one
             # stop. Clock polls update one row rather than extending history.
             state = self._snapshot(connection)
-            now = _clock()
-            reason = self._check(connection, state, now=now)
+            now, untrusted = self._observed_clock(connection, state)
+            reason = untrusted or self._check(connection, state, now=now)
             # Owned cleanup remains observable after a stop. Retain its elapsed
             # time without changing the original immutable stopping reason.
             self._advance_clock(connection, state, now)
@@ -551,10 +726,17 @@ class RunResourceBudget:
         """Persist a controller stop without changing any task's terminal meaning."""
         if reason not in {"operator_stop", "controller_failure"}:
             raise ValueError("explicit controller stop reason required")
+        untrusted = None
         with self._transaction(write=True) as connection:
             state = self._snapshot(connection)
             if state["stop"] is None:
-                self._append(connection, state, "stop", _clock(), {"reason": reason})
+                now, untrusted = self._observed_clock(connection, state)
+                if untrusted is None:
+                    self._append(connection, state, "stop", now, {"reason": reason})
+            elif self._schema_version == 2 and state["stop"]["reason"] == "clock_untrusted":
+                untrusted = "clock_untrusted"
+        if untrusted:
+            raise ResourceBudgetStopped(f"run stopped: {untrusted}")
 
     def reserve(
         self, *, task_id: str, attempt_id: str, request_id: str, allocation: Allocation
@@ -582,11 +764,11 @@ class RunResourceBudget:
                 if json.loads(body)["request_id"] == request_id:
                     raise DuplicateRequestReservation("request ID already reserved")
             counts = state["tasks"][task_id]
-            now = _clock()
+            now, untrusted = self._observed_clock(connection, state)
             charge = self._metering.charge(allocation)
             # A global stop takes precedence over a full task/allocation. Local
             # exhaustion alone must leave the other allocation and tasks usable.
-            reason = self._check(connection, state, now=now)
+            reason = untrusted or self._check(connection, state, now=now)
             if reason is None:
                 if counts["requests"] >= 1500:
                     raise RequestBudgetExceeded("task request budget exhausted")
@@ -632,6 +814,7 @@ class RunResourceBudget:
             or not _digest(expected_accounting_sha256)
         ):
             raise ValueError("exact task and verified completion/accounting digests required")
+        untrusted = None
         with self._transaction(write=True) as connection:
             state = self._snapshot(connection)
             if task_id in state["closures"]:
@@ -643,20 +826,23 @@ class RunResourceBudget:
                 raise ResourceBudgetError("closure attempt identity mismatch")
             if expected_accounting_sha256 != state["accounting_sha256"]:
                 raise ResourceBudgetError("closure accounting changed after signed quiescence")
-            now = _clock()
-            self._check(connection, state, now=now)
-            self._append(
-                connection,
-                state,
-                "close",
-                now,
-                {
-                    "task_id": task_id,
-                    "attempt_id": attempt_id,
-                    "completion_sha256": completion_sha256,
-                    "accounting_sha256": expected_accounting_sha256,
-                    "run_ordinal": state["requests"],
-                    "task_ordinal": state["tasks"][task_id]["requests"],
-                    "spend_units": state["spend_units"],
-                },
-            )
+            now, untrusted = self._observed_clock(connection, state)
+            if untrusted is None:
+                self._check(connection, state, now=now)
+                self._append(
+                    connection,
+                    state,
+                    "close",
+                    now,
+                    {
+                        "task_id": task_id,
+                        "attempt_id": attempt_id,
+                        "completion_sha256": completion_sha256,
+                        "accounting_sha256": expected_accounting_sha256,
+                        "run_ordinal": state["requests"],
+                        "task_ordinal": state["tasks"][task_id]["requests"],
+                        "spend_units": state["spend_units"],
+                    },
+                )
+        if untrusted:
+            raise ResourceBudgetStopped(f"run stopped: {untrusted}")
