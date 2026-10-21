@@ -135,6 +135,88 @@ def reserve(ledger, request="request-1", *, task=0, allocation="primary_and_memo
     )
 
 
+def test_attempt_debit_inventory_retains_exact_charges_after_lost_response(store, modules):
+    ledger, path, args, now = store
+    reserve(ledger, "failed-primary")
+    now[0] += 1_000_000_000
+    reserve(ledger, "replacement-primary")
+    reopened = modules[0].RunResourceBudget.open(path, **args)
+    raw = reopened.read_attempt_debits(task_id=OFFICIAL_SUBSET_TASK_IDS[0], attempt_id="attempt-0")
+    inventory = json.loads(raw)
+    assert raw == canonical(inventory)
+    assert inventory == {
+        "schema_version": 1,
+        "scope": "resource_reservation_inventory_only",
+        "run_id": "test-run",
+        "epoch": "test-epoch",
+        "budget_sha256": args["budget"].envelope_sha256,
+        "metering_policy_sha256": args["metering"].sha256,
+        "task_id": OFFICIAL_SUBSET_TASK_IDS[0],
+        "attempt_id": "attempt-0",
+        "accounting_sha256": reopened.snapshot()["accounting_sha256"],
+        "event_ordinal": 2,
+        "provider_dispatch": "not_assessed",
+        "provider_usage": "not_assessed",
+        "reservations": [
+            {
+                "request_id": "failed-primary",
+                "allocation": "primary_and_memory",
+                "run_ordinal": 1,
+                "task_ordinal": 1,
+                "allocation_ordinal": 1,
+                "charge_units": 11,
+            },
+            {
+                "request_id": "replacement-primary",
+                "allocation": "primary_and_memory",
+                "run_ordinal": 2,
+                "task_ordinal": 2,
+                "allocation_ordinal": 2,
+                "charge_units": 11,
+            },
+        ],
+    }
+    assert (reopened.snapshot()["requests"], reopened.snapshot()["spend_units"]) == (2, 22)
+
+
+def test_attempt_debit_inventory_zero_rows_do_not_assert_dispatch_absence(store):
+    ledger, _, _, _ = store
+    inventory = json.loads(
+        ledger.read_attempt_debits(task_id=OFFICIAL_SUBSET_TASK_IDS[0], attempt_id="attempt-0")
+    )
+    assert inventory["reservations"] == []
+    assert inventory["provider_dispatch"] == "not_assessed"
+    assert inventory["provider_usage"] == "not_assessed"
+    assert not ({"settled", "reconciled", "gate_passed"} & inventory.keys())
+
+
+def test_attempt_debit_inventory_rejects_attempt_swap_and_retains_stop(store, modules):
+    ledger, path, args, _ = store
+    reserve(ledger)
+    with pytest.raises(modules[0].ResourceBudgetError, match="attempt"):
+        ledger.read_attempt_debits(task_id=OFFICIAL_SUBSET_TASK_IDS[0], attempt_id="other")
+    with pytest.raises(ValueError, match="task"):
+        ledger.read_attempt_debits(task_id="arvo:0", attempt_id="attempt-0")
+    ledger.stop(reason="controller_failure")
+    reopened = modules[0].RunResourceBudget.open(path, **args)
+    inventory = json.loads(
+        reopened.read_attempt_debits(task_id=OFFICIAL_SUBSET_TASK_IDS[0], attempt_id="attempt-0")
+    )
+    assert [row["request_id"] for row in inventory["reservations"]] == ["request-1"]
+    assert inventory["event_ordinal"] == 2
+    assert reopened.snapshot()["stop"]["reason"] == "controller_failure"
+
+
+def test_attempt_debit_inventory_rejects_oversized_history_before_decoding(store, modules):
+    ledger, path, _, _ = store
+    reserve(ledger)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TRIGGER events_no_update")
+        connection.execute("UPDATE events SET body=? WHERE ordinal=1", ("x" * 65536,))
+    with pytest.raises(modules[0].ResourceBudgetError, match="bounded"):
+        ledger.read_attempt_debits(task_id=OFFICIAL_SUBSET_TASK_IDS[0], attempt_id="attempt-0")
+
+
 def test_atomic_debit_persists_request_spend_and_clock_across_reopen(store, modules):
     ledger, path, args, now = store
     first = reserve(ledger)

@@ -38,6 +38,10 @@ from .subset_run_budget import VerifiedSubsetBudget
 
 _NS = 1_000_000_000
 _APPLICATION_ID = 0x4E525342
+_MAX_HISTORY_EVENTS = 15000 + 10 + 1
+_MAX_EVENT_BODY_BYTES = 4096
+_MAX_HISTORY_BODY_BYTES = 64 * 1024 * 1024
+_MAX_INVENTORY_BYTES = 8 * 1024 * 1024
 _SCHEMA = (
     """CREATE TABLE identity (
         id INTEGER PRIMARY KEY CHECK(id=1),
@@ -416,6 +420,72 @@ class RunResourceBudget:
         """Read authoritative accounting; this read alone grants no dispatch permission."""
         with self._transaction(write=False) as connection:
             return self._snapshot(connection)
+
+    def read_attempt_debits(self, *, task_id: str, attempt_id: str) -> bytes:
+        """Inventory durable debits; never infer dispatch, usage, or settlement.
+
+        An empty inventory proves only that this resource store has no reservation
+        for the supplied identity. It does not prove that no provider effect occurred.
+        The accounting watermark and rows come from one validated read transaction.
+        """
+        if type(task_id) is not str or task_id not in self._budget.task_ids:
+            raise ValueError("task is outside this resource budget")
+        _identifier(attempt_id, "attempt")
+        with self._transaction(write=False) as connection:
+            count, largest, total = connection.execute(
+                "SELECT COUNT(*), MAX(length(CAST(body AS BLOB))), "
+                "SUM(length(CAST(body AS BLOB))) FROM events"
+            ).fetchone()
+            if (
+                count > _MAX_HISTORY_EVENTS
+                or (largest or 0) > _MAX_EVENT_BODY_BYTES
+                or (total or 0) > _MAX_HISTORY_BODY_BYTES
+            ):
+                raise ResourceBudgetError("resource budget history exceeds bounded inventory read")
+            state = self._snapshot(connection)
+            prior_attempt = state["attempts"].get(task_id)
+            if prior_attempt is not None and prior_attempt != attempt_id:
+                raise ResourceBudgetError("resource budget attempt identity differs")
+            reservations = []
+            for (body_json,) in connection.execute(
+                "SELECT body FROM events WHERE kind='reserve' ORDER BY ordinal"
+            ):
+                body = json.loads(body_json)
+                if body["task_id"] != task_id:
+                    continue
+                reservations.append(
+                    {
+                        key: body[key]
+                        for key in (
+                            "request_id",
+                            "allocation",
+                            "run_ordinal",
+                            "task_ordinal",
+                            "allocation_ordinal",
+                            "charge_units",
+                        )
+                    }
+                )
+            inventory = _json_bytes(
+                {
+                    "schema_version": 1,
+                    "scope": "resource_reservation_inventory_only",
+                    "run_id": state["run_id"],
+                    "epoch": state["epoch"],
+                    "budget_sha256": state["budget_sha256"],
+                    "metering_policy_sha256": state["metering_policy_sha256"],
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
+                    "accounting_sha256": state["accounting_sha256"],
+                    "event_ordinal": state["event_ordinal"],
+                    "provider_dispatch": "not_assessed",
+                    "provider_usage": "not_assessed",
+                    "reservations": reservations,
+                }
+            )
+            if len(inventory) > _MAX_INVENTORY_BYTES:
+                raise ResourceBudgetError("resource debit inventory exceeds bounded output")
+            return inventory
 
     @staticmethod
     def _advance_clock(connection, state, now):
