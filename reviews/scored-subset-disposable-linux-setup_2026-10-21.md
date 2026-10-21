@@ -83,3 +83,9 @@ failure. Held probe and production source remain untracked and unpromoted.
 This result establishes only a failed local setup attempt. It proves no Linux
 platform gate, listener custody, process cleanup, twelve-gate PASS or scored
 readiness. The last reviewed committed source component remains `42a33385`.
+
+The operator later approved one separately bounded extra download for the same
+pinned image. Its retained [retry checkpoint](scored-subset-disposable-linux-retry_2026-10-21.md)
+records a second zero-byte network failure and no image verification or import.
+That extra authorization is consumed; this document preserves the first attempt's
+historical result.

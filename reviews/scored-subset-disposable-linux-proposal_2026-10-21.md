@@ -8,6 +8,10 @@ The [approved attempt](scored-subset-disposable-linux-setup_2026-10-21.md)
 subsequently stopped during its sole download's TLS handshake with zero bytes;
 no distribution was imported or started. This approval does not authorize an
 automatic repeat of that consumed single attempt.
+The operator subsequently approved one extra download for the same pin. It also
+failed with zero bytes, as recorded in the
+[retry checkpoint](scored-subset-disposable-linux-retry_2026-10-21.md). No image
+verification or WSL import followed; neither approval permits another attempt.
 This is an exact local-environment choice following the already approved
 [restricted UI route design](scored-subset-rpc-route-decision_2026-10-21.md).
 It does not ask that design question again. The existing Linux inventory listed
