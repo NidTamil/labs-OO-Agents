@@ -60,6 +60,8 @@ For cleanup, retain an identity-checked FD to the exact cgroup v2 directory befo
 - [ ] Write RED tests for duplicate/replayed identity, simultaneous controllers trying to consume the same intent, directory/ancestor replacement, partial write, failed fsync/readback, changed boot/domain, malformed or unbounded record, and crash at each intent/attempt boundary.
 - [ ] Run the new focused test file, implement create-once durable publication and bounded read-only recovery, then rerun it and Ruff. A fake filesystem backend is allowed; production held-directory trust and POSIX durability need Task 5 proof.
 
+Task 2 source checkpoint (2026-10-21): the new intent protocol and its tests remain **HELD and untracked**. Independent source review and test-delta re-review found no P1/P2 within the conditional fake-backed scope; the [review record](../../../reviews/scored-subset-linux-intent-review_2026-10-21.md) records exact hashes, implementer-observed focused results and root lint checks. No production backend, independent clock/custody authority, actual worker/material graph, manager call or platform proof exists. These checkboxes remain open for the complete task; this checkpoint closes none of the older process draft's P1s and grants no effect permission.
+
 ### Task 3: Arm a unique manager-owned held service
 
 **Files:** Create `examples/cybergym/nooa_cybergym/leaderboard/subset_linux_manager.py` and `subset_linux_held_worker.py`; add `examples/cybergym/tests/leaderboard/test_subset_linux_manager.py` and `test_subset_linux_held_worker.py`.
