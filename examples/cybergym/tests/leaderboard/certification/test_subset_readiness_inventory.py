@@ -130,6 +130,15 @@ def test_inventory_does_not_resolve_unlisted_evidence_root(tmp_path):
         inventory.control_root("undeclared_control")
 
 
+def test_pinned_inventory_exposes_only_typed_control_id(tmp_path):
+    raw, pin, manifests, _ = _bundle(tmp_path)
+    inventory = load_subset_readiness_inventory(raw, expected_sha256=pin, pair_manifests=manifests)
+
+    assert inventory.control_id("timeout_failure") == "control-timeout_failure"
+    with pytest.raises(ValueError, match="not inventoried"):
+        inventory.control_id("undeclared_control")
+
+
 def test_descriptor_requires_independent_pin_and_canonical_bytes(tmp_path):
     raw, pin, manifests, _ = _bundle(tmp_path)
     with pytest.raises(ValueError):

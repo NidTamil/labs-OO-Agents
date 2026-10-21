@@ -368,6 +368,18 @@ class ReadinessInventory:
                 return Path(control["root"])
         raise ValueError("control root not inventoried")
 
+    def control_id(self, kind: str) -> str:
+        """Resolve a typed control ID from independently pinned descriptor bytes."""
+        if kind not in self.control_kinds:
+            raise ValueError("control ID not inventoried")
+        descriptor = _canonical(
+            self._descriptor_bytes, limit=_MAX_DESCRIPTOR_BYTES, label="readiness descriptor"
+        )
+        for control in descriptor["controls"]:
+            if control["kind"] == kind:
+                return control["control_id"]
+        raise ValueError("control ID not inventoried")
+
     @contextmanager
     def observed_bytes(self) -> Iterator[None]:
         """Bracket a separate raw reader with before/after byte checks."""
