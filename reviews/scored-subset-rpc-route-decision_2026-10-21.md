@@ -22,3 +22,16 @@ If production configuration is rejected or deferred, keep `claim` disabled and t
 Evidence at the design decision: the held `budgeted_subset_ui_transport.py` supplied `root@` and `User root`; `budgeted_subset_ui_rpc.py` checked then connected to the fixed socket; `budgeted_subset_ui_broker.py` was verifier-only and rejected `claim`. The takeover plan records the independent P2 route audit and the controller-side fresh-lease design. No host/account/SSH/process/provider action was performed to prepare this decision.
 
 Source-only follow-up: the untracked transport candidate now requires a separately supplied restricted account, exact identity path and public-key digest claim, matches them against its SSH configuration and argv, and disables implicit agent/default-key and interactive fallback in the declared route. Fifteen focused fake-SSH cases passed with Ruff/format clean after review-driven negative cases; independent re-review found no P1/P2 within fake-backed declaration scope. It does not inspect the actual credential or certificate sidecar, hold route/identity paths through launch, prove Windows owned-Job cleanup, run a handshake, or close the remote session. The candidate remains **HELD and uninstalled**. The RPC shim and broker remain unchanged with their root/UID-0 and caller-supplied-socket gaps; no `claim` or effect permission is enabled.
+
+Later source-only owner checkpoint: a separate `subset_ui_activated_broker.py`
+candidate now acquires a listener through a refusing-by-default bootstrap and
+accepts its own connections before private bounded poll/ACK dispatch. It retains
+exact owned connection identities, uses separate ACK commit/readback and latches
+ambiguous ACK outcomes within the activation instance. Independent correction
+review found no P1/P2 within conditional fake scope after fixing nonadjacent
+connection reuse. The [review record](scored-subset-activated-broker-review_2026-10-21.md)
+preserves hashes and scoped evidence. Source and tests remain **HELD/untracked**.
+No native bootstrap, protected registration, matching restricted shim, durable
+recovery, calibrated 64-connection capacity, OS peer/ACK proof or remote closure
+exists. The original held route files remain unchanged; neither their P2 nor
+the production approval/platform requirements are closed by this adapter.
